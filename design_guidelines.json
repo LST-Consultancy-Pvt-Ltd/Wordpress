@@ -1,0 +1,170 @@
+{
+  "project_name": "AI Website Management Platform",
+  "design_philosophy": {
+    "name": "The Autonomous Glass Grid",
+    "description": "A high-precision, technical aesthetic inspired by flight cockpits and developer tools. It emphasizes clarity, data density, and control. The UI feels 'alive' through subtle pulses and border traces, symbolizing the active AI engine.",
+    "core_principles": [
+      "Density over Fluff: Maximize information per pixel without clutter.",
+      "Visibility of System: Show the grid/structure to imply stability.",
+      "Active Intelligence: Use motion (glows, pulses) to show AI is working.",
+      "Swiss Precision: Sharp alignment, high contrast text, minimal decoration."
+    ],
+    "theme_strategy": {
+      "mode": "system",
+      "default": "dark",
+      "toggle_available": true
+    }
+  },
+  "typography": {
+    "font_providers": ["Google Fonts"],
+    "headings": {
+      "family": "Manrope",
+      "weights": ["400", "600", "800"],
+      "usage": "Use for all page titles, section headers, and modal titles. Tracking tight (-0.02em)."
+    },
+    "body": {
+      "family": "Inter",
+      "weights": ["400", "500"],
+      "usage": "Use for all data tables, inputs, and long-form text. Tracking normal."
+    },
+    "mono": {
+      "family": "JetBrains Mono",
+      "weights": ["400"],
+      "usage": "Use for API keys, logs, code snippets, and 'AI Thinking' output."
+    }
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "name": "Electric Indigo",
+        "hex": "#6366f1",
+        "tailwind": "indigo-500",
+        "usage": "Primary actions, active states, branding."
+      },
+      "secondary": {
+        "name": "Cyber Violet",
+        "hex": "#8b5cf6",
+        "tailwind": "violet-500",
+        "usage": "AI-related features, gradients."
+      },
+      "background": {
+        "dark": "#09090b",
+        "light": "#ffffff",
+        "sidebar_dark": "#000000",
+        "sidebar_light": "#f8fafc"
+      },
+      "surface": {
+        "dark": "rgba(255, 255, 255, 0.03)",
+        "light": "#ffffff"
+      },
+      "status": {
+        "success": "#10b981",
+        "warning": "#f59e0b",
+        "error": "#f43f5e",
+        "info": "#3b82f6"
+      }
+    },
+    "gradients": {
+      "ai_glow": "linear-gradient(135deg, #6366f1 0%, #a855f7 100%)",
+      "surface_shine": "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%)"
+    }
+  },
+  "layout_grid": {
+    "dashboard_grid": "grid-cols-1 md:grid-cols-4 gap-6",
+    "widget_ratios": {
+      "hero": "col-span-full md:col-span-3",
+      "stat": "col-span-1",
+      "list": "col-span-1 md:col-span-2 row-span-2"
+    },
+    "spacing": {
+      "container_padding": "p-6 md:p-8",
+      "item_gap": "gap-6"
+    }
+  },
+  "components": {
+    "buttons": {
+      "radius": "rounded-md",
+      "styles": {
+        "primary": "bg-primary text-white hover:bg-primary/90 shadow-[0_0_10px_rgba(99,102,241,0.3)] transition-all",
+        "ghost": "hover:bg-accent hover:text-accent-foreground",
+        "outline": "border border-input bg-background hover:bg-accent hover:text-accent-foreground"
+      }
+    },
+    "cards": {
+      "style": "border border-border/50 bg-card/50 backdrop-blur-sm",
+      "radius": "rounded-lg",
+      "hover_effect": "hover:border-primary/30 transition-colors duration-300"
+    },
+    "inputs": {
+      "style": "bg-transparent border-input focus:ring-1 focus:ring-primary",
+      "radius": "rounded-md"
+    },
+    "navigation": {
+      "sidebar_width": "w-64",
+      "style": "border-r border-border bg-muted/20 backdrop-blur-xl"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-md bg-background/80 border-b border-white/5",
+    "grid_background": "bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20",
+    "borders": "1px solid rgba(255,255,255,0.08)",
+    "shadows": {
+      "glow": "0 0 20px -5px rgba(99, 102, 241, 0.4)",
+      "card": "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)"
+    }
+  },
+  "motion_and_animation": {
+    "library": "framer-motion",
+    "guidelines": [
+      "Use 'layout' prop for smooth list reordering.",
+      "Page transitions: Opacity fade (0.2s).",
+      "Micro-interactions: Buttons scale down (0.98) on press.",
+      "AI Activity: Pulsing opacity or 'breathing' glow effects."
+    ],
+    "presets": {
+      "fade_in": { "initial": { "opacity": 0 }, "animate": { "opacity": 1 } },
+      "slide_up": { "initial": { "y": 20, "opacity": 0 }, "animate": { "y": 0, "opacity": 1 } }
+    }
+  },
+  "assets": {
+    "icons": {
+      "library": "lucide-react",
+      "style": "stroke-width={1.5} size={20}"
+    },
+    "images": {
+      "login_bg": "https://images.unsplash.com/photo-1762278804729-13d330fad71a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHw0fHx0ZWNobm9sb2d5JTIwYWJzdHJhY3QlMjBkYXJrJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NzMyMTg1ODB8MA&ixlib=rb-4.1.0&q=85",
+      "ai_abstract": "https://images.unsplash.com/photo-1761319659795-543075eaeaad?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwyfHx0ZWNobm9sb2d5JTIwYWJzdHJhY3QlMjBkYXJrJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NzMyMTg1ODB8MA&ixlib=rb-4.1.0&q=85",
+      "default_avatar": "https://images.unsplash.com/photo-1615843423179-bea071facf96?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjB1c2VyJTIwYXZhdGFyJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzczMjE4NTgwfDA&ixlib=rb-4.1.0&q=85",
+      "placeholders": {
+        "website_thumb": "https://placehold.co/600x400/1e293b/ffffff?text=Website+Preview",
+        "chart_fallback": "https://placehold.co/600x300/1e293b/ffffff?text=Chart+Data"
+      }
+    }
+  },
+  "accessibility": {
+    "contrast_check": "Ensure text-gray-400 or lighter is used on dark backgrounds.",
+    "focus_states": "Visible ring-2 ring-primary ring-offset-2 on all interactive elements.",
+    "aria_labels": "Required for all icon-only buttons."
+  },
+  "universal_guidelines": [
+    "Do NOT use 'Inter' for Headings. Use 'Manrope'.",
+    "Do NOT use gradients for text bodies, only for subtle borders or active states.",
+    "Use 'sonner' for all notifications.",
+    "Dashboard must be responsive. Mobile menu should be a sheet/drawer.",
+    "All interactive elements must have 'data-testid'.",
+    "Never use pure black #000000. Use #09090b or #0f172a."
+  ],
+  "instructions_to_main_agent": {
+    "setup": [
+      "Install 'framer-motion' and 'sonner' if not present.",
+      "Configure 'tailwind.config.js' with the custom colors and fonts.",
+      "Create a 'Layout' component that handles the Sidebar + Topbar structure.",
+      "Use 'lucide-react' for all icons."
+    ],
+    "page_structure": {
+      "dashboard": "Use the 'Bento' grid layout.",
+      "settings": "Use a sidebar-within-sidebar or tabs layout.",
+      "tables": "Use 'shadcn/ui' Table component, but strip the borders to make it cleaner."
+    }
+  }
+}

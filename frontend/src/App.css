@@ -1,0 +1,71 @@
+/* App-specific styles */
+.page-container {
+    @apply p-6 md:p-8;
+}
+
+.page-title {
+    @apply text-2xl md:text-3xl font-bold font-heading text-foreground mb-2;
+}
+
+.page-description {
+    @apply text-muted-foreground text-sm md:text-base mb-6;
+}
+
+.stat-card {
+    @apply bg-card border border-border/50 rounded-lg p-4 md:p-6 hover:border-primary/30 transition-colors duration-300;
+}
+
+.stat-value {
+    @apply text-2xl md:text-3xl font-bold font-heading text-foreground;
+}
+
+.stat-label {
+    @apply text-sm text-muted-foreground mt-1;
+}
+
+.content-card {
+    @apply bg-card border border-border/50 rounded-lg hover:border-primary/30 transition-colors duration-300;
+}
+
+.btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90 shadow-[0_0_10px_rgba(99,102,241,0.3)] transition-all;
+}
+
+.input-field {
+    @apply bg-transparent border-input focus:ring-1 focus:ring-primary;
+}
+
+/* Custom AI indicator animation */
+@keyframes ai-thinking {
+    0%, 100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+.ai-thinking {
+    animation: ai-thinking 1.5s ease-in-out infinite;
+}
+
+/* Table styles */
+.data-table {
+    @apply w-full;
+}
+
+.data-table th {
+    @apply text-left text-xs font-medium text-muted-foreground uppercase tracking-wider py-3 px-4;
+}
+
+.data-table td {
+    @apply py-3 px-4 text-sm;
+}
+
+.data-table tr {
+    @apply border-b border-border/30;
+}
+
+.data-table tr:hover {
+    @apply bg-muted/30;
+}
