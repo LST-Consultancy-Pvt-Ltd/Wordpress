@@ -1976,7 +1976,7 @@ async def test_site_connection(site_id: str):
                 detail = me_resp.json().get("message", "")
             except Exception:
                 pass
-            await db.sites.update_one({"id": site_id}, {"$set": {"status": "auth_error"}})
+            # Do NOT persist auth_error to DB — test is non-destructive; sync determines persisted status
             return {"status": "auth_error", "message": f"Invalid credentials: {detail}. Check: (1) username is your WP login name (not email/display name), (2) Application Password was generated in WP Admin → Users → Profile → Application Passwords, (3) if on Apache, add 'SetEnvIf Authorization \"(.*)\" HTTP_AUTHORIZATION=$1' to .htaccess."}
         else:
             return {"status": "error", "message": f"WordPress returned HTTP {me_resp.status_code}"}
@@ -2068,10 +2068,15 @@ async def sync_site(site_id: str):
                     upsert=True
                 )
         
-        # Update site last_sync
+        # Update site last_sync — only set connected if not already in a known-bad auth state
+        await db.sites.update_one(
+            {"id": site_id, "status": {"$ne": "auth_error"}},
+            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat(), "status": "connected"}}
+        )
+        # Always update last_sync regardless of auth status
         await db.sites.update_one(
             {"id": site_id},
-            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat(), "status": "connected"}}
+            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat()}}
         )
         
         await log_activity(site_id, "sync_completed", "Site data synchronized successfully")
