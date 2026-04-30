@@ -35,7 +35,7 @@ import { getSites, getSEOMetrics, analyzeSEO, selfHealSEO, refreshSEOFromGoogle,
   getImageAudit, auditImages, generateAltText, generateAllAltTexts,
   getRankTrackerData, saveTrackedKeywords, getTrackedKeywords,
   triggerAutoSEOScan, getAutoSEOSuggestions, applyMetaTags, applyOGTags, applySchema, applyBulkSEO,
-  downloadMetaFixerPlugin, fullPageSEOAudit, submitSitemapToGSC,
+  downloadMetaFixerPlugin, downloadBridgePlugin, fullPageSEOAudit, submitSitemapToGSC,
 } from "../lib/api";
 import SSEProgressDrawer, { useSSETask } from "../components/SSEProgressDrawer";
 import ImpactBadge from "../components/ImpactBadge";
@@ -127,6 +127,7 @@ export default function SEO() {
   const [metaFixerDialogOpen, setMetaFixerDialogOpen] = useState(false);
   const [metaFixerWarning, setMetaFixerWarning] = useState("");
   const [downloadingPlugin, setDownloadingPlugin] = useState(false);
+  const [downloadingBridge, setDownloadingBridge] = useState(false);
 
   // Full Page SEO state
   const [fpDialogOpen, setFpDialogOpen] = useState(false);
@@ -520,6 +521,21 @@ export default function SEO() {
     } catch (err) {
       toast.error("Download failed");
     } finally { setDownloadingPlugin(false); }
+  };
+
+  const handleDownloadBridgePlugin = async () => {
+    setDownloadingBridge(true);
+    try {
+      const res = await downloadBridgePlugin(selectedSite);
+      const url = URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "wp-manager-bridge.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error("Bridge plugin download failed");
+    } finally { setDownloadingBridge(false); }
   };
 
   const handleApplyOG = async (s) => {
@@ -2535,37 +2551,49 @@ export default function SEO() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertCircle className="h-5 w-5 text-yellow-500" />
-              Yoast Meta Fields Not Writable via REST API
+              SEO Meta Fields Not Written to WordPress
             </DialogTitle>
             <DialogDescription>
-              WordPress returned 200 OK but the Yoast SEO meta fields were silently ignored.
-              This happens when the meta keys are not registered with <code>show_in_rest: true</code> on your server.
+              WordPress blocked the SEO write. This happens because Yoast/RankMath meta fields
+              require a bridge plugin that writes directly via PHP — the REST API and XML-RPC
+              both have restrictions on underscore-prefixed meta keys.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 text-sm">
             <p className="text-muted-foreground">{metaFixerWarning}</p>
-            <div className="rounded-md border bg-muted/50 p-3 space-y-2">
-              <p className="font-medium">Fix: Install the LST SEO Meta Fixer plugin</p>
-              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                <li>Click <strong>Download Plugin</strong> below to get a <code>.zip</code> file.</li>
+
+            <div className="rounded-md border border-blue-200 bg-blue-50 p-3 space-y-2">
+              <p className="font-semibold text-blue-900">Recommended Fix: Install the WP Manager Bridge Plugin</p>
+              <p className="text-blue-800 text-xs">This plugin writes SEO meta directly via PHP — no REST API or XML-RPC restrictions.</p>
+              <ol className="list-decimal list-inside space-y-1 text-blue-800">
+                <li>Click <strong>Download Bridge Plugin</strong> below.</li>
                 <li>In WordPress Admin go to <strong>Plugins → Add New → Upload Plugin</strong>.</li>
-                <li>Choose the downloaded <code>lst-seo-meta-fixer.zip</code> and click <strong>Install Now</strong>.</li>
-                <li>Click <strong>Activate Plugin</strong>.</li>
-                <li>Go to <strong>Settings → Permalinks</strong> and click <strong>Save Changes</strong> to flush rewrite rules.</li>
-                <li>Come back here and re-apply the meta tags — they will now write correctly.</li>
+                <li>Upload <code>wp-manager-bridge.zip</code> and click <strong>Install Now → Activate</strong>.</li>
+                <li>Come back here and re-apply — changes will reflect immediately.</li>
               </ol>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Alternatively, place the PHP file inside <code>wp-content/mu-plugins/</code> via your host's File Manager — no activation needed.
-            </p>
+
+            <div className="rounded-md border bg-muted/50 p-3 space-y-2">
+              <p className="font-medium">Alternative: LST SEO Meta Fixer (lighter plugin)</p>
+              <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                <li>Click <strong>Download Meta Fixer</strong> below.</li>
+                <li>Install via <strong>Plugins → Add New → Upload Plugin</strong>.</li>
+                <li>Activate, then go to <strong>Settings → Permalinks → Save Changes</strong>.</li>
+                <li>Re-apply meta tags here.</li>
+              </ol>
+            </div>
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 flex-wrap">
             <Button variant="outline" onClick={() => setMetaFixerDialogOpen(false)}>Close</Button>
-            <Button onClick={handleDownloadMetaFixer} disabled={downloadingPlugin}>
+            <Button variant="outline" onClick={handleDownloadMetaFixer} disabled={downloadingPlugin}>
               {downloadingPlugin ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              Download Plugin (.zip)
+              Download Meta Fixer
+            </Button>
+            <Button onClick={handleDownloadBridgePlugin} disabled={downloadingBridge}>
+              {downloadingBridge ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Download Bridge Plugin
             </Button>
           </DialogFooter>
         </DialogContent>

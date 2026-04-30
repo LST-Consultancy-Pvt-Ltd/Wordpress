@@ -280,6 +280,7 @@ export const applyOGTags           = (siteId, wpId, data)  => api.post(`/seo/app
 export const applySchema           = (siteId, wpId, data)  => api.post(`/seo/apply-schema/${siteId}/${wpId}`, data);
 export const applyBulkSEO          = (siteId, data)        => api.post(`/seo/apply-bulk/${siteId}`, data);
 export const downloadMetaFixerPlugin = (siteId)            => api.get(`/seo/meta-fixer-plugin/${siteId}`, { responseType: "blob" });
+export const downloadBridgePlugin    = (siteId)            => api.get(`/seo/bridge-plugin/${siteId}`, { responseType: "blob" });
 export const fullPageSEOAudit        = (siteId, data)      => api.post(`/seo/full-page-audit/${siteId}`, data);
 
 // Feature: Media Library

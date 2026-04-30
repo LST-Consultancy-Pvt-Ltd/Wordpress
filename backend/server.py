@@ -1030,8 +1030,15 @@ async def wp_xmlrpc_write(site: dict, post_type: str, title: str, content: str, 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _call)
 
-async def wp_xmlrpc_edit(site: dict, wp_id: int, data: dict) -> bool:
-    """Edit an existing post/page via XML-RPC (fallback for hosts that strip Authorization header)."""
+async def wp_xmlrpc_edit(site: dict, wp_id: int, data: dict, verify_keys: list = None) -> bool:
+    """Edit an existing post/page via XML-RPC (fallback for hosts that strip Authorization header).
+
+    If verify_keys is provided, reads the post back after editing and returns True only if ALL
+    specified custom_field keys were actually written with the expected values.
+    WordPress silently ignores protected (underscore-prefixed) meta keys when the user lacks
+    the required capability — wp.editPost still returns true in that case, so verification is
+    the only way to detect this silent failure.
+    """
     xmlrpc_url = f"{site['url'].rstrip('/')}/xmlrpc.php"
     app_password = site['app_password'].replace(" ", "")
     username = site['username']
@@ -1048,6 +1055,7 @@ async def wp_xmlrpc_edit(site: dict, wp_id: int, data: dict) -> bool:
         # custom_fields writes directly to wp_postmeta, bypassing REST meta registration.
         # WordPress XML-RPC requires the field 'id' to UPDATE an existing meta row;
         # without it, a duplicate row is created that plugins like Yoast ignore.
+        intended_values: dict = {}
         if "custom_fields" in data:
             # Fetch existing custom fields to get their IDs for updating
             try:
@@ -1055,18 +1063,42 @@ async def wp_xmlrpc_edit(site: dict, wp_id: int, data: dict) -> bool:
                 existing_cf = existing_post.get("custom_fields", [])
                 existing_map = {}
                 for cf in existing_cf:
-                    existing_map[cf["key"]] = cf["id"]
+                    # Keep only the FIRST occurrence per key — that's the one WordPress reads
+                    if cf["key"] not in existing_map:
+                        existing_map[cf["key"]] = cf["id"]
             except Exception:
                 existing_map = {}
 
             resolved_fields = []
             for field in data["custom_fields"]:
                 entry = {"key": field["key"], "value": field["value"]}
+                intended_values[field["key"]] = field["value"]
                 if field["key"] in existing_map:
                     entry["id"] = existing_map[field["key"]]
                 resolved_fields.append(entry)
             struct["custom_fields"] = resolved_fields
-        return server.wp.editPost(0, username, app_password, wp_id, struct)
+
+        result = server.wp.editPost(0, username, app_password, wp_id, struct)
+        if not result:
+            return False
+
+        # Verify the write actually took effect if requested.
+        # wp.editPost returns True even when protected meta is silently skipped.
+        if verify_keys and intended_values:
+            try:
+                after_post = server.wp.getPost(0, username, app_password, wp_id, ["custom_fields"])
+                after_cf = after_post.get("custom_fields", [])
+                after_map = {}
+                for cf in after_cf:
+                    if cf["key"] not in after_map:
+                        after_map[cf["key"]] = cf["value"]
+                for key in verify_keys:
+                    if key in intended_values and after_map.get(key) != intended_values[key]:
+                        return False  # Write was silently discarded
+            except Exception:
+                pass  # Can't verify — assume write succeeded
+
+        return True
 
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _call)
@@ -6759,6 +6791,37 @@ async def _wp_post_fallback(site: dict, endpoint: str, payload: dict) -> "httpx.
     except httpx.TimeoutException as e:
         raise HTTPException(status_code=504, detail=f"WordPress site at {site['url']} timed out: {e}")
 
+
+async def _wpmb_bridge_post(site: dict, bridge_endpoint: str, payload: dict) -> Optional["httpx.Response"]:
+    """POST to the WP Manager Bridge plugin endpoint using X-WPMB-Auth header.
+    This header survives CDN stripping (Hostinger 'hcdn', Cloudflare, etc.) where
+    the standard Authorization header is removed before reaching WordPress.
+    Returns None if the plugin is not installed or the call cannot be made.
+    """
+    if site.get("auth_type") == "jwt":
+        return None  # bridge plugin uses Basic header path; JWT users have a different working path
+    if not site.get("app_password") or not site.get("username"):
+        return None
+    wp_url = site["url"].rstrip("/") + "/wp-json/wp-manager/v1/" + bridge_endpoint.lstrip("/")
+    app_password = site["app_password"].replace(" ", "")
+    raw_creds = site["username"] + ":" + app_password
+    b64_creds = base64.b64encode(raw_creds.encode()).decode()
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as hc:
+            return await hc.post(
+                wp_url,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Basic " + b64_creds,   # try standard header first
+                    "X-WPMB-Auth": "Basic " + b64_creds,     # CDN-resistant fallback
+                },
+                json=payload,
+            )
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return None
+    except Exception:
+        return None
+
 class AutoSEOApplyMetaRequest(BaseModel):
     content_type: str  # "post" or "page"
     ai_title: str
@@ -6978,6 +7041,31 @@ async def apply_meta_tags(
     updated_fields: list = []
     warning: Optional[str] = None
 
+    # PRIMARY PATH: WP Manager Bridge plugin (uses X-WPMB-Auth header, CDN-resistant)
+    # Writes meta directly via PHP update_post_meta() — bypasses REST meta whitelist.
+    bridge_resp = await _wpmb_bridge_post(
+        site,
+        f"seo/apply-meta/{wp_id}",
+        {"meta_title": data.ai_title, "meta_description": data.ai_desc},
+    )
+    if bridge_resp is not None and bridge_resp.status_code in (200, 201):
+        try:
+            body = bridge_resp.json()
+        except Exception:
+            body = {}
+        if body.get("success"):
+            await db.seo_suggestions.update_one(
+                {"site_id": site_id, "wp_id": wp_id},
+                {"$set": {"status": "applied"}}
+            )
+            await log_activity(site_id, "auto_seo_meta_applied",
+                               f"Meta tags applied to {data.content_type} {wp_id} via bridge plugin")
+            return {
+                "success": True,
+                "wp_id": wp_id,
+                "updated_fields": ["meta_title (bridge)", "meta_description (bridge)"],
+            }
+
     # Try Yoast fields first (with 401 auth fallback for Hostinger/LiteSpeed)
     yoast_resp = await _wp_post_fallback(site, ep, {
         "meta": {
@@ -6992,7 +7080,7 @@ async def apply_meta_tags(
         title_in_resp = resp_meta.get("_yoast_wpseo_title", "")
         desc_in_resp = resp_meta.get("_yoast_wpseo_metadesc", "")
 
-        if title_in_resp or desc_in_resp:
+        if title_in_resp == data.ai_title or desc_in_resp == data.ai_desc:
             # Meta was written and confirmed in POST response
             updated_fields = ["_yoast_wpseo_title", "_yoast_wpseo_metadesc"]
         else:
@@ -7004,7 +7092,8 @@ async def apply_meta_tags(
             written_meta = (verify_resp.json().get("meta") or {}) if verify_resp.status_code == 200 else {}
             title_written = written_meta.get("_yoast_wpseo_title", "")
             desc_written = written_meta.get("_yoast_wpseo_metadesc", "")
-            if title_written or desc_written:
+            # Compare to intended values — an existing old value is not confirmation the write succeeded
+            if title_written == data.ai_title or desc_written == data.ai_desc:
                 updated_fields = ["_yoast_wpseo_title", "_yoast_wpseo_metadesc"]
             else:
                 # Yoast fields were silently ignored — try RankMath
@@ -7018,7 +7107,7 @@ async def apply_meta_tags(
                     # Verify RankMath too
                     vr2 = await wp_api_request(site, "GET", f"{ep}?context=edit&_fields=meta")
                     rm_meta = (vr2.json().get("meta") or {}) if vr2.status_code == 200 else {}
-                    if rm_meta.get("rank_math_title"):
+                    if rm_meta.get("rank_math_title") == data.ai_title or rm_meta.get("rank_math_description") == data.ai_desc:
                         updated_fields = ["rank_math_title", "rank_math_description"]
                     else:
                         # REST meta failed for both plugins — try XML-RPC custom_fields (writes directly to wp_postmeta)
@@ -7032,39 +7121,33 @@ async def apply_meta_tags(
                                     {"key": "rank_math_title", "value": data.ai_title},
                                     {"key": "rank_math_description", "value": data.ai_desc},
                                 ]
-                            })
+                            }, verify_keys=["_yoast_wpseo_title", "_yoast_wpseo_metadesc", "rank_math_title"])
                         except Exception:
                             xmlrpc_ok = False
 
                         if xmlrpc_ok:
                             updated_fields = ["_yoast_wpseo_title (xmlrpc)", "_yoast_wpseo_metadesc (xmlrpc)"]
                             warning = (
-                                "Yoast/RankMath REST API meta fields were not writable on this site. "
-                                "SEO title and description were written via XML-RPC fallback and are now active."
+                                "Yoast/RankMath REST API meta fields were not writable via REST. "
+                                "SEO title and description were written via XML-RPC fallback and are now active in WordPress."
                             )
                         else:
-                            # Last resort: update native WP title + excerpt
-                            native_payload: dict = {"title": data.ai_title}
-                            if data.ai_desc:
-                                native_payload["excerpt"] = data.ai_desc
-                            native_resp = await _wp_post_fallback(site, ep, native_payload)
-                            if native_resp.status_code in (200, 201):
-                                updated_fields = ["title (native WP)", "excerpt (native WP)"]
-                                warning = (
-                                    "Yoast SEO, RankMath, and XML-RPC meta writes all failed on this site. "
-                                    "The WordPress native post title and excerpt were updated as a last resort — "
-                                    "these do NOT control the SEO <title> tag. "
-                                    "To fix: ensure Yoast SEO or RankMath is active, then go to "
-                                    "WP Admin \u2192 Settings \u2192 Permalinks \u2192 Save."
-                                )
-                            else:
-                                raise HTTPException(status_code=502,
-                                    detail="Meta fields not writable \u2014 Yoast/RankMath REST API, XML-RPC, and native WP title all failed.")
+                            # All automated paths failed — show plugin install instructions
+                            updated_fields = []
+                            warning = (
+                                "SEO meta fields could not be written. WordPress blocked the write via both "
+                                "REST API and XML-RPC (protected meta key restriction). "
+                                "Install the WP Manager Bridge Plugin to fix this permanently."
+                            )
                 else:
                     updated_fields = []
-                    warning = "SEO meta fields may not have been saved. Verify Yoast SEO or RankMath is active."
+                    warning = (
+                        "SEO meta fields could not be written. WordPress blocked the write via both "
+                        "REST API and XML-RPC (protected meta key restriction). "
+                        "Install the WP Manager Bridge Plugin to fix this permanently."
+                    )
     else:
-        # Fallback: RankMath
+        # Fallback: RankMath (Yoast POST itself failed with non-200)
         rm_resp = await _wp_post_fallback(site, ep, {
             "meta": {
                 "rank_math_title": data.ai_title,
@@ -7072,16 +7155,22 @@ async def apply_meta_tags(
             }
         })
         if rm_resp.status_code in (200, 201):
-            updated_fields = ["rank_math_title", "rank_math_description"]
+            vr_rm = await wp_api_request(site, "GET", f"{ep}?context=edit&_fields=meta")
+            vr_rm_meta = (vr_rm.json().get("meta") or {}) if vr_rm.status_code == 200 else {}
+            if vr_rm_meta.get("rank_math_title") == data.ai_title or vr_rm_meta.get("rank_math_description") == data.ai_desc:
+                updated_fields = ["rank_math_title", "rank_math_description"]
+            else:
+                warning = "SEO meta fields may not have been saved. Ensure Yoast SEO or RankMath is active and the LST Meta Fixer plugin is installed."
         else:
             raise HTTPException(
                 status_code=502,
                 detail=f"WordPress returned {rm_resp.status_code}: {rm_resp.text[:200]}"
             )
 
+    db_status = "applied" if updated_fields else "pending"
     await db.seo_suggestions.update_one(
         {"site_id": site_id, "wp_id": wp_id},
-        {"$set": {"status": "applied"}}
+        {"$set": {"status": db_status}}
     )
     await log_activity(site_id, "auto_seo_meta_applied",
                        f"Meta tags applied to {data.content_type} {wp_id}")
@@ -7105,6 +7194,34 @@ async def apply_og_tags(
     updated_fields: list = []
     warning: Optional[str] = None
 
+    # PRIMARY PATH: WP Manager Bridge plugin (CDN-resistant)
+    bridge_resp = await _wpmb_bridge_post(
+        site,
+        f"seo/apply-og/{wp_id}",
+        {
+            "og_title": data.og_title,
+            "og_description": data.og_desc,
+            "og_image": data.og_image,
+        },
+    )
+    if bridge_resp is not None and bridge_resp.status_code in (200, 201):
+        try:
+            body = bridge_resp.json()
+        except Exception:
+            body = {}
+        if body.get("success"):
+            await db.seo_suggestions.update_one(
+                {"site_id": site_id, "wp_id": wp_id},
+                {"$set": {"status": "applied"}}
+            )
+            await log_activity(site_id, "auto_seo_og_applied",
+                               f"OG tags applied to {data.content_type} {wp_id} via bridge plugin")
+            return {
+                "success": True,
+                "wp_id": wp_id,
+                "updated_fields": ["og_title (bridge)", "og_description (bridge)", "og_image (bridge)"],
+            }
+
     # Try Yoast OG fields first
     resp = await _wp_post_fallback(site, ep, {
         "meta": {
@@ -7118,7 +7235,7 @@ async def apply_og_tags(
         verify = await wp_api_request(site, "GET", f"{ep}?context=edit&_fields=meta")
         if verify.status_code == 200:
             vm = verify.json().get("meta") or {}
-            if vm.get("_yoast_wpseo_opengraph-title") or vm.get("_yoast_wpseo_opengraph-description"):
+            if vm.get("_yoast_wpseo_opengraph-title") == data.og_title or vm.get("_yoast_wpseo_opengraph-description") == data.og_desc:
                 updated_fields = ["og_title", "og_desc", "og_image"]
             else:
                 # Yoast OG fields silently ignored — try RankMath equivalents
@@ -7131,7 +7248,7 @@ async def apply_og_tags(
                 if rm_resp.status_code in (200, 201):
                     vr2 = await wp_api_request(site, "GET", f"{ep}?context=edit&_fields=meta")
                     rm_meta = (vr2.json().get("meta") or {}) if vr2.status_code == 200 else {}
-                    if rm_meta.get("rank_math_facebook_title"):
+                    if rm_meta.get("rank_math_facebook_title") == data.og_title or rm_meta.get("rank_math_facebook_description") == data.og_desc:
                         updated_fields = ["rank_math_facebook_title", "rank_math_facebook_description"]
                     else:
                         # REST OG fields failed — try XML-RPC custom_fields as fallback
@@ -7145,7 +7262,7 @@ async def apply_og_tags(
                                     {"key": "rank_math_facebook_title", "value": data.og_title},
                                     {"key": "rank_math_facebook_description", "value": data.og_desc},
                                 ]
-                            })
+                            }, verify_keys=["_yoast_wpseo_opengraph-title", "_yoast_wpseo_opengraph-description", "rank_math_facebook_title"])
                         except Exception:
                             xmlrpc_og_ok = False
 
@@ -7169,9 +7286,10 @@ async def apply_og_tags(
             detail=f"WordPress returned {resp.status_code}: {resp.text[:200]}"
         )
 
+    og_db_status = "applied" if updated_fields else "pending"
     await db.seo_suggestions.update_one(
         {"site_id": site_id, "wp_id": wp_id},
-        {"$set": {"status": "applied"}}
+        {"$set": {"status": og_db_status}}
     )
     await log_activity(site_id, "auto_seo_og_applied",
                        f"OG tags applied to {data.content_type} {wp_id}")
@@ -7192,6 +7310,32 @@ async def apply_schema_markup(
     site = await get_wp_credentials(site_id)
     ep = f"{'pages' if data.content_type == 'page' else 'posts'}/{wp_id}"
     ep_edit = f"{ep}?context=edit&_fields=id,content,meta"
+
+    # PRIMARY PATH: WP Manager Bridge plugin (CDN-resistant)
+    bridge_resp = await _wpmb_bridge_post(
+        site,
+        f"seo/apply-schema/{wp_id}",
+        {"schema": data.schema_markup},
+    )
+    if bridge_resp is not None and bridge_resp.status_code in (200, 201):
+        try:
+            body = bridge_resp.json()
+        except Exception:
+            body = {}
+        if body.get("success"):
+            await db.seo_suggestions.update_one(
+                {"site_id": site_id, "wp_id": wp_id},
+                {"$set": {"status": "applied"}}
+            )
+            await log_activity(site_id, "auto_seo_schema_applied",
+                               f"Schema applied to {data.content_type} {wp_id} via bridge plugin")
+            return {
+                "success": True,
+                "wp_id": wp_id,
+                "schema_meta_written": True,
+                "schema_in_content": False,
+                "method": "bridge_plugin",
+            }
 
     import re as _re
     injected_via_content = False
@@ -10965,6 +11109,39 @@ async def download_meta_fixer_plugin(site_id: str, _: dict = Depends(require_edi
         content=buf.read(),
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="lst-seo-meta-fixer.zip"'},
+    )
+
+
+@api_router.get("/seo/bridge-plugin/{site_id}")
+async def download_bridge_plugin(site_id: str, _: dict = Depends(require_editor)):
+    """Return a ZIP of the WP Manager Bridge plugin.
+    This plugin writes SEO meta directly via update_post_meta(), bypassing REST API registration
+    restrictions and XML-RPC protected-field limitations.  It is the most reliable path for
+    writing Yoast / RankMath meta fields from an external app.
+    Install via WP Admin → Plugins → Add New → Upload Plugin."""
+    from fastapi.responses import Response
+    plugin_dir = os.path.join(os.path.dirname(__file__), "..", ".tmp_plugin", "wp-manager-bridge")
+    plugin_dir = os.path.normpath(plugin_dir)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if os.path.isdir(plugin_dir):
+            for root, dirs, files in os.walk(plugin_dir):
+                # Skip hidden dirs and node_modules if accidentally present
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for fname in files:
+                    if fname.startswith("."):
+                        continue
+                    abs_path = os.path.join(root, fname)
+                    rel_path = os.path.relpath(abs_path, os.path.dirname(plugin_dir))
+                    zf.write(abs_path, rel_path)
+        else:
+            raise HTTPException(status_code=404, detail="Bridge plugin source not found on server.")
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="wp-manager-bridge.zip"'},
     )
 
 
