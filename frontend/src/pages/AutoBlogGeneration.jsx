@@ -26,6 +26,9 @@ import { toast } from "sonner";
 
 const WRITING_STYLES = ["Professional", "Casual", "Academic", "Conversational", "Persuasive", "Storytelling"];
 const POST_STATUSES = ["draft", "publish"];
+const TONES = ["Professional", "Conversational", "Technical"];
+const AUDIENCES = ["SMB", "Enterprise", "Tech", "Non-tech", "Consumer", "Startup Founders", "Marketers", "Developers"];
+const COUNTRIES = ["Global", "United States", "United Kingdom", "Canada", "Australia", "India", "Germany", "France", "UAE", "Singapore", "Japan"];
 
 export default function AutoBlogGeneration() {
   const [sites, setSites] = useState([]);
@@ -44,6 +47,15 @@ export default function AutoBlogGeneration() {
     post_status: "draft",
     auto_image: true,
     auto_seo: true,
+    // Blog Generation Engine inputs
+    target_country: "Global",
+    target_audience: "SMB",
+    primary_color: "#0A66C2",
+    secondary_color: "",
+    brand_name: "",
+    tone: "Professional",
+    word_count_min: 1200,
+    word_count_max: 2000,
   });
 
   useEffect(() => {
@@ -142,6 +154,95 @@ export default function AutoBlogGeneration() {
                   {WRITING_STYLES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tone</Label>
+              <Select value={config.tone} onValueChange={(v) => setConfig(c => ({ ...c, tone: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TONES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Target Country</Label>
+                <Select value={config.target_country} onValueChange={(v) => setConfig(c => ({ ...c, target_country: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {COUNTRIES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Target Audience</Label>
+                <Select value={config.target_audience} onValueChange={(v) => setConfig(c => ({ ...c, target_audience: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {AUDIENCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Brand / Company Name</Label>
+              <Input
+                placeholder="e.g., Acme Inc."
+                value={config.brand_name}
+                onChange={(e) => setConfig(c => ({ ...c, brand_name: e.target.value }))}
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Primary Color</Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={config.primary_color}
+                    onChange={(e) => setConfig(c => ({ ...c, primary_color: e.target.value }))}
+                    className="w-10 h-9 rounded border cursor-pointer flex-shrink-0"
+                  />
+                  <Input
+                    value={config.primary_color}
+                    onChange={(e) => setConfig(c => ({ ...c, primary_color: e.target.value }))}
+                    placeholder="#0A66C2"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Secondary <span className="text-xs text-muted-foreground">(optional)</span></Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={config.secondary_color || "#ffffff"}
+                    onChange={(e) => setConfig(c => ({ ...c, secondary_color: e.target.value }))}
+                    className="w-10 h-9 rounded border cursor-pointer flex-shrink-0"
+                  />
+                  <Input
+                    value={config.secondary_color}
+                    onChange={(e) => setConfig(c => ({ ...c, secondary_color: e.target.value }))}
+                    placeholder="(optional)"
+                    className="font-mono text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Word Count: {config.word_count_min}–{config.word_count_max}</Label>
+              <Slider
+                value={[config.word_count_min, config.word_count_max]}
+                onValueChange={([min, max]) => setConfig(c => ({ ...c, word_count_min: min, word_count_max: max }))}
+                min={500}
+                max={4000}
+                step={100}
+                minStepsBetweenThumbs={2}
+              />
             </div>
 
             <div className="space-y-2">

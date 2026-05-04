@@ -69,11 +69,28 @@ export function useSSETask() {
     };
 
     source.onerror = () => {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, status: "error", latestMessage: "Connection lost" } : t))
-      );
       source.close();
       delete sourceRefs.current[taskId];
+      // Before showing "Connection lost", check if the task actually completed
+      // (long-running tasks may finish after the SSE stream times out).
+      fetch(`${BACKEND_URL}/api/tasks/${taskId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((taskStatus) => {
+          setTasks((prev) =>
+            prev.map((t) => {
+              if (t.id !== taskId) return t;
+              if (taskStatus?.status === "completed") {
+                return { ...t, status: "complete", percent: 100, latestMessage: taskStatus.progress?.message ?? "Completed" };
+              }
+              return { ...t, status: "error", latestMessage: "Connection lost" };
+            })
+          );
+        })
+        .catch(() => {
+          setTasks((prev) =>
+            prev.map((t) => (t.id === taskId ? { ...t, status: "error", latestMessage: "Connection lost" } : t))
+          );
+        });
     };
 
     return source;

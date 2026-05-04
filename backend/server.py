@@ -1164,15 +1164,26 @@ async def sse_generator(task_id: str) -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'Task not found'}})}\n\n"
         return
     q = task_queues[task_id]
+    MAX_TOTAL_WAIT = 600  # 10 minutes overall cap
+    KEEPALIVE_INTERVAL = 30  # send a heartbeat every 30s to prevent proxy/browser timeout
+    elapsed = 0
     try:
-        while True:
-            item = await asyncio.wait_for(q.get(), timeout=120)
+        while elapsed < MAX_TOTAL_WAIT:
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=KEEPALIVE_INTERVAL)
+            except asyncio.TimeoutError:
+                elapsed += KEEPALIVE_INTERVAL
+                # SSE comment lines (starting with ':') are ignored by clients but keep the
+                # TCP connection alive through proxies and prevent browser auto-close.
+                yield ": keepalive\n\n"
+                continue
             if item is None:
                 yield f"data: {json.dumps({'type': 'done', 'data': {}})}\n\n"
                 break
             yield f"data: {json.dumps(item)}\n\n"
-    except asyncio.TimeoutError:
-        yield f"data: {json.dumps({'type': 'timeout', 'data': {}})}\n\n"
+            elapsed = 0  # reset idle timer on any real event
+        else:
+            yield f"data: {json.dumps({'type': 'timeout', 'data': {}})}\n\n"
     finally:
         task_queues.pop(task_id, None)
 
@@ -12460,6 +12471,15 @@ class AutoBlogRequest(BaseModel):
     post_status: str = "draft"
     auto_image: bool = True
     auto_seo: bool = True
+    # Blog Generation Engine inputs
+    target_country: str = "Global"
+    target_audience: str = "SMB"          # SMB | Enterprise | Tech | Non-tech | Consumer
+    primary_color: str = "#0A66C2"        # HEX
+    secondary_color: str = ""             # HEX (optional)
+    brand_name: str = ""
+    tone: str = "Professional"            # Professional | Conversational | Technical
+    word_count_min: int = 1200
+    word_count_max: int = 2000
 
 @api_router.post("/auto-blog-generation/{site_id}/generate")
 async def generate_auto_blogs(site_id: str, data: AutoBlogRequest, background_tasks: BackgroundTasks, _=Depends(require_editor)):
@@ -12474,51 +12494,273 @@ async def _auto_blog_worker(task_id: str, site_id: str, data: AutoBlogRequest):
         site = await get_wp_credentials(site_id)
         posts = []
         keywords_str = ", ".join(data.keywords) if data.keywords else data.topic
+        primary = (data.primary_color or "#0A66C2").strip()
+        secondary = (data.secondary_color or "").strip()
+        brand = (data.brand_name or site.get("name", "")).strip()
+
+        # Pre-fetch existing WP categories & tags so we can map AI suggestions to IDs
+        cat_map: dict = {}
+        tag_map: dict = {}
+        try:
+            cats_resp = await wp_api_request(site, "GET", "categories?per_page=100")
+            if cats_resp.status_code == 200:
+                cat_map = {c["name"].lower(): c["id"] for c in cats_resp.json()}
+            tags_resp = await wp_api_request(site, "GET", "tags?per_page=100")
+            if tags_resp.status_code == 200:
+                tag_map = {t["name"].lower(): t["id"] for t in tags_resp.json()}
+        except Exception:
+            pass
+
+        async def _resolve_taxonomy(names: list[str], existing: dict, endpoint: str) -> list[int]:
+            ids: list[int] = []
+            for name in names:
+                if not name or not isinstance(name, str):
+                    continue
+                key = name.strip().lower()
+                if key in existing:
+                    ids.append(existing[key])
+                    continue
+                try:
+                    create_resp = await wp_api_request(site, "POST", endpoint, {"name": name.strip()})
+                    if create_resp.status_code in (200, 201):
+                        new_id = create_resp.json().get("id")
+                        if new_id:
+                            existing[key] = new_id
+                            ids.append(new_id)
+                except Exception:
+                    pass
+            return ids
 
         for i in range(data.num_posts):
             pct = int(((i) / data.num_posts) * 100)
             await push_event(task_id, "progress", {"message": f"Generating post {i+1}/{data.num_posts}...", "percent": pct})
 
-            prompt = f"""Write a complete, SEO-optimized blog post about: {data.topic}
-Target keywords: {keywords_str}
-Writing style: {data.writing_style}
-Post number {i+1} of {data.num_posts} — each post should cover a unique angle.
+            system_msg = (
+                "You are an advanced AI Blog Generation Engine that creates highly professional, "
+                "visually structured, SEO-optimized blog posts ready for direct publishing on WordPress. "
+                "You write like a real expert consultant — clear, confident, slightly conversational, never robotic. "
+                "Your HTML output must look like a professionally designed SaaS-style blog page, NOT a plain article. "
+                "Always respond with ONLY valid JSON, no markdown fences, no commentary."
+                f"\n\n{HUMANIZE_DIRECTIVE}"
+            )
 
-{HUMANIZE_DIRECTIVE}
+            prompt = f"""Generate a complete, publishable blog post.
 
-Respond with JSON:
+INPUTS:
+- Blog Topic: {data.topic}
+- Target Country/Region: {data.target_country}
+- Target Audience: {data.target_audience}
+- Brand/Company Name: {brand or "(unbranded)"}
+- Tone: {data.tone}
+- Writing Style: {data.writing_style}
+- Word Count Range: {data.word_count_min}–{data.word_count_max} words
+- Primary Color (HEX): {primary}
+- Secondary Color (HEX): {secondary or "(none — derive a tasteful complement of primary)"}
+- Target Keywords: {keywords_str}
+- Post Variation: This is post {i+1} of {data.num_posts} — use a UNIQUE angle vs. siblings.
+
+OUTPUT — Return ONLY this JSON object (no fences, no extra text):
 {{
-    "title": "Blog post title",
-    "content": "<h2>...</h2><p>...</p>... (full HTML content, 800-1500 words)",
-    "excerpt": "2-3 sentence excerpt",
-    "meta_title": "SEO meta title (under 60 chars)",
-    "meta_description": "SEO meta description (under 160 chars)",
-    "tags": ["tag1", "tag2"],
-    "word_count": <number>
-}}"""
+  "title": "SEO title (clickable, engaging, under 65 chars)",
+  "meta_title": "SEO meta title for search engines (under 60 chars, includes focus keyword near the start)",
+  "slug": "kebab-case-url-slug",
+  "meta_description": "Max 155 characters, compelling, includes primary keyword",
+  "focus_keyword": "single primary focus keyword phrase",
+  "secondary_keywords": ["lsi keyword 1", "lsi keyword 2", "lsi keyword 3"],
+  "og_title": "Open Graph title (under 70 chars, social-share friendly)",
+  "og_description": "Open Graph description (under 200 chars, conversion-friendly)",
+  "twitter_title": "Twitter card title (under 70 chars)",
+  "twitter_description": "Twitter card description (under 200 chars)",
+  "featured_image_prompt": "Detailed prompt for AI image generation: modern SaaS / corporate illustration / 3D gradient style, 16:9 landscape, topic-relevant elements, brand color tone using {primary}",
+  "featured_image_alt": "Descriptive ALT text under 125 chars (includes focus keyword)",
+  "featured_image_caption": "Short caption (1 sentence)",
+  "content_html": "FULL styled HTML — see DESIGN REQUIREMENTS below",
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "categories": ["primary-category"],
+  "internal_link_suggestions": [
+    {{"anchor_text": "...", "topic_to_link_to": "..."}}
+  ],
+  "external_link_suggestions": [
+    {{"anchor_text": "...", "url": "https://authoritative-source.com", "why": "..."}}
+  ],
+  "schema_jsonld": {{
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "...",
+    "description": "...",
+    "author": {{"@type": "Organization", "name": "{brand or 'Editorial Team'}"}},
+    "datePublished": "{datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+    "keywords": "{keywords_str}"
+  }},
+  "social_captions": {{
+    "linkedin": "Professional LinkedIn post (3-5 sentences, with 3-5 hashtags)",
+    "twitter": "Concise Twitter/X post under 270 chars with 2-3 hashtags"
+  }}
+}}
+
+DESIGN REQUIREMENTS for content_html (CRITICAL — this is what makes the blog look professional):
+
+The HTML must be CLEAN, SELF-CONTAINED, and use INLINE STYLES with the primary color {primary}{(' and secondary color ' + secondary) if secondary else ''}. It must be Elementor & Gutenberg compatible (no <style> tag, no <script> tag inside content_html — schema goes in schema_jsonld).
+
+Use this exact visual structure:
+
+1. INTRO BLOCK — A short opening (2-3 sentences) inside a tinted background div:
+   <div style="background:{primary}10;border-left:5px solid {primary};padding:20px 24px;border-radius:8px;margin:0 0 32px 0;">
+     <p style="margin:0;font-size:17px;line-height:1.7;color:#1a1a1a;">Opening hook here…</p>
+   </div>
+
+2. SECTION HEADINGS (H2):
+   <h2 style="color:{primary};font-size:28px;font-weight:700;margin:40px 0 16px;border-bottom:3px solid {primary};padding-bottom:8px;">Section Title</h2>
+
+3. SUB-HEADINGS (H3):
+   <h3 style="color:#1a1a1a;font-size:22px;font-weight:600;margin:28px 0 12px;">Sub Heading</h3>
+
+4. PARAGRAPHS — Max 3-4 lines each:
+   <p style="font-size:16px;line-height:1.75;color:#333;margin:0 0 16px;">Body text…</p>
+
+5. KEY INSIGHT BOX — Use AT LEAST ONCE per post:
+   <div style="background:linear-gradient(135deg,{primary}15,{primary}05);border:1px solid {primary}30;border-radius:12px;padding:24px;margin:28px 0;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
+     <p style="margin:0 0 8px;font-weight:700;color:{primary};font-size:14px;letter-spacing:0.5px;text-transform:uppercase;">💡 Key Insight</p>
+     <p style="margin:0;font-size:16px;line-height:1.7;color:#222;">Insight content…</p>
+   </div>
+
+6. PRO TIP BOX — Use AT LEAST ONCE:
+   <div style="background:#fff8e1;border-left:4px solid #f5a623;border-radius:6px;padding:18px 22px;margin:24px 0;">
+     <p style="margin:0 0 6px;font-weight:700;color:#b8860b;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">⚡ Pro Tip</p>
+     <p style="margin:0;font-size:15px;line-height:1.65;color:#333;">Tip content…</p>
+   </div>
+
+7. BULLET LISTS — Styled with custom markers:
+   <ul style="list-style:none;padding:0;margin:16px 0 24px;">
+     <li style="padding:8px 0 8px 28px;position:relative;font-size:16px;line-height:1.7;color:#333;">
+       <span style="position:absolute;left:0;color:{primary};font-weight:700;">✓</span>Item text
+     </li>
+   </ul>
+
+8. STATS / DATA CARDS GRID — Include AT LEAST 3 data points:
+   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 32px;">
+     <div style="background:#f9f9f9;border-radius:10px;padding:20px;text-align:center;border-top:3px solid {primary};">
+       <div style="font-size:32px;font-weight:800;color:{primary};line-height:1;">73%</div>
+       <div style="font-size:13px;color:#666;margin-top:6px;">Stat label</div>
+     </div>
+     <!-- repeat -->
+   </div>
+
+9. STEP-BY-STEP / NUMBERED CARDS:
+   <div style="background:#fafbfc;border-radius:10px;padding:20px 24px;margin:14px 0;border-left:4px solid {primary};">
+     <div style="display:flex;gap:14px;align-items:flex-start;">
+       <div style="background:{primary};color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">1</div>
+       <div><h4 style="margin:0 0 6px;font-size:17px;color:#1a1a1a;">Step Title</h4><p style="margin:0;font-size:15px;color:#555;line-height:1.65;">Step description.</p></div>
+     </div>
+   </div>
+
+10. FAQ SECTION — 4-6 questions, SEO-optimized:
+    <h2 style="color:{primary};font-size:28px;font-weight:700;margin:48px 0 20px;border-bottom:3px solid {primary};padding-bottom:8px;">Frequently Asked Questions</h2>
+    <div style="background:#f9f9f9;border-radius:10px;padding:20px 24px;margin:14px 0;">
+      <h4 style="margin:0 0 10px;font-size:17px;color:{primary};">Q: …?</h4>
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#333;">A: …</p>
+    </div>
+
+11. SECTION DIVIDER — Use between major sections:
+    <hr style="border:none;height:1px;background:linear-gradient(to right,transparent,{primary}40,transparent);margin:40px 0;" />
+
+12. SUMMARY BOX — Near the end, before CTA:
+    <div style="background:{primary};color:#fff;border-radius:12px;padding:28px;margin:32px 0;box-shadow:0 4px 16px {primary}30;">
+      <p style="margin:0 0 10px;font-weight:700;font-size:14px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.9;">📌 Summary</p>
+      <p style="margin:0;font-size:16px;line-height:1.7;">Wrap-up text…</p>
+    </div>
+
+13. CTA SECTION — Conversion-focused, at the very end:
+    <div style="background:linear-gradient(135deg,{primary},{secondary or primary});color:#fff;border-radius:14px;padding:36px 32px;margin:36px 0 12px;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,0.1);">
+      <h3 style="color:#fff;margin:0 0 12px;font-size:24px;font-weight:700;">Ready to take action?</h3>
+      <p style="color:#ffffffdd;margin:0 0 20px;font-size:16px;line-height:1.6;">Compelling CTA copy here.</p>
+      <a href="#" style="display:inline-block;background:#fff;color:{primary};padding:12px 32px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">Get Started Now →</a>
+    </div>
+
+CONTENT REQUIREMENTS:
+- Length: {data.word_count_min}-{data.word_count_max} words inside content_html
+- Include realistic data points / cost examples / use cases when applicable to {data.topic}
+- 4-6 H2 sections + sub-sections under each
+- Use {data.target_country}-specific context where relevant
+- Speak directly to {data.target_audience} audience
+- Tone: {data.tone}
+- Natural keyword usage of: {keywords_str}
+- AT LEAST: 1 Key Insight box, 1 Pro Tip box, 1 Stats grid, 1 Step-by-step section, 1 FAQ section, 1 Summary box, 1 CTA
+- Use emoji icons sparingly in headings/labels (✓ 💡 ⚡ 📌 🚀 etc.)
+- NO markdown. NO plain code fences. NO <style> or <script> tags.
+- All HTML must be inline-styled and self-contained."""
 
             try:
                 content = await get_ai_response(
                     [
-                        {"role": "system", "content": f"You are an expert {data.writing_style.lower()} blog writer. Write engaging, well-structured, SEO-optimized content that reads as genuinely human-written.\n\n{HUMANIZE_DIRECTIVE}"},
+                        {"role": "system", "content": system_msg},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.7,
-                    max_tokens=4000,
+                    max_tokens=8000,
                 )
+                # Strip any accidental fences
                 if "```json" in content:
                     content = content.split("```json")[1].split("```")[0]
                 elif "```" in content:
                     content = content.split("```")[1].split("```")[0]
-                post_data = json.loads(content)
+                post_data = json.loads(content.strip())
+
+                # Build final HTML: inject JSON-LD schema as a <script> at the end
+                content_html = post_data.get("content_html", "")
+                schema = post_data.get("schema_jsonld") or {}
+                if isinstance(schema, dict) and schema:
+                    try:
+                        schema_block = (
+                            '\n<script type="application/ld+json">'
+                            + json.dumps(schema, ensure_ascii=False)
+                            + "</script>\n"
+                        )
+                        content_html = content_html + schema_block
+                    except Exception:
+                        pass
+
+                # Resolve tag/category names to IDs (creating any that don't exist)
+                tag_ids = await _resolve_taxonomy(post_data.get("tags", []) or [], tag_map, "tags")
+                cat_ids = await _resolve_taxonomy(post_data.get("categories", []) or [], cat_map, "categories")
+
+                # Optional featured image via DALL-E
+                featured_media_id = None
+                if data.auto_image and post_data.get("featured_image_prompt"):
+                    try:
+                        oai = await get_openai_client()
+                        img_resp = await oai.images.generate(
+                            model="dall-e-3",
+                            prompt=post_data["featured_image_prompt"],
+                            size="1792x1024",
+                            quality="standard",
+                            n=1,
+                        )
+                        img_url = img_resp.data[0].url
+                        featured_media_id = await wp_upload_image(
+                            site,
+                            img_url,
+                            f"featured-{post_data.get('slug', uuid.uuid4().hex[:8])}.png",
+                        )
+                        post_data["featured_image_url"] = img_url
+                    except Exception as img_err:
+                        logger.warning(f"DALL-E featured image failed: {img_err}")
 
                 # Push to WordPress
                 wp_payload = {
                     "title": post_data.get("title", f"Auto Post {i+1}"),
-                    "content": post_data.get("content", ""),
+                    "content": content_html,
                     "status": data.post_status,
-                    "excerpt": post_data.get("excerpt", ""),
+                    "excerpt": post_data.get("meta_description", ""),
+                    "slug": post_data.get("slug", ""),
                 }
+                if tag_ids:
+                    wp_payload["tags"] = tag_ids
+                if cat_ids:
+                    wp_payload["categories"] = cat_ids
+                if featured_media_id:
+                    wp_payload["featured_media"] = featured_media_id
+
                 try:
                     response = await wp_api_request(site, "POST", "posts", wp_payload)
                     if response.status_code in (200, 201):
@@ -12526,21 +12768,37 @@ Respond with JSON:
                         post_data["wp_id"] = wp_post.get("id")
                         post_data["url"] = wp_post.get("link", "")
                         post_data["status"] = data.post_status
-                        await push_event(task_id, "progress", {"message": f"Post {i+1} published: {post_data['title']}", "percent": pct + 5})
+                        await push_event(task_id, "progress", {"message": f"Post {i+1} published: {post_data.get('title','')}", "percent": pct + 5})
                     else:
-                        logger.warning(f"Auto blog WP push REST failed ({response.status_code}): {response.text[:100]}")
-                        post_data["status"] = "local_only"
+                        logger.warning(f"Auto blog WP push REST failed ({response.status_code}): {response.text[:200]}")
+                        # XML-RPC fallback for hosts that strip Authorization header
+                        try:
+                            xr = await wp_xmlrpc_write(
+                                site, "post",
+                                wp_payload["title"], wp_payload["content"], data.post_status,
+                            )
+                            post_data["wp_id"] = xr.get("wp_id")
+                            post_data["url"] = xr.get("link", "")
+                            post_data["status"] = data.post_status
+                            await push_event(task_id, "progress", {"message": f"Post {i+1} published via XML-RPC: {post_data.get('title','')}", "percent": pct + 5})
+                        except Exception as xr_err:
+                            logger.warning(f"XML-RPC fallback failed: {xr_err}")
+                            post_data["status"] = "local_only"
                 except Exception as wp_err:
                     logger.warning(f"Auto blog WP push failed: {wp_err}")
                     post_data["status"] = "local_only"
 
+                # Keep the rendered HTML on the returned object so the frontend preview works
+                post_data["content"] = content_html
                 posts.append(post_data)
             except Exception as post_err:
+                logger.error(f"Auto blog post {i+1} failed: {post_err}")
                 await push_event(task_id, "item_error", {"post_index": i+1, "error": str(post_err)})
 
         await log_activity(site_id, "auto_blog_generation", f"Generated {len(posts)} blog posts about: {data.topic}")
         await push_event(task_id, "complete", {"message": f"Generated {len(posts)}/{data.num_posts} posts", "posts": posts, "percent": 100})
     except Exception as e:
+        logger.error(f"Auto blog worker fatal error: {e}")
         await push_event(task_id, "error", {"message": str(e)})
     finally:
         await finish_task(task_id)
