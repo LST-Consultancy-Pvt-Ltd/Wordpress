@@ -12920,190 +12920,246 @@ async def _auto_blog_worker(task_id: str, site_id: str, data: AutoBlogRequest):
                     pass
             return ids
 
+        # Per-section word budget so the model knows exactly how much to write
+        num_sections = 5
+        words_per_section = max(200, (data.word_count_min - 300) // num_sections)  # 300w reserved for intro/FAQ/CTA/boxes
+        words_per_subsection = max(80, words_per_section // 3)
+
         for i in range(data.num_posts):
             pct = int(((i) / data.num_posts) * 100)
-            await push_event(task_id, "progress", {"message": f"Generating post {i+1}/{data.num_posts}...", "percent": pct})
+            await push_event(task_id, "progress", {"message": f"Generating post {i+1}/{data.num_posts} — metadata...", "percent": pct})
 
-            system_msg = (
-                "You are an advanced AI Blog Generation Engine that creates highly professional, "
-                "visually structured, SEO-optimized blog posts ready for direct publishing on WordPress. "
-                "You write like a real expert consultant — clear, confident, slightly conversational, never robotic. "
-                "Your HTML output must look like a professionally designed SaaS-style blog page, NOT a plain article. "
-                "Always respond with ONLY valid JSON, no markdown fences, no commentary."
-                f"\n\n{HUMANIZE_DIRECTIVE}"
+            # ── CALL 1: Metadata JSON ──────────────────────────────────────
+            meta_system = (
+                "You are an SEO metadata expert. Return ONLY a single valid JSON object, "
+                "no markdown fences, no commentary, nothing else."
             )
+            meta_prompt = f"""Generate SEO metadata for a blog post.
 
-            prompt = f"""Generate a complete, publishable blog post.
+Topic: {data.topic}
+Target Country: {data.target_country}
+Target Audience: {data.target_audience}
+Brand: {brand or "(unbranded)"}
+Keywords: {keywords_str}
+Post variation: {i+1} of {data.num_posts} — unique angle
 
-INPUTS:
-- Blog Topic: {data.topic}
-- Target Country/Region: {data.target_country}
-- Target Audience: {data.target_audience}
-- Brand/Company Name: {brand or "(unbranded)"}
-- Tone: {data.tone}
-- Writing Style: {data.writing_style}
-- Word Count Range: {data.word_count_min}–{data.word_count_max} words
-- Primary Color (HEX): {primary}
-- Secondary Color (HEX): {secondary or "(none — derive a tasteful complement of primary)"}
-- Target Keywords: {keywords_str}
-- Post Variation: This is post {i+1} of {data.num_posts} — use a UNIQUE angle vs. siblings.
-
-OUTPUT FORMAT — Respond with EXACTLY two blocks separated by sentinel markers.
-DO NOT include markdown fences. DO NOT escape the HTML. DO NOT put HTML inside the JSON.
-BOTH blocks are MANDATORY. The HTML block must contain the full styled article.
-If you skip the HTML block the response is invalid.
-
-<<<JSON_META>>>
+Return ONLY this JSON (no fences):
 {{
-  "title": "SEO title (clickable, engaging, under 65 chars)",
-  "meta_title": "SEO meta title for search engines (under 60 chars, includes focus keyword near the start)",
+  "title": "SEO title, under 65 chars, engaging",
+  "meta_title": "under 60 chars, focus keyword near start",
   "slug": "kebab-case-url-slug",
-  "meta_description": "Max 155 characters, compelling, includes primary keyword",
-  "focus_keyword": "single primary focus keyword phrase",
-  "secondary_keywords": ["lsi keyword 1", "lsi keyword 2", "lsi keyword 3"],
-  "og_title": "Open Graph title (under 70 chars, social-share friendly)",
-  "og_description": "Open Graph description (under 200 chars, conversion-friendly)",
-  "twitter_title": "Twitter card title (under 70 chars)",
-  "twitter_description": "Twitter card description (under 200 chars)",
-  "featured_image_prompt": "Detailed prompt for AI image generation: modern SaaS / corporate illustration / 3D gradient style, 16:9 landscape, topic-relevant elements, brand color tone using {primary}",
-  "featured_image_alt": "Descriptive ALT text under 125 chars (includes focus keyword)",
-  "featured_image_caption": "Short caption (1 sentence)",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "meta_description": "max 155 chars, includes primary keyword",
+  "focus_keyword": "single primary keyword phrase",
+  "secondary_keywords": ["kw1", "kw2", "kw3"],
+  "og_title": "under 70 chars",
+  "og_description": "under 200 chars",
+  "twitter_title": "under 70 chars",
+  "twitter_description": "under 200 chars",
+  "featured_image_prompt": "Detailed DALL-E prompt: modern SaaS illustration, 16:9, topic-relevant, brand color {primary}",
+  "featured_image_alt": "under 125 chars, includes focus keyword",
+  "featured_image_caption": "1 sentence",
+  "tags": ["tag1","tag2","tag3","tag4","tag5"],
   "categories": ["primary-category"],
-  "internal_link_suggestions": [
-    {{"anchor_text": "...", "topic_to_link_to": "..."}}
-  ],
-  "external_link_suggestions": [
-    {{"anchor_text": "...", "url": "https://authoritative-source.com", "why": "..."}}
-  ],
+  "internal_link_suggestions": [{{"anchor_text":"...","topic_to_link_to":"..."}}],
+  "external_link_suggestions": [{{"anchor_text":"...","url":"https://example.com","why":"..."}}],
   "schema_jsonld": {{
-    "@context": "https://schema.org",
-    "@type": "Article",
-    "headline": "...",
-    "description": "...",
+    "@context": "https://schema.org", "@type": "Article",
+    "headline": "...", "description": "...",
     "author": {{"@type": "Organization", "name": "{brand or 'Editorial Team'}"}},
     "datePublished": "{datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
     "keywords": "{keywords_str}"
   }},
   "social_captions": {{
-    "linkedin": "Professional LinkedIn post (3-5 sentences, with 3-5 hashtags)",
-    "twitter": "Concise Twitter/X post under 270 chars with 2-3 hashtags"
+    "linkedin": "Professional post, 3-5 sentences, 3-5 hashtags",
+    "twitter": "under 270 chars, 2-3 hashtags"
   }}
-}}
-<<<END_JSON_META>>>
-<<<HTML_CONTENT>>>
-[Full styled HTML goes here as RAW HTML — see DESIGN REQUIREMENTS below.
-NEVER escape quotes. NEVER use \\n for line breaks — use real newlines.
-This entire block is plain HTML, NOT a JSON string value.]
-<<<END_HTML_CONTENT>>>
-
-DESIGN REQUIREMENTS for content_html (CRITICAL — this is what makes the blog look professional):
-
-The HTML must be CLEAN, SELF-CONTAINED, and use INLINE STYLES with the primary color {primary}{(' and secondary color ' + secondary) if secondary else ''}. It must be Elementor & Gutenberg compatible (no <style> tag, no <script> tag inside content_html — schema goes in schema_jsonld).
-
-Use this exact visual structure:
-
-1. INTRO BLOCK — A short opening (2-3 sentences) inside a tinted background div:
-   <div style="background:{primary}10;border-left:5px solid {primary};padding:20px 24px;border-radius:8px;margin:0 0 32px 0;">
-     <p style="margin:0;font-size:17px;line-height:1.7;color:#1a1a1a;">Opening hook here…</p>
-   </div>
-
-2. SECTION HEADINGS (H2):
-   <h2 style="color:{primary};font-size:28px;font-weight:700;margin:40px 0 16px;border-bottom:3px solid {primary};padding-bottom:8px;">Section Title</h2>
-
-3. SUB-HEADINGS (H3):
-   <h3 style="color:#1a1a1a;font-size:22px;font-weight:600;margin:28px 0 12px;">Sub Heading</h3>
-
-4. PARAGRAPHS — Max 3-4 lines each:
-   <p style="font-size:16px;line-height:1.75;color:#333;margin:0 0 16px;">Body text…</p>
-
-5. KEY INSIGHT BOX — Use AT LEAST ONCE per post:
-   <div style="background:linear-gradient(135deg,{primary}15,{primary}05);border:1px solid {primary}30;border-radius:12px;padding:24px;margin:28px 0;box-shadow:0 2px 8px rgba(0,0,0,0.04);">
-     <p style="margin:0 0 8px;font-weight:700;color:{primary};font-size:14px;letter-spacing:0.5px;text-transform:uppercase;">💡 Key Insight</p>
-     <p style="margin:0;font-size:16px;line-height:1.7;color:#222;">Insight content…</p>
-   </div>
-
-6. PRO TIP BOX — Use AT LEAST ONCE:
-   <div style="background:#fff8e1;border-left:4px solid #f5a623;border-radius:6px;padding:18px 22px;margin:24px 0;">
-     <p style="margin:0 0 6px;font-weight:700;color:#b8860b;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">⚡ Pro Tip</p>
-     <p style="margin:0;font-size:15px;line-height:1.65;color:#333;">Tip content…</p>
-   </div>
-
-7. BULLET LISTS — Styled with custom markers:
-   <ul style="list-style:none;padding:0;margin:16px 0 24px;">
-     <li style="padding:8px 0 8px 28px;position:relative;font-size:16px;line-height:1.7;color:#333;">
-       <span style="position:absolute;left:0;color:{primary};font-weight:700;">✓</span>Item text
-     </li>
-   </ul>
-
-8. STATS / DATA CARDS GRID — Include AT LEAST 3 data points:
-   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 32px;">
-     <div style="background:#f9f9f9;border-radius:10px;padding:20px;text-align:center;border-top:3px solid {primary};">
-       <div style="font-size:32px;font-weight:800;color:{primary};line-height:1;">73%</div>
-       <div style="font-size:13px;color:#666;margin-top:6px;">Stat label</div>
-     </div>
-     <!-- repeat -->
-   </div>
-
-9. STEP-BY-STEP / NUMBERED CARDS:
-   <div style="background:#fafbfc;border-radius:10px;padding:20px 24px;margin:14px 0;border-left:4px solid {primary};">
-     <div style="display:flex;gap:14px;align-items:flex-start;">
-       <div style="background:{primary};color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">1</div>
-       <div><h4 style="margin:0 0 6px;font-size:17px;color:#1a1a1a;">Step Title</h4><p style="margin:0;font-size:15px;color:#555;line-height:1.65;">Step description.</p></div>
-     </div>
-   </div>
-
-10. FAQ SECTION — 4-6 questions, SEO-optimized:
-    <h2 style="color:{primary};font-size:28px;font-weight:700;margin:48px 0 20px;border-bottom:3px solid {primary};padding-bottom:8px;">Frequently Asked Questions</h2>
-    <div style="background:#f9f9f9;border-radius:10px;padding:20px 24px;margin:14px 0;">
-      <h4 style="margin:0 0 10px;font-size:17px;color:{primary};">Q: …?</h4>
-      <p style="margin:0;font-size:15px;line-height:1.7;color:#333;">A: …</p>
-    </div>
-
-11. SECTION DIVIDER — Use between major sections:
-    <hr style="border:none;height:1px;background:linear-gradient(to right,transparent,{primary}40,transparent);margin:40px 0;" />
-
-12. SUMMARY BOX — Near the end, before CTA:
-    <div style="background:{primary};color:#fff;border-radius:12px;padding:28px;margin:32px 0;box-shadow:0 4px 16px {primary}30;">
-      <p style="margin:0 0 10px;font-weight:700;font-size:14px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.9;">📌 Summary</p>
-      <p style="margin:0;font-size:16px;line-height:1.7;">Wrap-up text…</p>
-    </div>
-
-13. CTA SECTION — Conversion-focused, at the very end:
-    <div style="background:linear-gradient(135deg,{primary},{secondary or primary});color:#fff;border-radius:14px;padding:36px 32px;margin:36px 0 12px;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,0.1);">
-      <h3 style="color:#fff;margin:0 0 12px;font-size:24px;font-weight:700;">Ready to take action?</h3>
-      <p style="color:#ffffffdd;margin:0 0 20px;font-size:16px;line-height:1.6;">Compelling CTA copy here.</p>
-      <a href="#" style="display:inline-block;background:#fff;color:{primary};padding:12px 32px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">Get Started Now →</a>
-    </div>
-
-CONTENT REQUIREMENTS:
-- WORD COUNT (HARD REQUIREMENT): The readable body text inside content_html MUST be {data.word_count_min}–{data.word_count_max} words. Count only visible text, NOT HTML tags or inline style attributes. This is non-negotiable — do NOT stop writing until you have hit at least {data.word_count_min} words of actual readable content. If you reach the CTA section before hitting {data.word_count_min} words, add more H2 sections with sub-sections until you do.
-- Each H2 section must contain at least 3-4 paragraphs of 60-100 words each plus sub-sections. With 4-6 H2 sections this naturally achieves {data.word_count_min}+ words.
-- Include realistic data points / cost examples / use cases applicable to {data.topic}
-- 4-6 H2 sections + at least 2 H3 sub-sections under EACH H2
-- Use {data.target_country}-specific context, examples, regulations, costs and brands where relevant
-- Speak directly to {data.target_audience} audience using 'you' and 'your'
-- Tone: {data.tone}
-- Natural keyword usage of: {keywords_str}
-- AT LEAST: 1 Key Insight box, 1 Pro Tip box, 1 Stats grid (3+ data points), 1 Step-by-step section (4+ steps), 1 FAQ section (5+ questions), 1 Summary box, 1 CTA
-- Use emoji icons sparingly in headings/labels (✓ 💡 ⚡ 📌 🚀 etc.)
-- NO markdown. NO plain code fences. NO <style> or <script> tags.
-- All HTML must be inline-styled and self-contained.
-
-WORD COUNT REMINDER: Stop and count your words before closing the HTML block. If you are below {data.word_count_min} words, keep writing more sections. Do not output <<<END_HTML_CONTENT>>> until you have reached {data.word_count_min} words of readable text."""
+}}"""
 
             try:
-                content = await get_ai_response(
-                    [
-                        {"role": "system", "content": system_msg},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.92,
+                meta_raw = await get_ai_response(
+                    [{"role": "system", "content": meta_system},
+                     {"role": "user", "content": meta_prompt}],
+                    temperature=0.5,
+                    max_tokens=1500,
+                )
+                if "```json" in meta_raw:
+                    meta_raw = meta_raw.split("```json", 1)[1].split("```", 1)[0]
+                elif meta_raw.lstrip().startswith("```"):
+                    meta_raw = meta_raw.split("```", 1)[1].split("```", 1)[0]
+                try:
+                    post_data = json.loads(meta_raw.strip())
+                except Exception:
+                    post_data = _repair_and_parse_json(meta_raw)
+            except Exception as meta_err:
+                logger.warning(f"Meta generation failed for post {i+1}: {meta_err}")
+                post_data = {"title": f"{data.topic} — Guide {i+1}", "slug": f"guide-{i+1}"}
+
+            await push_event(task_id, "progress", {"message": f"Post {i+1} — writing content ({data.word_count_min} words)...", "percent": pct + 5})
+
+            # ── CALL 2: HTML Content ────────────────────────────────────────
+            content_system = (
+                "You are a professional human blogger and subject-matter expert. "
+                "You write exactly like a real person: opinionated, conversational, "
+                "slightly imperfect, full of personal stories and specific examples. "
+                "Your writing must score BELOW 20% on AI detection tools like Originality.ai, "
+                "GPTZero, and Copyleaks. The ONLY way to achieve this is to write like a real human, "
+                "not like an AI assistant. Follow every rule in the HUMANIZE_DIRECTIVE below.\n\n"
+                f"{HUMANIZE_DIRECTIVE}"
+            )
+
+            content_prompt = f"""Write a complete, styled HTML blog article on this topic.
+
+TOPIC: {data.topic}
+COUNTRY/REGION: {data.target_country}
+AUDIENCE: {data.target_audience}
+BRAND: {brand or "(unbranded)"}
+TONE: {data.tone}
+WRITING STYLE: {data.writing_style}
+KEYWORDS TO USE NATURALLY: {keywords_str}
+PRIMARY COLOR: {primary}
+SECONDARY COLOR: {secondary or "(derive a tasteful complement)"}
+POST TITLE: {post_data.get("title", data.topic)}
+FOCUS KEYWORD: {post_data.get("focus_keyword", keywords_str)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WORD COUNT: ABSOLUTE MINIMUM {data.word_count_min} WORDS — TARGET {data.word_count_max} WORDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You must write at MINIMUM {data.word_count_min} words of VISIBLE TEXT.
+HTML tags, style attributes, and angle-bracket content do NOT count.
+Only the words a reader actually sees count toward the total.
+
+REQUIRED STRUCTURE (each section has a minimum word count you MUST hit):
+
+1. INTRO (80–120 words) — Hook the reader immediately. Personal, specific, conversational.
+
+2. SECTION 1 — H2 + content ({words_per_section} words minimum)
+   - Opening paragraph: 80–100 words
+   - H3 sub-section A: {words_per_subsection} words
+   - H3 sub-section B: {words_per_subsection} words
+   - H3 sub-section C: {words_per_subsection} words
+
+3. SECTION 2 — H2 + content ({words_per_section} words minimum)
+   - Same structure as Section 1
+
+4. KEY INSIGHT BOX + SECTION 3 — H2 + content ({words_per_section} words minimum)
+   - Same structure + Key Insight callout box
+
+5. PRO TIP BOX + SECTION 4 — H2 + content ({words_per_section} words minimum)
+   - Same structure + Pro Tip callout box
+
+6. STATS GRID — At least 4 real-looking data points with labels
+
+7. STEP-BY-STEP SECTION — At least 5 numbered steps, each step 40–60 words
+
+8. SECTION 5 — H2 + content ({words_per_section} words minimum)
+   - Same structure
+
+9. FAQ SECTION — 6 questions minimum, each answer 50–80 words
+
+10. SUMMARY BOX — 80–100 words
+
+11. CTA SECTION — Conversion-focused
+
+TOTAL TARGET: {data.word_count_min}–{data.word_count_max} words of visible text.
+After writing each section, mentally tally your word count.
+Do NOT write <<<END_HTML_CONTENT>>> until your tally reaches {data.word_count_min}.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTML FORMATTING RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use ONLY inline styles. No <style> tags. No <script> tags. Gutenberg/Elementor compatible.
+
+Intro block:
+<div style="background:{primary}10;border-left:5px solid {primary};padding:20px 24px;border-radius:8px;margin:0 0 32px 0;"><p style="margin:0;font-size:17px;line-height:1.7;color:#1a1a1a;">text</p></div>
+
+H2: <h2 style="color:{primary};font-size:28px;font-weight:700;margin:40px 0 16px;border-bottom:3px solid {primary};padding-bottom:8px;">Title</h2>
+H3: <h3 style="color:#1a1a1a;font-size:22px;font-weight:600;margin:28px 0 12px;">Sub</h3>
+P:  <p style="font-size:16px;line-height:1.75;color:#333;margin:0 0 16px;">text</p>
+HR: <hr style="border:none;height:1px;background:linear-gradient(to right,transparent,{primary}40,transparent);margin:40px 0;" />
+
+Key Insight box:
+<div style="background:linear-gradient(135deg,{primary}15,{primary}05);border:1px solid {primary}30;border-radius:12px;padding:24px;margin:28px 0;box-shadow:0 2px 8px rgba(0,0,0,0.04);"><p style="margin:0 0 8px;font-weight:700;color:{primary};font-size:14px;letter-spacing:0.5px;text-transform:uppercase;">💡 Key Insight</p><p style="margin:0;font-size:16px;line-height:1.7;color:#222;">text</p></div>
+
+Pro Tip box:
+<div style="background:#fff8e1;border-left:4px solid #f5a623;border-radius:6px;padding:18px 22px;margin:24px 0;"><p style="margin:0 0 6px;font-weight:700;color:#b8860b;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">⚡ Pro Tip</p><p style="margin:0;font-size:15px;line-height:1.65;color:#333;">text</p></div>
+
+Bullet list:
+<ul style="list-style:none;padding:0;margin:16px 0 24px;"><li style="padding:8px 0 8px 28px;position:relative;font-size:16px;line-height:1.7;color:#333;"><span style="position:absolute;left:0;color:{primary};font-weight:700;">✓</span>text</li></ul>
+
+Stats grid (use real numbers relevant to {data.topic}):
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 32px;"><div style="background:#f9f9f9;border-radius:10px;padding:20px;text-align:center;border-top:3px solid {primary};"><div style="font-size:32px;font-weight:800;color:{primary};line-height:1;">XX%</div><div style="font-size:13px;color:#666;margin-top:6px;">label</div></div></div>
+
+Step card:
+<div style="background:#fafbfc;border-radius:10px;padding:20px 24px;margin:14px 0;border-left:4px solid {primary};"><div style="display:flex;gap:14px;align-items:flex-start;"><div style="background:{primary};color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">1</div><div><h4 style="margin:0 0 6px;font-size:17px;color:#1a1a1a;">Title</h4><p style="margin:0;font-size:15px;color:#555;line-height:1.65;">text</p></div></div></div>
+
+FAQ item:
+<div style="background:#f9f9f9;border-radius:10px;padding:20px 24px;margin:14px 0;"><h4 style="margin:0 0 10px;font-size:17px;color:{primary};">Q: …?</h4><p style="margin:0;font-size:15px;line-height:1.7;color:#333;">A: …</p></div>
+
+Summary box:
+<div style="background:{primary};color:#fff;border-radius:12px;padding:28px;margin:32px 0;box-shadow:0 4px 16px {primary}30;"><p style="margin:0 0 10px;font-weight:700;font-size:14px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.9;">📌 Summary</p><p style="margin:0;font-size:16px;line-height:1.7;">text</p></div>
+
+CTA:
+<div style="background:linear-gradient(135deg,{primary},{secondary or primary});color:#fff;border-radius:14px;padding:36px 32px;margin:36px 0 12px;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,0.1);"><h3 style="color:#fff;margin:0 0 12px;font-size:24px;font-weight:700;">heading</h3><p style="color:#ffffffdd;margin:0 0 20px;font-size:16px;line-height:1.6;">copy</p><a href="#" style="display:inline-block;background:#fff;color:{primary};padding:12px 32px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">CTA text →</a></div>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT: Output ONLY the raw HTML, wrapped in sentinels:
+<<<HTML_CONTENT>>>
+[your complete HTML here]
+<<<END_HTML_CONTENT>>>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+
+            try:
+                content_raw = await get_ai_response(
+                    [{"role": "system", "content": content_system},
+                     {"role": "user", "content": content_prompt}],
+                    temperature=0.95,
                     max_tokens=16000,
                 )
-                post_data, content_html = _parse_blog_ai_output(content)
+                _, content_html = _parse_blog_ai_output(content_raw)
 
-                # Inject JSON-LD schema as a <script> at the end of HTML
+                # If still short, expand with a continuation call
+                import re as _re
+                visible_text = _re.sub(r"<[^>]+>", " ", content_html)
+                visible_words = len(visible_text.split())
+                if visible_words < data.word_count_min * 0.85:
+                    logger.warning(f"Post {i+1} word count {visible_words} below target {data.word_count_min}, expanding...")
+                    await push_event(task_id, "progress", {"message": f"Post {i+1} — expanding content ({visible_words}/{data.word_count_min} words so far)...", "percent": pct + 8})
+                    shortfall = data.word_count_min - visible_words
+                    expand_raw = await get_ai_response(
+                        [
+                            {"role": "system", "content": content_system},
+                            {"role": "user", "content": content_prompt},
+                            {"role": "assistant", "content": content_raw},
+                            {"role": "user", "content": (
+                                f"Your article is only {visible_words} words — {shortfall} words short of the {data.word_count_min}-word requirement. "
+                                f"Continue writing by adding {max(2, shortfall // 200)} more H2 sections with full sub-sections and paragraphs. "
+                                f"Each new section must be at least {words_per_section} words of readable text. "
+                                "Output ONLY the additional HTML (no sentinels, no intro, just the new sections to append). "
+                                "Write in the same tone and style as the existing content."
+                            )},
+                        ],
+                        temperature=0.95,
+                        max_tokens=8000,
+                    )
+                    # Strip any sentinels from the expansion
+                    extra_html = expand_raw
+                    for sentinel in ["<<<HTML_CONTENT>>>", "<<<END_HTML_CONTENT>>>", "<<<JSON_META>>>", "<<<END_JSON_META>>>"]:
+                        extra_html = extra_html.replace(sentinel, "")
+                    if extra_html.strip().startswith("```"):
+                        extra_html = _re.sub(r"^```(?:html)?\s*", "", extra_html.strip())
+                        extra_html = _re.sub(r"\s*```\s*$", "", extra_html.strip())
+                    # Insert expansion before the summary/CTA (before the last closing div that contains "Summary" or "CTA")
+                    summary_marker = '<div style="background:{primary};color:#fff'.format(primary=primary)
+                    cta_marker = "background:linear-gradient(135deg,"
+                    insert_pos = content_html.rfind(summary_marker)
+                    if insert_pos == -1:
+                        insert_pos = content_html.rfind(cta_marker)
+                    if insert_pos != -1:
+                        content_html = content_html[:insert_pos] + extra_html.strip() + "\n" + content_html[insert_pos:]
+                    else:
+                        content_html = content_html + "\n" + extra_html.strip()
+
+                # Inject JSON-LD schema
                 schema = post_data.get("schema_jsonld") or {}
                 if isinstance(schema, dict) and schema:
                     try:
