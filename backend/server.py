@@ -12982,10 +12982,17 @@ Return ONLY this JSON (no fences):
                     temperature=0.5,
                     max_tokens=1500,
                 )
-                if "```json" in meta_raw:
-                    meta_raw = meta_raw.split("```json", 1)[1].split("```", 1)[0]
-                elif meta_raw.lstrip().startswith("```"):
-                    meta_raw = meta_raw.split("```", 1)[1].split("```", 1)[0]
+                import re as _re_meta
+                # Strip code fences including language identifiers like ```json, ```html
+                meta_raw = _re_meta.sub(r'^```[a-z]*\s*', '', meta_raw.lstrip(), flags=_re_meta.IGNORECASE)
+                meta_raw = _re_meta.sub(r'\s*```\s*$', '', meta_raw.rstrip())
+                # Strip stray language identifiers left at the start (e.g. 'html\n' or 'json\n')
+                meta_raw = _re_meta.sub(r'^(html|json|text|markdown)\s*\n', '', meta_raw.lstrip(), flags=_re_meta.IGNORECASE)
+                # Extract JSON object if there's surrounding prose
+                j_start = meta_raw.find('{')
+                j_end = meta_raw.rfind('}')
+                if j_start != -1 and j_end > j_start:
+                    meta_raw = meta_raw[j_start:j_end+1]
                 try:
                     post_data = json.loads(meta_raw.strip())
                 except Exception:
@@ -12998,115 +13005,74 @@ Return ONLY this JSON (no fences):
 
             # ── CALL 2: HTML Content ────────────────────────────────────────
             content_system = (
-                "You are a professional human blogger and subject-matter expert. "
-                "You write exactly like a real person: opinionated, conversational, "
-                "slightly imperfect, full of personal stories and specific examples. "
-                "Your writing must score BELOW 20% on AI detection tools like Originality.ai, "
-                "GPTZero, and Copyleaks. The ONLY way to achieve this is to write like a real human, "
-                "not like an AI assistant. Follow every rule in the HUMANIZE_DIRECTIVE below.\n\n"
+                "You are a real human expert and blogger — not an AI assistant. "
+                "You have lived experience with this topic. You write like someone who has done this, "
+                "failed at it, learned from it, and now wants to share what actually works. "
+                "Your writing is warm, opinionated, slightly messy, and always specific. "
+                "You do NOT sound like a content marketing bot or a corporate blog. "
+                "You sound like a trusted colleague explaining something over coffee.\n\n"
                 f"{HUMANIZE_DIRECTIVE}"
             )
 
-            content_prompt = f"""Write a complete, styled HTML blog article on this topic.
+            content_prompt = f"""I need you to write a long-form blog article. Your job is to WRITE — not to follow a template.
 
 TOPIC: {data.topic}
-COUNTRY/REGION: {data.target_country}
-AUDIENCE: {data.target_audience}
-BRAND: {brand or "(unbranded)"}
-TONE: {data.tone}
-WRITING STYLE: {data.writing_style}
-KEYWORDS TO USE NATURALLY: {keywords_str}
-PRIMARY COLOR: {primary}
-SECONDARY COLOR: {secondary or "(derive a tasteful complement)"}
-POST TITLE: {post_data.get("title", data.topic)}
-FOCUS KEYWORD: {post_data.get("focus_keyword", keywords_str)}
+AUDIENCE: {data.target_audience} in {data.target_country}
+BRAND VOICE: {brand or '(none)'} — {data.tone} tone, {data.writing_style} style
+KEYWORDS (use naturally in prose): {keywords_str}
+TITLE TO USE: {post_data.get('title', data.topic)}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WORD COUNT: ABSOLUTE MINIMUM {data.word_count_min} WORDS — TARGET {data.word_count_max} WORDS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You must write at MINIMUM {data.word_count_min} words of VISIBLE TEXT.
-HTML tags, style attributes, and angle-bracket content do NOT count.
-Only the words a reader actually sees count toward the total.
+MINIMUM {data.word_count_min} WORDS OF READABLE TEXT. This is the only hard rule.
+HTML tags don't count. Only the words a reader sees count.
+Do not close the article until you've written at least {data.word_count_min} readable words.
 
-REQUIRED STRUCTURE (each section has a minimum word count you MUST hit):
+WRITE LIKE A HUMAN — THE MOST IMPORTANT RULES:
+- Your paragraphs must vary wildly in length. Some are 1 sentence. Some are 6. Never uniform.
+- Tell AT LEAST 3 personal stories or real specific examples ("I remember when a client in {data.target_country} told me...", "Back in 2023 I tested this approach and...", "I'll be honest — I was sceptical until...")
+- Have opinions. Say what you actually think. Disagree with common advice where relevant.
+- Use contractions everywhere: don't, it's, you'll, we've, I'd, that's, here's
+- Start sentences with: And, But, So, Look, Honestly, See, Actually, Here's the thing
+- Throw in rhetorical questions and answer them yourself ("Why does this matter? Simple.")
+- Use parenthetical asides: (Yeah, I know.), (Spoiler: it worked.), (Trust me on this.)
+- Reference specific real tools, platforms, companies relevant to {data.topic}
+- Include specific numbers and approximate costs/stats relevant to {data.target_country}
 
-1. INTRO (80–120 words) — Hook the reader immediately. Personal, specific, conversational.
+WHAT TO COVER (write each section as LONG NATURAL PROSE — not bullet summaries):
+1. An opening that hooks the reader personally and sets up why this matters right now
+2. Background / context — what's the landscape here, what most people get wrong
+3. The core concepts — go deep, use sub-sections (H3), write multiple paragraphs per sub-section
+4. Practical how-to — at least 5 concrete numbered steps, each with a real explanation (not just a one-liner)
+5. Common mistakes and how to avoid them — be specific, share real examples
+6. Tools, resources, costs — specific recommendations relevant to {data.target_country}
+7. FAQ — 6 real questions people ask, with detailed answers (3-4 sentences each)
+8. Wrap-up thoughts — what you'd do if starting over, final honest advice
 
-2. SECTION 1 — H2 + content ({words_per_section} words minimum)
-   - Opening paragraph: 80–100 words
-   - H3 sub-section A: {words_per_subsection} words
-   - H3 sub-section B: {words_per_subsection} words
-   - H3 sub-section C: {words_per_subsection} words
+SPRINKLE IN (where they feel natural — not forced):
+- 1 Key Insight callout box when you hit an important non-obvious insight
+- 1 Pro Tip callout box for a practical tactical tip
+- A stats grid with 4 real-ish numbers/percentages relevant to the topic
+- A summary box near the end
+- A CTA at the very end
 
-3. SECTION 2 — H2 + content ({words_per_section} words minimum)
-   - Same structure as Section 1
-
-4. KEY INSIGHT BOX + SECTION 3 — H2 + content ({words_per_section} words minimum)
-   - Same structure + Key Insight callout box
-
-5. PRO TIP BOX + SECTION 4 — H2 + content ({words_per_section} words minimum)
-   - Same structure + Pro Tip callout box
-
-6. STATS GRID — At least 4 real-looking data points with labels
-
-7. STEP-BY-STEP SECTION — At least 5 numbered steps, each step 40–60 words
-
-8. SECTION 5 — H2 + content ({words_per_section} words minimum)
-   - Same structure
-
-9. FAQ SECTION — 6 questions minimum, each answer 50–80 words
-
-10. SUMMARY BOX — 80–100 words
-
-11. CTA SECTION — Conversion-focused
-
-TOTAL TARGET: {data.word_count_min}–{data.word_count_max} words of visible text.
-After writing each section, mentally tally your word count.
-Do NOT write <<<END_HTML_CONTENT>>> until your tally reaches {data.word_count_min}.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-HTML FORMATTING RULES:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Use ONLY inline styles. No <style> tags. No <script> tags. Gutenberg/Elementor compatible.
-
-Intro block:
-<div style="background:{primary}10;border-left:5px solid {primary};padding:20px 24px;border-radius:8px;margin:0 0 32px 0;"><p style="margin:0;font-size:17px;line-height:1.7;color:#1a1a1a;">text</p></div>
-
+FORMATTING — inline styles only, no <style> or <script> tags:
+Intro block: <div style="background:{primary}10;border-left:5px solid {primary};padding:20px 24px;border-radius:8px;margin:0 0 32px 0;"><p style="margin:0;font-size:17px;line-height:1.7;color:#1a1a1a;">text</p></div>
 H2: <h2 style="color:{primary};font-size:28px;font-weight:700;margin:40px 0 16px;border-bottom:3px solid {primary};padding-bottom:8px;">Title</h2>
 H3: <h3 style="color:#1a1a1a;font-size:22px;font-weight:600;margin:28px 0 12px;">Sub</h3>
-P:  <p style="font-size:16px;line-height:1.75;color:#333;margin:0 0 16px;">text</p>
+P: <p style="font-size:16px;line-height:1.75;color:#333;margin:0 0 16px;">text</p>
 HR: <hr style="border:none;height:1px;background:linear-gradient(to right,transparent,{primary}40,transparent);margin:40px 0;" />
+Key Insight: <div style="background:linear-gradient(135deg,{primary}15,{primary}05);border:1px solid {primary}30;border-radius:12px;padding:24px;margin:28px 0;"><p style="margin:0 0 8px;font-weight:700;color:{primary};font-size:14px;letter-spacing:0.5px;text-transform:uppercase;">💡 Key Insight</p><p style="margin:0;font-size:16px;line-height:1.7;color:#222;">text</p></div>
+Pro Tip: <div style="background:#fff8e1;border-left:4px solid #f5a623;border-radius:6px;padding:18px 22px;margin:24px 0;"><p style="margin:0 0 6px;font-weight:700;color:#b8860b;font-size:13px;text-transform:uppercase;">⚡ Pro Tip</p><p style="margin:0;font-size:15px;line-height:1.65;color:#333;">text</p></div>
+Bullets: <ul style="list-style:none;padding:0;margin:16px 0 24px;"><li style="padding:8px 0 8px 28px;position:relative;font-size:16px;line-height:1.7;color:#333;"><span style="position:absolute;left:0;color:{primary};font-weight:700;">✓</span>text</li></ul>
+Stats grid: <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 32px;"><div style="background:#f9f9f9;border-radius:10px;padding:20px;text-align:center;border-top:3px solid {primary};"><div style="font-size:32px;font-weight:800;color:{primary};line-height:1;">73%</div><div style="font-size:13px;color:#666;margin-top:6px;">label</div></div></div>
+Step card: <div style="background:#fafbfc;border-radius:10px;padding:20px 24px;margin:14px 0;border-left:4px solid {primary};"><div style="display:flex;gap:14px;align-items:flex-start;"><div style="background:{primary};color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">1</div><div><h4 style="margin:0 0 6px;font-size:17px;color:#1a1a1a;">Title</h4><p style="margin:0;font-size:15px;color:#555;line-height:1.65;">desc</p></div></div></div>
+FAQ: <div style="background:#f9f9f9;border-radius:10px;padding:20px 24px;margin:14px 0;"><h4 style="margin:0 0 10px;font-size:17px;color:{primary};">Q: ?</h4><p style="margin:0;font-size:15px;line-height:1.7;color:#333;">A: text</p></div>
+Summary: <div style="background:{primary};color:#fff;border-radius:12px;padding:28px;margin:32px 0;"><p style="margin:0 0 10px;font-weight:700;font-size:14px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.9;">📌 Summary</p><p style="margin:0;font-size:16px;line-height:1.7;">text</p></div>
+CTA: <div style="background:linear-gradient(135deg,{primary},{secondary or primary});color:#fff;border-radius:14px;padding:36px 32px;margin:36px 0 12px;text-align:center;"><h3 style="color:#fff;margin:0 0 12px;font-size:24px;font-weight:700;">heading</h3><p style="color:#ffffffdd;margin:0 0 20px;font-size:16px;line-height:1.6;">copy</p><a href="#" style="display:inline-block;background:#fff;color:{primary};padding:12px 32px;border-radius:8px;font-weight:700;text-decoration:none;">text →</a></div>
 
-Key Insight box:
-<div style="background:linear-gradient(135deg,{primary}15,{primary}05);border:1px solid {primary}30;border-radius:12px;padding:24px;margin:28px 0;box-shadow:0 2px 8px rgba(0,0,0,0.04);"><p style="margin:0 0 8px;font-weight:700;color:{primary};font-size:14px;letter-spacing:0.5px;text-transform:uppercase;">💡 Key Insight</p><p style="margin:0;font-size:16px;line-height:1.7;color:#222;">text</p></div>
-
-Pro Tip box:
-<div style="background:#fff8e1;border-left:4px solid #f5a623;border-radius:6px;padding:18px 22px;margin:24px 0;"><p style="margin:0 0 6px;font-weight:700;color:#b8860b;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">⚡ Pro Tip</p><p style="margin:0;font-size:15px;line-height:1.65;color:#333;">text</p></div>
-
-Bullet list:
-<ul style="list-style:none;padding:0;margin:16px 0 24px;"><li style="padding:8px 0 8px 28px;position:relative;font-size:16px;line-height:1.7;color:#333;"><span style="position:absolute;left:0;color:{primary};font-weight:700;">✓</span>text</li></ul>
-
-Stats grid (use real numbers relevant to {data.topic}):
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin:24px 0 32px;"><div style="background:#f9f9f9;border-radius:10px;padding:20px;text-align:center;border-top:3px solid {primary};"><div style="font-size:32px;font-weight:800;color:{primary};line-height:1;">XX%</div><div style="font-size:13px;color:#666;margin-top:6px;">label</div></div></div>
-
-Step card:
-<div style="background:#fafbfc;border-radius:10px;padding:20px 24px;margin:14px 0;border-left:4px solid {primary};"><div style="display:flex;gap:14px;align-items:flex-start;"><div style="background:{primary};color:#fff;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">1</div><div><h4 style="margin:0 0 6px;font-size:17px;color:#1a1a1a;">Title</h4><p style="margin:0;font-size:15px;color:#555;line-height:1.65;">text</p></div></div></div>
-
-FAQ item:
-<div style="background:#f9f9f9;border-radius:10px;padding:20px 24px;margin:14px 0;"><h4 style="margin:0 0 10px;font-size:17px;color:{primary};">Q: …?</h4><p style="margin:0;font-size:15px;line-height:1.7;color:#333;">A: …</p></div>
-
-Summary box:
-<div style="background:{primary};color:#fff;border-radius:12px;padding:28px;margin:32px 0;box-shadow:0 4px 16px {primary}30;"><p style="margin:0 0 10px;font-weight:700;font-size:14px;letter-spacing:0.8px;text-transform:uppercase;opacity:0.9;">📌 Summary</p><p style="margin:0;font-size:16px;line-height:1.7;">text</p></div>
-
-CTA:
-<div style="background:linear-gradient(135deg,{primary},{secondary or primary});color:#fff;border-radius:14px;padding:36px 32px;margin:36px 0 12px;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,0.1);"><h3 style="color:#fff;margin:0 0 12px;font-size:24px;font-weight:700;">heading</h3><p style="color:#ffffffdd;margin:0 0 20px;font-size:16px;line-height:1.6;">copy</p><a href="#" style="display:inline-block;background:#fff;color:{primary};padding:12px 32px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">CTA text →</a></div>
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT: Output ONLY the raw HTML, wrapped in sentinels:
+OUTPUT — raw HTML only, wrapped in sentinels:
 <<<HTML_CONTENT>>>
-[your complete HTML here]
-<<<END_HTML_CONTENT>>>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+[write your complete article here — remember: MINIMUM {data.word_count_min} readable words]
+<<<END_HTML_CONTENT>>>"""
 
             try:
                 content_raw = await get_ai_response(
@@ -13131,11 +13097,11 @@ OUTPUT: Output ONLY the raw HTML, wrapped in sentinels:
                             {"role": "user", "content": content_prompt},
                             {"role": "assistant", "content": content_raw},
                             {"role": "user", "content": (
-                                f"Your article is only {visible_words} words — {shortfall} words short of the {data.word_count_min}-word requirement. "
-                                f"Continue writing by adding {max(2, shortfall // 200)} more H2 sections with full sub-sections and paragraphs. "
-                                f"Each new section must be at least {words_per_section} words of readable text. "
-                                "Output ONLY the additional HTML (no sentinels, no intro, just the new sections to append). "
-                                "Write in the same tone and style as the existing content."
+                                f"Your article is only {visible_words} words — {shortfall} words short of the {data.word_count_min}-word minimum. "
+                                f"Continue the article naturally. Don't summarise or conclude — just keep writing as if the article isn't finished. "
+                                f"Add {max(2, shortfall // 180)} more H2 sections with deep, opinionated prose (multiple paragraphs each). "
+                                f"Write like you're still in the middle of the piece — personal, specific, conversational. "
+                                "Output ONLY the additional HTML sections (no sentinels, no opening line, no 'continuing from...' preamble)."
                             )},
                         ],
                         temperature=0.95,
