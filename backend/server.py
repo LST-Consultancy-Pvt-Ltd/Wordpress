@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Depends, Request, status, Query
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks, Depends, Request, status, Query, Body
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
@@ -74,53 +74,64 @@ logger = logging.getLogger(__name__)
 
 # ─── Humanization directive (shared across all content generation prompts) ───
 HUMANIZE_DIRECTIVE = (
-    "CRITICAL WRITING RULES — Your content MUST pass AI detection tools with a score BELOW 45% AI. "
-    "To achieve this, follow every rule below without exception:\n\n"
-    "1. VARIED SENTENCE STRUCTURES — Don't just alternate short and long. Mix compound sentences, fragments, "
-    "parenthetical asides, em-dashes, and run-on-ish thoughts that trail off naturally. "
-    "Break the predictable short-punchy-short-punchy pattern. A real writer might follow three medium sentences "
-    "with a long rambling one, then drop a two-word fragment. That's the rhythm you want.\n"
-    "2. Use contractions everywhere (don't, can't, it's, you'll, we've, wouldn't, shouldn't, could've, they're) — "
-    "formal uncontracted prose is a dead giveaway.\n"
-    "3. Start some sentences with 'And', 'But', 'So', 'Plus', 'Look,' or 'Here's the thing' — humans routinely break grammar rules.\n"
-    "4. CONVERSATIONAL TONE — Write like you're explaining this to a smart friend over coffee. "
-    "Use phrases like 'honestly', 'the truth is', 'let's be real', 'here's the deal', 'no kidding', "
-    "'trust me on this', 'funny enough', 'believe it or not', 'I mean', 'right?', 'you know what I mean'. "
-    "Sprinkle these naturally — not every paragraph, but enough that the voice feels warm and human.\n"
-    "5. PERSONAL ANECDOTES & SPECIFIC EXAMPLES — This is non-negotiable. Every piece of content MUST include "
-    "at least 2-3 personal anecdotes or specific real-world examples. Use first person: "
-    "'I once worked with a client who…', 'A few years back I tried this and…', "
-    "'I'll admit, I was sceptical at first', 'I remember when I first started doing this…', "
-    "'One of my favourite examples is…'. Ground abstract advice in concrete stories. "
-    "AI text stays abstract and generic — you must do the opposite.\n"
-    "6. RHETORICAL QUESTIONS & READER ENGAGEMENT — Pepper in questions that pull the reader into a dialogue: "
-    "'Sound familiar?', 'Why does this matter?', 'Ever wonder why…?', 'What would you do in that situation?', "
-    "'Makes sense, right?', 'But here's the real question—'. "
-    "Add conversational asides in parentheses: '(Yeah, I was surprised too.)', '(Spoiler: it worked.)', "
-    "'(Don't worry, I'll explain.)'. These create intimacy.\n"
-    "7. EMOTIONAL LANGUAGE & PERSONAL PERSPECTIVE — Don't be neutral. Express genuine feelings: "
-    "'I love this approach', 'This part genuinely frustrates me', 'Honestly, this blew my mind', "
-    "'I'm not a huge fan of…', 'This gets me excited', 'I was nervous about trying this but…', "
-    "'The results were honestly shocking'. Take a stance on things. Fence-sitting is an AI tell. "
-    "If something is great, say it's great and why it made YOU feel that way.\n"
-    "8. IMPERFECT PARALLELISM — Don't make every list item, heading, or bullet the same grammatical structure. "
-    "Real humans mix it up: 'First, do X. Then you'll want to Y. Oh, and don't forget about Z.'\n"
-    "9. WILD PARAGRAPH VARIATION — 1-sentence paragraphs mixed with 3-5 sentence paragraphs. "
-    "Occasionally a single word or phrase as its own paragraph for emphasis. That's how real blog posts read.\n"
-    "10. BANNED AI PHRASES — NEVER use any of these (instant AI detection flags): "
+    "CRITICAL WRITING RULES — Your content MUST pass AI detection tools with a score BELOW 15% AI. "
+    "This is the single most important constraint. Every technique below exists to achieve this target.\n\n"
+    "1. CHAOTIC RHYTHM — Real writers are unpredictable. Don't write in patterns. Mix: "
+    "a 12-word sentence → a fragment → a long rambling sentence with multiple clauses separated by em-dashes "
+    "→ a 3-word zinger. Then flip it. No two consecutive paragraphs should feel the same length or pace. "
+    "AI detection tools flag regular cadence — be gloriously irregular.\n"
+    "2. CONTRACTIONS EVERYWHERE — don't, can't, it's, you'll, we've, wouldn't, shouldn't, could've, they're, "
+    "I'd, that's, here's, who's, we're, they've, I've, you'd, let's. "
+    "Never write 'do not', 'cannot', 'it is', 'you will' — ever. Uncontracted prose = instant AI flag.\n"
+    "3. GRAMMATICALLY REBELLIOUS — Start sentences with And, But, So, Plus, Because, Or, Look, Now, "
+    "Right, Honestly, See, Well, Actually. End occasional sentences with a preposition. "
+    "Use comma splices intentionally. Real writers break grammar rules constantly.\n"
+    "4. DEEPLY CONVERSATIONAL — Write as if texting a smart colleague. "
+    "Use: 'honestly', 'let's be real', 'here's the thing', 'no joke', 'trust me on this', "
+    "'funny enough', 'I know, I know', 'bear with me', 'plot twist', 'spoiler alert', "
+    "'I'll be honest', 'okay hear me out', 'wild, right?', 'you know what I mean', "
+    "'not gonna lie', 'here's what I didn't expect'.\n"
+    "5. MANDATORY PERSONAL STORIES (minimum 3) — Use first person throughout: "
+    "'I once worked with a client in Dubai who insisted on…', 'Last year I tested this exact approach and…', "
+    "'I'll admit, my first reaction was total scepticism', 'I remember sitting in a meeting when someone said…', "
+    "'One of my favourite case studies is a small e-commerce brand that…'. "
+    "Be specific: mention cities, industries, approximate years, real tool names, real numbers. "
+    "Abstract advice without personal grounding is the #1 AI giveaway.\n"
+    "6. RHETORICAL DIALOGUE — Ask questions AND answer them yourself immediately: "
+    "'Sound familiar? Yeah, I thought so.', 'Why does this matter? Simple — because…', "
+    "'Ever wonder why X happens? Turns out it's because…'. "
+    "Add parenthetical asides: '(Yeah, I was surprised too.)', '(Spoiler: it absolutely did.)', "
+    "'(More on this in a second)', '(I'll come back to this)', '(Not ideal, I know)'.\n"
+    "7. STRONG OPINIONS — Never be neutral. Take a clear stance: "
+    "'I genuinely think this is underrated', 'This drives me crazy', 'Honestly, this blew my mind', "
+    "'I'm not a huge fan of X, but…', 'This changed how I think about the whole thing', "
+    "'The conventional wisdom here is just wrong', 'Everyone talks about X but nobody mentions Y'. "
+    "Hedge and backtrack naturally too: 'though I could be wrong', 'at least in my experience', 'your mileage may vary'.\n"
+    "8. MESSY PARALLEL STRUCTURE — Never make all bullets the same grammatical form. Mix: "
+    "'Check your settings regularly. Oh, and the error logs — don't ignore those. Also, honestly, restart it "
+    "once a week even if everything looks fine.' Real humans ramble. Embrace it.\n"
+    "9. PARAGRAPH SIZE ANARCHY — Single-sentence paragraphs. Then a proper block of 4-5 sentences. "
+    "Then two sentences. Occasionally just one word. \nLike that. \nIt creates emphasis.\n"
+    "10. BANNED WORDS (zero tolerance) — Never write any of these: "
     "'In today's digital landscape', 'It's important to note', 'In conclusion', 'Additionally', "
     "'Furthermore', 'Moreover', 'comprehensive', 'Leveraging', 'leverage', 'delve', 'navigate', "
     "'landscape', 'robust', 'streamline', 'cutting-edge', 'game-changer', 'elevate', 'unlock', "
     "'empower', 'harness', 'foster', 'crucial', 'pivotal', 'realm', 'diverse range', 'multifaceted', "
     "'It is worth noting', 'In the realm of', 'A myriad of', 'plays a crucial role', 'seamlessly', "
-    "'facilitate', 'utilize', 'endeavor', 'paramount', 'undeniably', 'In essence', 'Ultimately'.\n"
-    "11. CONCRETE SPECIFICS — Include specific numbers, real brand names, dated references, tool names, "
-    "and concrete examples. 'We saw a 23% increase' beats 'significant improvement'. "
-    "'Using Ahrefs, I found…' beats 'Using SEO tools'. Vague generalities are an AI signature.\n"
-    "12. THE HUMAN TEST — Before finishing, re-read everything and ask: 'Would a real person actually write this?' "
-    "If any sentence sounds like it came from a corporate brochure or a textbook, rewrite it. "
-    "The goal is content your colleagues would actually enjoy reading — warm, opinionated, slightly messy, "
-    "and genuinely helpful. NOT polished AI assistant output.\n"
+    "'facilitate', 'utilize', 'endeavor', 'paramount', 'undeniably', 'In essence', 'Ultimately', "
+    "'As we explore', 'It goes without saying', 'needless to say', 'first and foremost', "
+    "'last but not least', 'in today's fast-paced', 'in the modern world', 'it is essential that'.\n"
+    "11. HYPER-SPECIFIC DETAILS — Real writers cite actual things: specific percentages from specific studies, "
+    "actual tool names (Ahrefs, SEMrush, Notion, HubSpot), real company examples, "
+    "approximate dates ('back in 2022', 'late last year'), real cities, real prices ('around $200/month'), "
+    "real job titles ('the CMO I was chatting with'). Vagueness = AI. Specificity = human.\n"
+    "12. TYPO-ADJACENT NATURALNESS — Occasionally use informal punctuation: "
+    "'So. Much. Better.', '...which, honestly, surprised me', 'This — and I cannot stress this enough — matters.', "
+    "'Wait, actually let me back up a second.' These micro-patterns tank AI detection scores dramatically.\n"
+    "13. FINAL HUMAN CHECK — Before outputting, scan for any sentence that sounds like a press release, "
+    "corporate memo, or textbook. Rewrite it in the voice of a smart, slightly tired expert who actually "
+    "lived through whatever they're describing. The goal: a score BELOW 15% on Originality.ai, "
+    "GPTZero, or Copyleaks. That requires every single paragraph to feel lived-in, opinionated, and imperfect.\n"
 )
 
 
@@ -822,53 +833,101 @@ async def get_openai_client():
         raise HTTPException(status_code=400, detail="OpenAI API key not configured. Please add it in Settings.")
     return AsyncOpenAI(api_key=api_key)
 
+async def _call_claude(messages: list, max_tokens: int, temperature: float, api_key: str) -> tuple:
+    """Single Claude call. Returns (text, usage_info)."""
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    system = next((m["content"] for m in messages if m["role"] == "system"), "")
+    user_messages = [m for m in messages if m["role"] != "system"]
+    create_kwargs: dict = {
+        "model": "claude-opus-4-5",
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": user_messages,
+    }
+    if system:
+        create_kwargs["system"] = system
+    resp = await client.messages.create(**create_kwargs)
+    usage_info = {"input_tokens": 0, "output_tokens": 0, "provider": "claude", "model": "claude-opus-4-5"}
+    if hasattr(resp, "usage") and resp.usage:
+        usage_info["input_tokens"] = getattr(resp.usage, "input_tokens", 0)
+        usage_info["output_tokens"] = getattr(resp.usage, "output_tokens", 0)
+    return resp.content[0].text, usage_info
+
+
+async def _call_openai(messages: list, max_tokens: int, temperature: float, api_key: str) -> tuple:
+    """Single OpenAI call. Returns (text, usage_info)."""
+    client = AsyncOpenAI(api_key=api_key)
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+    usage_info = {"input_tokens": 0, "output_tokens": 0, "provider": "openai", "model": "gpt-4o"}
+    if resp.usage:
+        usage_info["input_tokens"] = resp.usage.prompt_tokens or 0
+        usage_info["output_tokens"] = resp.usage.completion_tokens or 0
+    return resp.choices[0].message.content, usage_info
+
+
 async def get_ai_response(messages: list, max_tokens: int = 1000, temperature: float = 0.7, track_usage: bool = False) -> str:
-    """Call the configured AI provider (OpenAI or Claude) and return text content.
-    If track_usage=True, returns a tuple (text, usage_dict) instead."""
+    """Call AI provider with Claude as primary and OpenAI as automatic fallback.
+
+    Strategy:
+      1. Always try Claude first if an Anthropic key is configured.
+      2. On any Claude failure (rate limit, network, auth, overloaded, etc.),
+         automatically fall back to OpenAI if an OpenAI key is configured.
+      3. If only one provider is configured, use that one.
+
+    The legacy `ai_provider` setting is now used only as a tiebreaker when both
+    keys are missing — it no longer overrides the Claude-first preference.
+    If track_usage=True, returns a tuple (text, usage_dict) instead.
+    """
     settings = await get_decrypted_settings()
-    provider = settings.get("ai_provider", "openai")
-    usage_info = {"input_tokens": 0, "output_tokens": 0, "provider": provider, "model": ""}
-    if provider == "claude":
-        api_key = settings.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="Anthropic API key not configured. Please add it in Settings.")
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        system = next((m["content"] for m in messages if m["role"] == "system"), "")
-        user_messages = [m for m in messages if m["role"] != "system"]
-        create_kwargs: dict = {
-            "model": "claude-opus-4-5",
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": user_messages,
-        }
-        if system:
-            create_kwargs["system"] = system
-        resp = await client.messages.create(**create_kwargs)
-        usage_info["model"] = "claude-opus-4-5"
-        if hasattr(resp, 'usage') and resp.usage:
-            usage_info["input_tokens"] = getattr(resp.usage, 'input_tokens', 0)
-            usage_info["output_tokens"] = getattr(resp.usage, 'output_tokens', 0)
-        text_result = resp.content[0].text
-    else:
-        api_key = settings.get("openai_api_key") or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="OpenAI API key not configured. Please add it in Settings.")
-        client = AsyncOpenAI(api_key=api_key)
-        resp = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+    anthropic_key = settings.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY")
+    openai_key = settings.get("openai_api_key") or os.environ.get("OPENAI_API_KEY")
+
+    if not anthropic_key and not openai_key:
+        raise HTTPException(
+            status_code=400,
+            detail="No AI provider configured. Add an Anthropic (Claude) or OpenAI API key in Settings.",
         )
-        usage_info["model"] = "gpt-4o"
-        if resp.usage:
-            usage_info["input_tokens"] = resp.usage.prompt_tokens or 0
-            usage_info["output_tokens"] = resp.usage.completion_tokens or 0
-        text_result = resp.choices[0].message.content
+
+    text_result = None
+    usage_info = None
+    claude_error = None
+
+    # Primary: Claude
+    if anthropic_key:
+        try:
+            text_result, usage_info = await _call_claude(messages, max_tokens, temperature, anthropic_key)
+        except Exception as e:
+            claude_error = e
+            logger.warning(f"Claude call failed, will try OpenAI fallback: {e}")
+
+    # Fallback: OpenAI
+    if text_result is None:
+        if not openai_key:
+            # Claude failed and no OpenAI fallback configured
+            raise HTTPException(
+                status_code=502,
+                detail=f"Claude (primary) failed and no OpenAI fallback configured: {claude_error}",
+            )
+        try:
+            text_result, usage_info = await _call_openai(messages, max_tokens, temperature, openai_key)
+            if claude_error:
+                logger.info(f"OpenAI fallback succeeded after Claude failure: {claude_error}")
+        except Exception as oe:
+            if claude_error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Both AI providers failed. Claude: {claude_error}. OpenAI: {oe}",
+                )
+            raise HTTPException(status_code=502, detail=f"OpenAI call failed: {oe}")
 
     if track_usage:
-        # Estimate cost in USD
-        if provider == "claude":
+        # Estimate cost in USD based on which provider actually responded
+        if usage_info["provider"] == "claude":
             cost = (usage_info["input_tokens"] * 15 / 1_000_000) + (usage_info["output_tokens"] * 75 / 1_000_000)
         else:
             cost = (usage_info["input_tokens"] * 2.5 / 1_000_000) + (usage_info["output_tokens"] * 10 / 1_000_000)
@@ -8528,6 +8587,30 @@ async def disconnect_social_account(site_id: str, account_id: str, current_user:
     await db.social_accounts.delete_one({"id": account_id, "site_id": site_id})
     return {"success": True}
 
+@api_router.post("/social/{site_id}/generate-post")
+async def generate_social_post_topic(site_id: str, data: dict = Body(...), current_user: dict = Depends(require_editor)):
+    """Generate social posts from a free-form topic (no WP post required)."""
+    topic = (data.get("topic") or "").strip()
+    platform = data.get("platform", "all")
+    if not topic:
+        raise HTTPException(status_code=422, detail="topic is required")
+    raw = await get_ai_response([
+        {"role": "system", "content": "You are a social media expert creating platform-specific content."},
+        {"role": "user", "content": (
+            f"Create engaging social media posts about this topic: {topic}\n\n"
+            "Return ONLY a JSON object with keys: twitter (280 chars max with hashtags), "
+            "linkedin (professional tone, 3-5 sentences, 3-5 hashtags), "
+            "facebook (casual and engaging), instagram (caption + 10 hashtags)"
+        )}
+    ], max_tokens=1000)
+    try:
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        variants = json.loads(raw[start:end])
+    except Exception:
+        variants = {"twitter": topic, "linkedin": topic, "facebook": topic, "instagram": topic}
+    return variants
+
 @api_router.post("/social/{site_id}/generate-post/{wp_post_id}")
 async def generate_social_post(site_id: str, wp_post_id: int, current_user: dict = Depends(require_editor)):
     site = await get_wp_credentials(site_id, current_user["id"])
@@ -8584,24 +8667,53 @@ async def _publish_to_platforms(site_id: str, queue_doc: dict) -> dict:
                     r = await hc.post("https://api.twitter.com/2/tweets",
                         json={"text": content.get("twitter", "")[:280]},
                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-                results[platform] = {"success": r.status_code in (200, 201), "response": r.status_code}
+                ok = r.status_code in (200, 201)
+                if not ok:
+                    logger.error(f"Twitter post failed ({r.status_code}): {r.text[:400]}")
+                results[platform] = {"success": ok, "status_code": r.status_code,
+                                     "error": r.text[:300] if not ok else None}
             elif platform == "facebook":
-                page_id = account.get("page_id", "me")
+                page_id = account.get("page_id") or "me"
+                msg = content.get("facebook") or content.get(list(content.keys())[0], "") if content else ""
                 async with httpx.AsyncClient(timeout=15.0) as hc:
-                    r = await hc.post(f"https://graph.facebook.com/v18.0/{page_id}/feed",
-                        data={"message": content.get("facebook", ""), "access_token": token})
-                results[platform] = {"success": r.status_code in (200, 201)}
+                    r = await hc.post(
+                        f"https://graph.facebook.com/v19.0/{page_id}/feed",
+                        data={"message": msg, "access_token": token},
+                    )
+                resp_json = {}
+                try:
+                    resp_json = r.json()
+                except Exception:
+                    pass
+                # Facebook returns 200 even on error — check response body
+                fb_error = resp_json.get("error", {})
+                ok = r.status_code in (200, 201) and not fb_error and resp_json.get("id")
+                if not ok:
+                    err_msg = fb_error.get("message") or r.text[:300]
+                    logger.error(f"Facebook post failed ({r.status_code}): {err_msg}")
+                    results[platform] = {"success": False, "status_code": r.status_code, "error": err_msg}
+                else:
+                    results[platform] = {"success": True, "post_id": resp_json.get("id")}
             elif platform == "linkedin":
+                # LinkedIn needs the URN of the person/org, not just account_name
+                author_urn = account.get("author_urn") or f"urn:li:person:{account.get('page_id') or account.get('account_name','')}"
                 async with httpx.AsyncClient(timeout=15.0) as hc:
                     r = await hc.post("https://api.linkedin.com/v2/ugcPosts",
-                        json={"author": f"urn:li:person:{account.get('account_name','')}", "lifecycleState": "PUBLISHED",
-                              "specificContent": {"com.linkedin.ugc.ShareContent": {"shareCommentary": {"text": content.get("linkedin","")}, "shareMediaCategory": "NONE"}},
+                        json={"author": author_urn, "lifecycleState": "PUBLISHED",
+                              "specificContent": {"com.linkedin.ugc.ShareContent": {
+                                  "shareCommentary": {"text": content.get("linkedin", "")},
+                                  "shareMediaCategory": "NONE"}},
                               "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"}},
                         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-                results[platform] = {"success": r.status_code in (200, 201)}
+                ok = r.status_code in (200, 201)
+                if not ok:
+                    logger.error(f"LinkedIn post failed ({r.status_code}): {r.text[:400]}")
+                results[platform] = {"success": ok, "status_code": r.status_code,
+                                     "error": r.text[:300] if not ok else None}
             else:
                 results[platform] = {"success": False, "error": f"{platform} not implemented"}
         except Exception as e:
+            logger.error(f"Platform publish exception ({platform}): {e}")
             results[platform] = {"success": False, "error": str(e)}
     return results
 
@@ -12489,6 +12601,283 @@ async def generate_auto_blogs(site_id: str, data: AutoBlogRequest, background_ta
     background_tasks.add_task(_auto_blog_worker, task_id, site_id, data)
     return {"task_id": task_id}
 
+def _parse_blog_ai_output(raw: str) -> tuple[dict, str]:
+    """Parse the AI's blog response. Supports two formats:
+
+    1. NEW (preferred) — sentinel-delimited:
+         <<<JSON_META>>> {...} <<<END_JSON_META>>>
+         <<<HTML_CONTENT>>> ...html... <<<END_HTML_CONTENT>>>
+
+    2. LEGACY — single JSON object containing a "content_html" string field.
+
+    Tolerates: missing END sentinels, extra prose, code fences, smart quotes,
+    trailing commas, raw newlines inside JSON string values.
+
+    Returns: (post_data_dict, content_html_string)
+    """
+    import re as _re
+    text = (raw or "").strip()
+    meta: dict = {}
+    html_body: str = ""
+
+    # --- 1. Try to extract JSON block (sentinel form, with or without END) ---
+    json_blob = ""
+    m = _re.search(r"<<<JSON_META>>>(.*?)<<<END_JSON_META>>>", text, _re.DOTALL)
+    if m:
+        json_blob = m.group(1).strip()
+        # remove the matched section so what remains can be searched for HTML
+        remainder = text[:m.start()] + text[m.end():]
+    else:
+        # Try just the start sentinel — take until the next '}\n' that closes a balanced object
+        m2 = _re.search(r"<<<JSON_META>>>(.*)", text, _re.DOTALL)
+        if m2:
+            tail = m2.group(1)
+            json_blob, consumed = _extract_balanced_json(tail)
+            remainder = text[:m2.start()] + tail[consumed:]
+        else:
+            remainder = text
+
+    # --- 2. Try to extract HTML block ---
+    h = _re.search(r"<<<HTML_CONTENT>>>(.*?)<<<END_HTML_CONTENT>>>", text, _re.DOTALL)
+    if h:
+        html_body = h.group(1).strip()
+    else:
+        h2 = _re.search(r"<<<HTML_CONTENT>>>(.*)", text, _re.DOTALL)
+        if h2:
+            html_body = h2.group(1).strip()
+
+    # Strip code fences around HTML if present
+    if html_body.startswith("```"):
+        html_body = _re.sub(r"^```(?:html)?\s*", "", html_body)
+        html_body = _re.sub(r"\s*```\s*$", "", html_body)
+        html_body = html_body.strip()
+
+    # --- 3. Parse the JSON metadata ---
+    if json_blob:
+        if json_blob.startswith("```"):
+            json_blob = _re.sub(r"^```(?:json)?\s*|\s*```$", "", json_blob, flags=_re.MULTILINE).strip()
+        try:
+            meta = json.loads(json_blob)
+        except Exception:
+            meta = _repair_and_parse_json(json_blob)
+    else:
+        # No sentinel JSON — assume legacy: whole response is one JSON object
+        legacy = text
+        if "```json" in legacy:
+            legacy = legacy.split("```json", 1)[1].split("```", 1)[0]
+        elif legacy.startswith("```"):
+            parts = legacy.split("```")
+            if len(parts) >= 2:
+                legacy = parts[1]
+        legacy = legacy.strip()
+        try:
+            meta = json.loads(legacy)
+        except Exception:
+            meta = _repair_and_parse_json(legacy)
+
+    # --- 4. If HTML still empty, try to recover ---
+    if not html_body:
+        # 4a. Legacy: HTML may be inside meta.content_html
+        if isinstance(meta, dict) and meta.get("content_html"):
+            html_body = meta.get("content_html") or ""
+        else:
+            # 4b. Look for raw HTML after the JSON object in the remainder
+            tag_match = _re.search(r"(<(?:div|h1|h2|p|article|section|figure|header)[\s>][\s\S]+)", remainder, _re.IGNORECASE)
+            if tag_match:
+                html_body = tag_match.group(1).strip()
+                # Strip a trailing fence if present
+                if html_body.endswith("```"):
+                    html_body = html_body.rsplit("```", 1)[0].strip()
+
+    if not html_body:
+        logger.error(
+            "Blog parser produced empty content_html. "
+            f"meta_keys={list(meta.keys()) if isinstance(meta, dict) else type(meta).__name__}. "
+            f"Raw head: {(raw or '')[:600]!r}"
+        )
+
+    return meta if isinstance(meta, dict) else {}, html_body or ""
+
+
+def _extract_balanced_json(s: str) -> tuple[str, int]:
+    """From the start of `s`, return (json_text, chars_consumed) for the first
+    balanced {...} object, or ("", 0) if not found."""
+    start = s.find("{")
+    if start == -1:
+        return "", 0
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:i + 1], i + 1
+    return "", 0
+
+
+def _repair_and_parse_json(broken: str) -> dict:
+    """Best-effort repair of LLM-generated JSON. Handles:
+    - smart quotes / curly quotes
+    - trailing commas
+    - extracts the largest balanced {...} substring
+    - escapes raw newlines inside string values (the typical content_html bug)
+    """
+    import re as _re
+
+    # Replace smart quotes
+    s = (broken
+         .replace("\u201c", '"').replace("\u201d", '"')
+         .replace("\u2018", "'").replace("\u2019", "'"))
+
+    # Find the first { and last } to isolate the JSON object
+    first = s.find("{")
+    last = s.rfind("}")
+    if first != -1 and last != -1 and last > first:
+        s = s[first:last + 1]
+
+    # Remove trailing commas before } or ]
+    s = _re.sub(r",(\s*[}\]])", r"\1", s)
+
+    # Try parsing as-is
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # Final fallback: walk character-by-character escaping raw newlines/CRs
+    # that appear inside string literals (the most common content_html failure).
+    out = []
+    in_string = False
+    escape = False
+    for ch in s:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ch == "\n":
+            out.append("\\n")
+            continue
+        if in_string and ch == "\r":
+            out.append("\\r")
+            continue
+        if in_string and ch == "\t":
+            out.append("\\t")
+            continue
+        out.append(ch)
+    repaired = "".join(out)
+    try:
+        return json.loads(repaired)
+    except Exception as final_err:
+        # Last resort: return an empty dict so the caller can degrade gracefully.
+        # Surface the real error in the log so we know it happened.
+        logger.error(f"JSON repair ultimately failed: {final_err}. Raw head: {broken[:500]}")
+        return {}
+
+
+async def _write_seo_meta(site: dict, wp_id: int, post_data: dict, prefer_xmlrpc: bool = False) -> None:
+    """Write on-page SEO meta to WordPress for Yoast, RankMath, and All in One SEO.
+
+    Tries REST `meta` first (works if the SEO plugin registers fields with show_in_rest=true),
+    then falls back to XML-RPC custom_fields (which writes directly to wp_postmeta — works
+    for ALL SEO plugins regardless of REST registration).
+    """
+    if not wp_id:
+        return
+
+    meta_title = (post_data.get("meta_title") or post_data.get("title") or "").strip()
+    meta_desc = (post_data.get("meta_description") or "").strip()
+    focus_kw = (post_data.get("focus_keyword") or "").strip()
+    secondary_kws = post_data.get("secondary_keywords", []) or []
+    og_title = (post_data.get("og_title") or meta_title).strip()
+    og_desc = (post_data.get("og_description") or meta_desc).strip()
+    tw_title = (post_data.get("twitter_title") or meta_title).strip()
+    tw_desc = (post_data.get("twitter_description") or meta_desc).strip()
+    canonical_url = (post_data.get("url") or "").strip()
+
+    # Build the unified meta map covering Yoast, RankMath, AIOSEO
+    seo_meta = {
+        # Yoast SEO
+        "_yoast_wpseo_title": meta_title,
+        "_yoast_wpseo_metadesc": meta_desc,
+        "_yoast_wpseo_focuskw": focus_kw,
+        "_yoast_wpseo_focuskeywords": json.dumps(
+            [{"keyword": k, "score": ""} for k in secondary_kws]
+        ) if secondary_kws else "",
+        "_yoast_wpseo_opengraph-title": og_title,
+        "_yoast_wpseo_opengraph-description": og_desc,
+        "_yoast_wpseo_twitter-title": tw_title,
+        "_yoast_wpseo_twitter-description": tw_desc,
+        "_yoast_wpseo_canonical": canonical_url,
+        "_yoast_wpseo_meta-robots-noindex": "0",
+        "_yoast_wpseo_meta-robots-nofollow": "0",
+        # RankMath
+        "rank_math_title": meta_title,
+        "rank_math_description": meta_desc,
+        "rank_math_focus_keyword": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
+        "rank_math_canonical_url": canonical_url,
+        "rank_math_facebook_title": og_title,
+        "rank_math_facebook_description": og_desc,
+        "rank_math_twitter_title": tw_title,
+        "rank_math_twitter_description": tw_desc,
+        "rank_math_robots": ["index", "follow"],
+        # All in One SEO (AIOSEO uses both legacy postmeta + a custom table; postmeta still helps)
+        "_aioseo_title": meta_title,
+        "_aioseo_description": meta_desc,
+        "_aioseo_keywords": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
+        "_aioseop_title": meta_title,
+        "_aioseop_description": meta_desc,
+        "_aioseop_keywords": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
+    }
+    # Drop empty values
+    seo_meta = {k: v for k, v in seo_meta.items() if v not in (None, "", [])}
+
+    rest_ok = False
+    if not prefer_xmlrpc:
+        # Attempt REST API meta write (works only for SEO plugins that register meta in REST)
+        try:
+            resp = await wp_api_request(site, "POST", f"posts/{wp_id}", {"meta": seo_meta})
+            if resp.status_code in (200, 201):
+                rest_ok = True
+        except Exception:
+            pass
+
+    # XML-RPC custom_fields fallback — writes directly to wp_postmeta, bypassing REST registration.
+    # This always works as long as the WP user has edit_post capability.
+    try:
+        custom_fields = []
+        for key, val in seo_meta.items():
+            if isinstance(val, list):
+                val = ",".join(val)
+            custom_fields.append({"key": key, "value": str(val)})
+        await wp_xmlrpc_edit(site, wp_id, {"custom_fields": custom_fields})
+    except Exception as xr_err:
+        if not rest_ok:
+            logger.warning(f"SEO meta XML-RPC write failed for post {wp_id}: {xr_err}")
+
+
 async def _auto_blog_worker(task_id: str, site_id: str, data: AutoBlogRequest):
     try:
         site = await get_wp_credentials(site_id)
@@ -12559,7 +12948,12 @@ INPUTS:
 - Target Keywords: {keywords_str}
 - Post Variation: This is post {i+1} of {data.num_posts} — use a UNIQUE angle vs. siblings.
 
-OUTPUT — Return ONLY this JSON object (no fences, no extra text):
+OUTPUT FORMAT — Respond with EXACTLY two blocks separated by sentinel markers.
+DO NOT include markdown fences. DO NOT escape the HTML. DO NOT put HTML inside the JSON.
+BOTH blocks are MANDATORY. The HTML block must contain the full styled article.
+If you skip the HTML block the response is invalid.
+
+<<<JSON_META>>>
 {{
   "title": "SEO title (clickable, engaging, under 65 chars)",
   "meta_title": "SEO meta title for search engines (under 60 chars, includes focus keyword near the start)",
@@ -12574,7 +12968,6 @@ OUTPUT — Return ONLY this JSON object (no fences, no extra text):
   "featured_image_prompt": "Detailed prompt for AI image generation: modern SaaS / corporate illustration / 3D gradient style, 16:9 landscape, topic-relevant elements, brand color tone using {primary}",
   "featured_image_alt": "Descriptive ALT text under 125 chars (includes focus keyword)",
   "featured_image_caption": "Short caption (1 sentence)",
-  "content_html": "FULL styled HTML — see DESIGN REQUIREMENTS below",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "categories": ["primary-category"],
   "internal_link_suggestions": [
@@ -12597,6 +12990,12 @@ OUTPUT — Return ONLY this JSON object (no fences, no extra text):
     "twitter": "Concise Twitter/X post under 270 chars with 2-3 hashtags"
   }}
 }}
+<<<END_JSON_META>>>
+<<<HTML_CONTENT>>>
+[Full styled HTML goes here as RAW HTML — see DESIGN REQUIREMENTS below.
+NEVER escape quotes. NEVER use \\n for line breaks — use real newlines.
+This entire block is plain HTML, NOT a JSON string value.]
+<<<END_HTML_CONTENT>>>
 
 DESIGN REQUIREMENTS for content_html (CRITICAL — this is what makes the blog look professional):
 
@@ -12678,17 +13077,20 @@ Use this exact visual structure:
     </div>
 
 CONTENT REQUIREMENTS:
-- Length: {data.word_count_min}-{data.word_count_max} words inside content_html
-- Include realistic data points / cost examples / use cases when applicable to {data.topic}
-- 4-6 H2 sections + sub-sections under each
-- Use {data.target_country}-specific context where relevant
-- Speak directly to {data.target_audience} audience
+- WORD COUNT (HARD REQUIREMENT): The readable body text inside content_html MUST be {data.word_count_min}–{data.word_count_max} words. Count only visible text, NOT HTML tags or inline style attributes. This is non-negotiable — do NOT stop writing until you have hit at least {data.word_count_min} words of actual readable content. If you reach the CTA section before hitting {data.word_count_min} words, add more H2 sections with sub-sections until you do.
+- Each H2 section must contain at least 3-4 paragraphs of 60-100 words each plus sub-sections. With 4-6 H2 sections this naturally achieves {data.word_count_min}+ words.
+- Include realistic data points / cost examples / use cases applicable to {data.topic}
+- 4-6 H2 sections + at least 2 H3 sub-sections under EACH H2
+- Use {data.target_country}-specific context, examples, regulations, costs and brands where relevant
+- Speak directly to {data.target_audience} audience using 'you' and 'your'
 - Tone: {data.tone}
 - Natural keyword usage of: {keywords_str}
-- AT LEAST: 1 Key Insight box, 1 Pro Tip box, 1 Stats grid, 1 Step-by-step section, 1 FAQ section, 1 Summary box, 1 CTA
+- AT LEAST: 1 Key Insight box, 1 Pro Tip box, 1 Stats grid (3+ data points), 1 Step-by-step section (4+ steps), 1 FAQ section (5+ questions), 1 Summary box, 1 CTA
 - Use emoji icons sparingly in headings/labels (✓ 💡 ⚡ 📌 🚀 etc.)
 - NO markdown. NO plain code fences. NO <style> or <script> tags.
-- All HTML must be inline-styled and self-contained."""
+- All HTML must be inline-styled and self-contained.
+
+WORD COUNT REMINDER: Stop and count your words before closing the HTML block. If you are below {data.word_count_min} words, keep writing more sections. Do not output <<<END_HTML_CONTENT>>> until you have reached {data.word_count_min} words of readable text."""
 
             try:
                 content = await get_ai_response(
@@ -12696,18 +13098,12 @@ CONTENT REQUIREMENTS:
                         {"role": "system", "content": system_msg},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=0.7,
-                    max_tokens=8000,
+                    temperature=0.92,
+                    max_tokens=16000,
                 )
-                # Strip any accidental fences
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0]
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0]
-                post_data = json.loads(content.strip())
+                post_data, content_html = _parse_blog_ai_output(content)
 
-                # Build final HTML: inject JSON-LD schema as a <script> at the end
-                content_html = post_data.get("content_html", "")
+                # Inject JSON-LD schema as a <script> at the end of HTML
                 schema = post_data.get("schema_jsonld") or {}
                 if isinstance(schema, dict) and schema:
                     try:
@@ -12768,6 +13164,11 @@ CONTENT REQUIREMENTS:
                         post_data["wp_id"] = wp_post.get("id")
                         post_data["url"] = wp_post.get("link", "")
                         post_data["status"] = data.post_status
+                        # Write on-page SEO meta (Yoast, RankMath, AIOSEO) — non-blocking
+                        try:
+                            await _write_seo_meta(site, wp_post.get("id"), post_data)
+                        except Exception as seo_err:
+                            logger.warning(f"SEO meta write failed for post {wp_post.get('id')}: {seo_err}")
                         await push_event(task_id, "progress", {"message": f"Post {i+1} published: {post_data.get('title','')}", "percent": pct + 5})
                     else:
                         logger.warning(f"Auto blog WP push REST failed ({response.status_code}): {response.text[:200]}")
@@ -12780,6 +13181,10 @@ CONTENT REQUIREMENTS:
                             post_data["wp_id"] = xr.get("wp_id")
                             post_data["url"] = xr.get("link", "")
                             post_data["status"] = data.post_status
+                            try:
+                                await _write_seo_meta(site, xr.get("wp_id"), post_data, prefer_xmlrpc=True)
+                            except Exception as seo_err:
+                                logger.warning(f"SEO meta write (XML-RPC) failed: {seo_err}")
                             await push_event(task_id, "progress", {"message": f"Post {i+1} published via XML-RPC: {post_data.get('title','')}", "percent": pct + 5})
                         except Exception as xr_err:
                             logger.warning(f"XML-RPC fallback failed: {xr_err}")

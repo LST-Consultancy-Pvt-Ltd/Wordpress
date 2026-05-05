@@ -364,7 +364,7 @@ export const getSocialAccounts     = (siteId)                       => api.get(`
 export const connectSocialAccount  = (siteId, data)                 => api.post(`/social/${siteId}/connect`, data);
 export const disconnectSocialAccount = (siteId, accountId)          => api.delete(`/social/${siteId}/accounts/${accountId}`);
 export const generateSocialPost    = (siteId, data)                => api.post(`/social/${siteId}/generate-post`, data);
-export const publishSocialPost     = (siteId, data)                => api.post(`/social/${siteId}/publish`, data);
+export const publishSocialPost     = (siteId, postId, data)        => api.post(`/social/${siteId}/publish/${postId}`, data);
 export const getSocialQueue        = (siteId)                       => api.get(`/social/${siteId}/queue`);
 export const saveSocialAutoSettings = (siteId, data)                => api.post(`/social/${siteId}/auto-post-settings`, data);
 export const processSocialQueue    = (siteId)                       => api.post(`/social/${siteId}/process-queue`);

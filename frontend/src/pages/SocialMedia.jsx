@@ -47,7 +47,7 @@ export default function SocialMedia() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [genForm, setGenForm] = useState({ platform: "twitter", topic: "", post_id: "" });
-  const [connectForm, setConnectForm] = useState({ platform: "twitter", access_token: "", page_id: "" });
+  const [connectForm, setConnectForm] = useState({ platform: "twitter", access_token: "", page_id: "", account_name: "" });
   const [generating, setGenerating] = useState(false);
   const [generatedPost, setGeneratedPost] = useState(null);
   const [publishing, setPublishing] = useState(false);
@@ -85,10 +85,16 @@ export default function SocialMedia() {
       await connectSocialAccount(selectedSite, connectForm);
       toast.success(`${connectForm.platform} account connected`);
       setConnectOpen(false);
-      setConnectForm({ platform: "twitter", access_token: "", page_id: "" });
+      setConnectForm({ platform: "twitter", access_token: "", page_id: "", account_name: "" });
       loadAccounts();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to connect account");
+      const detail = err.response?.data?.detail;
+      const msg = Array.isArray(detail)
+        ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
+        : typeof detail === "string"
+        ? detail
+        : "Failed to connect account";
+      toast.error(msg);
     } finally { setConnecting(false); }
   };
 
@@ -106,11 +112,14 @@ export default function SocialMedia() {
     setGenerating(true);
     setGeneratedPost(null);
     try {
-      const r = await generateSocialPost(selectedSite, genForm);
-      setGeneratedPost({ ...r.data, platform: genForm.platform });
+      const r = await generateSocialPost(selectedSite, { topic: genForm.topic, platform: genForm.platform });
+      const variants = r.data || {};
+      const text = variants[genForm.platform] || variants.twitter || Object.values(variants)[0] || "";
+      setGeneratedPost({ content: text, platform: genForm.platform, all: variants });
       toast.success("Post generated!");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Generation failed");
+      const detail = err.response?.data?.detail;
+      toast.error(Array.isArray(detail) ? detail.map(e => e.msg).join("; ") : detail || "Generation failed");
     } finally { setGenerating(false); }
   };
 
@@ -118,18 +127,31 @@ export default function SocialMedia() {
     if (!generatedPost) return;
     setPublishing(true);
     try {
-      await publishSocialPost(selectedSite, {
-        platform: generatedPost.platform,
-        content: generatedPost.content,
-        post_id: genForm.post_id || null,
-        schedule_at: scheduleAt,
+      const r = await publishSocialPost(selectedSite, genForm.post_id || "0", {
+        platforms: [generatedPost.platform],
+        content: generatedPost.all || { [generatedPost.platform]: generatedPost.content },
+        scheduled_at: scheduleAt,
       });
-      toast.success(scheduleAt ? "Post scheduled" : "Post published");
+      const data = r.data || {};
+      if (scheduleAt) {
+        toast.success("Post scheduled");
+      } else {
+        const results = data.results || {};
+        const platformResult = results[generatedPost.platform];
+        if (platformResult?.success) {
+          toast.success(`Posted to ${generatedPost.platform} successfully!`);
+        } else {
+          const errMsg = platformResult?.error || "Unknown error";
+          toast.error(`Failed to post to ${generatedPost.platform}: ${errMsg}`);
+          return; // keep dialog open so user can see the error
+        }
+      }
       setGenerateOpen(false);
       setGeneratedPost(null);
       loadQueue();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Publish failed");
+      const detail = err.response?.data?.detail;
+      toast.error(Array.isArray(detail) ? detail.map(e => e.msg).join("; ") : detail || "Publish failed");
     } finally { setPublishing(false); }
   };
 
@@ -225,18 +247,24 @@ export default function SocialMedia() {
         <TabsContent value="queue">
           <div className="space-y-3">
             {queue.map((q, i) => {
-              const PIcon = PLATFORM_ICONS[q.platform] || Share2;
+              const platforms = Array.isArray(q.platforms) ? q.platforms : [q.platform].filter(Boolean);
+              const firstPlatform = platforms[0] || "twitter";
+              const PIcon = PLATFORM_ICONS[firstPlatform] || Share2;
               const isPending = q.status === "pending";
+              const contentObj = q.content || {};
+              const previewText = typeof contentObj === "string"
+                ? contentObj
+                : (contentObj[firstPlatform] || Object.values(contentObj).find(v => typeof v === "string") || "");
               return (
                 <Card key={q.id || i} className="content-card">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
-                      <div className={`w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${PLATFORM_COLORS[q.platform] || "border-gray-500/30 text-gray-400"}`}>
+                      <div className={`w-8 h-8 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 ${PLATFORM_COLORS[firstPlatform] || "border-gray-500/30 text-gray-400"}`}>
                         <PIcon size={14} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="font-medium text-xs capitalize">{q.platform}</span>
+                          <span className="font-medium text-xs capitalize">{platforms.join(", ")}</span>
                           <Badge variant="outline" className={`text-xs ${isPending ? "border-yellow-500/30 text-yellow-500" : "border-emerald-500/30 text-emerald-500"}`}>
                             {isPending ? <Clock size={8} className="mr-1" /> : <CheckCircle size={8} className="mr-1" />}
                             {q.status}
@@ -245,7 +273,7 @@ export default function SocialMedia() {
                             <span className="text-xs text-muted-foreground">{new Date(q.schedule_at).toLocaleString()}</span>
                           )}
                         </div>
-                        <p className="text-sm line-clamp-2">{q.content}</p>
+                        <p className="text-sm line-clamp-2">{previewText}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -274,6 +302,12 @@ export default function SocialMedia() {
               </Select>
             </div>
             <div>
+              <Label className="text-xs mb-1 block">Account Name</Label>
+              <Input value={connectForm.account_name}
+                onChange={e => setConnectForm(p => ({ ...p, account_name: e.target.value }))}
+                placeholder="e.g. My Business Page" />
+            </div>
+            <div>
               <Label className="text-xs mb-1 block">Access Token</Label>
               <Input type="password" value={connectForm.access_token}
                 onChange={e => setConnectForm(p => ({ ...p, access_token: e.target.value }))}
@@ -290,7 +324,7 @@ export default function SocialMedia() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConnectOpen(false)}>Cancel</Button>
-            <Button onClick={handleConnect} disabled={connecting || !connectForm.access_token}>
+            <Button onClick={handleConnect} disabled={connecting || !connectForm.access_token || !connectForm.account_name}>
               {connecting ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
               Connect
             </Button>
