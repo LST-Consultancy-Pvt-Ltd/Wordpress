@@ -65,6 +65,8 @@ import PodcastOutreach from "./pages/PodcastOutreach";
 import ProgrammaticSEO from "./pages/ProgrammaticSEO";
 import WooCommerce from "./pages/WooCommerce";
 import LandingPage from "./pages/LandingPage";
+import AdsManager from "./pages/AdsManager";
+import MediaPlanAutomation from "./pages/MediaPlanAutomation";
 import "./App.css";
 
 function AuthGuard({ children }) {
@@ -144,6 +146,8 @@ function App() {
             <Route path="podcast-outreach" element={<PodcastOutreach />} />
             <Route path="programmatic-seo" element={<ProgrammaticSEO />} />
             <Route path="woocommerce" element={<WooCommerce />} />
+            <Route path="ads-manager" element={<AdsManager />} />
+            <Route path="media-plan" element={<MediaPlanAutomation />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

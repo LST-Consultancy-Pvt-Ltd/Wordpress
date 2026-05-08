@@ -69,6 +69,8 @@ import {
   Mic,
   Mail,
   Layers,
+  BarChart2,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -196,6 +198,20 @@ const navGroups = [
       { path: "/newsletter", icon: Mail, label: "Newsletter" },
       { path: "/influencer-outreach", icon: Star, label: "Influencer Outreach" },
       { path: "/ab-testing", icon: FlaskConical, label: "A/B Testing" },
+    ],
+  },
+  // Paid Ads
+  {
+    label: "Paid Ads",
+    items: [
+      { path: "/ads-manager", icon: BarChart2, label: "Ads Manager" },
+    ],
+  },
+  // Automation Hub
+  {
+    label: "Automation Hub",
+    items: [
+      { path: "/media-plan", icon: FileSpreadsheet, label: "Media Plan Automation" },
     ],
   },
   {
