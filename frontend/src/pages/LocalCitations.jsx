@@ -47,7 +47,7 @@ export default function LocalCitations() {
       toast.success("Citation audit complete");
       loadCitations();
       loadGaps();
-    } catch { toast.error("Audit failed"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Audit failed"); }
     finally { setAuditing(false); }
   };
 

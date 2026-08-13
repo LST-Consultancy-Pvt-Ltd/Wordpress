@@ -15,7 +15,6 @@ import DuplicateContent from "./pages/DuplicateContent";
 import Calendar from "./pages/Calendar";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
-import SearchVisibility from "./pages/SearchVisibility";
 import KeywordTracking from "./pages/KeywordTracking";
 import SiteSpeed from "./pages/SiteSpeed";
 import LinkBuilder from "./pages/LinkBuilder";
@@ -46,27 +45,22 @@ import CanonicalManager from "./pages/CanonicalManager";
 import MobileChecker from "./pages/MobileChecker";
 
 import BacklinkOutreach from "./pages/BacklinkOutreach";
-import BrandMentions from "./pages/BrandMentions";
-import GBPOptimizer from "./pages/GBPOptimizer";
 import GuestPosting from "./pages/GuestPosting";
 import IndexingTracker from "./pages/IndexingTracker";
 import LinkReclamation from "./pages/LinkReclamation";
 import LocalCitations from "./pages/LocalCitations";
-import RevenueDashboard from "./pages/RevenueDashboard";
-import ReviewGrowth from "./pages/ReviewGrowth";
-import CommunityEngagement from "./pages/CommunityEngagement";
-import DigitalPR from "./pages/DigitalPR";
 import Forms from "./pages/Forms";
-import InfluencerOutreach from "./pages/InfluencerOutreach";
 import Navigation from "./pages/Navigation";
 import Newsletter from "./pages/Newsletter";
 import OffPageAutopilot from "./pages/OffPageAutopilot";
-import PodcastOutreach from "./pages/PodcastOutreach";
 import ProgrammaticSEO from "./pages/ProgrammaticSEO";
 import WooCommerce from "./pages/WooCommerce";
 import LandingPage from "./pages/LandingPage";
 import AdsManager from "./pages/AdsManager";
 import MediaPlanAutomation from "./pages/MediaPlanAutomation";
+import PlatformPortfolio from "./pages/PlatformPortfolio";
+import CompanyProfile from "./pages/CompanyProfile";
+import OutreachApprovals from "./pages/OutreachApprovals";
 import "./App.css";
 
 function AuthGuard({ children }) {
@@ -96,7 +90,6 @@ function App() {
             <Route path="calendar" element={<Calendar />} />
             <Route path="settings" element={<Settings />} />
             <Route path="activity" element={<Activity />} />
-            <Route path="search-visibility" element={<SearchVisibility />} />
             <Route path="keyword-tracking" element={<KeywordTracking />} />
             <Route path="site-speed" element={<SiteSpeed />} />
             <Route path="link-builder" element={<LinkBuilder />} />
@@ -127,27 +120,22 @@ function App() {
             <Route path="mobile-checker" element={<MobileChecker />} />
 
             <Route path="backlink-outreach" element={<BacklinkOutreach />} />
-            <Route path="brand-mentions" element={<BrandMentions />} />
 
-            <Route path="gbp-optimizer" element={<GBPOptimizer />} />
             <Route path="guest-posting" element={<GuestPosting />} />
             <Route path="indexing-tracker" element={<IndexingTracker />} />
             <Route path="link-reclamation" element={<LinkReclamation />} />
             <Route path="local-citations" element={<LocalCitations />} />
-            <Route path="revenue-dashboard" element={<RevenueDashboard />} />
-            <Route path="review-growth" element={<ReviewGrowth />} />
-            <Route path="community-engagement" element={<CommunityEngagement />} />
-            <Route path="digital-pr" element={<DigitalPR />} />
             <Route path="forms" element={<Forms />} />
-            <Route path="influencer-outreach" element={<InfluencerOutreach />} />
             <Route path="navigation" element={<Navigation />} />
             <Route path="newsletter" element={<Newsletter />} />
             <Route path="offpage-autopilot" element={<OffPageAutopilot />} />
-            <Route path="podcast-outreach" element={<PodcastOutreach />} />
             <Route path="programmatic-seo" element={<ProgrammaticSEO />} />
             <Route path="woocommerce" element={<WooCommerce />} />
             <Route path="ads-manager" element={<AdsManager />} />
             <Route path="media-plan" element={<MediaPlanAutomation />} />
+            <Route path="portfolio" element={<PlatformPortfolio />} />
+            <Route path="company-profile" element={<CompanyProfile />} />
+            <Route path="outreach-approvals" element={<OutreachApprovals />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

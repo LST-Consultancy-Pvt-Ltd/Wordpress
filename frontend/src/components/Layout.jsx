@@ -20,7 +20,6 @@ import {
   Zap,
   LogOut,
   User,
-  Eye,
   Target,
   Gauge,
   Network,
@@ -46,8 +45,6 @@ import {
   Command,
 
   Hash,
-  Star,
-  DollarSign,
   PenLine,
 
   Code2,
@@ -55,7 +52,6 @@ import {
   GitMerge,
   Smartphone,
   ShieldCheck,
-  Megaphone,
   LinkIcon,
   ExternalLink,
   TrendingUp,
@@ -64,13 +60,13 @@ import {
   Compass,
   Clock,
   AlertTriangle,
-  Radio,
   Store,
-  Mic,
   Mail,
   Layers,
   BarChart2,
   FileSpreadsheet,
+  Building2,
+  ClipboardCheck,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
@@ -94,6 +90,7 @@ const navGroups = [
     items: [
       { path: "/", icon: LayoutDashboard, label: "Dashboard" },
       { path: "/sites", icon: Globe, label: "Sites" },
+      { path: "/portfolio", icon: LayoutGrid, label: "Portfolio" },
       { path: "/ai-command", icon: Sparkles, label: "AI Command" },
       { path: "/autopilot", icon: Bot, label: "Autopilot" },
     ],
@@ -114,7 +111,6 @@ const navGroups = [
     label: "SEO & Analytics",
     items: [
       { path: "/seo", icon: Search, label: "SEO" },
-      { path: "/search-visibility", icon: Eye, label: "Search Visibility" },
       { path: "/keyword-tracking", icon: Target, label: "Keyword Tracking" },
       { path: "/keyword-clusters", icon: Hash, label: "Keyword Clusters" },
       { path: "/site-speed", icon: Gauge, label: "Site Speed" },
@@ -129,7 +125,6 @@ const navGroups = [
       { path: "/indexing-tracker", icon: Compass, label: "Indexing Tracker" },
       { path: "/reports", icon: BarChart3, label: "Reports" },
       { path: "/report-builder", icon: LayoutGrid, label: "Report Builder" },
-      { path: "/revenue-dashboard", icon: DollarSign, label: "Revenue Dashboard" },
     ],
   },
   // Module 9 — Off-Page SEO & Backlinks
@@ -138,12 +133,9 @@ const navGroups = [
     items: [
       { path: "/backlink-outreach", icon: ExternalLink, label: "Backlink Outreach" },
       { path: "/guest-posting", icon: PenLine, label: "Guest Posting" },
-      { path: "/brand-mentions", icon: Megaphone, label: "Brand Mentions" },
       { path: "/link-reclamation", icon: LinkIcon, label: "Link Reclamation" },
-      { path: "/digital-pr", icon: Radio, label: "Digital PR" },
-      { path: "/community-engagement", icon: Users, label: "Community Engagement" },
-      { path: "/podcast-outreach", icon: Mic, label: "Podcast Outreach" },
       { path: "/offpage-autopilot", icon: Zap, label: "Off-Page Autopilot" },
+      { path: "/outreach-approvals", icon: ClipboardCheck, label: "Outreach Approvals" },
     ],
   },
   // Module 5 — Local SEO
@@ -152,8 +144,7 @@ const navGroups = [
     items: [
       { path: "/local-tracking", icon: MapPin, label: "Local Tracking" },
       { path: "/local-citations", icon: Bookmark, label: "Local Citations" },
-      { path: "/gbp-optimizer", icon: Map, label: "GBP Optimizer" },
-      { path: "/review-growth", icon: Star, label: "Review Growth" },
+      { path: "/company-profile", icon: Building2, label: "Company Profile" },
     ],
   },
   // Module 3 — Uptime & Module 8 — Site Health
@@ -196,7 +187,6 @@ const navGroups = [
     items: [
       { path: "/social-media", icon: Share2, label: "Social Media" },
       { path: "/newsletter", icon: Mail, label: "Newsletter" },
-      { path: "/influencer-outreach", icon: Star, label: "Influencer Outreach" },
       { path: "/ab-testing", icon: FlaskConical, label: "A/B Testing" },
     ],
   },

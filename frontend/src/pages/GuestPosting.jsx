@@ -135,7 +135,7 @@ export default function GuestPosting() {
               <CardContent className="space-y-2">
                 <p className="text-xs text-muted-foreground">{activeProspect.notes}</p>
                 <div className="flex gap-1.5 flex-wrap">
-                  <Badge className="text-xs">DA ~{activeProspect.domain_authority}</Badge>
+                  {activeProspect.domain_authority != null && <Badge className="text-xs">DA ~{activeProspect.domain_authority}</Badge>}
                   {activeProspect.pitch_drafted && <Badge className="bg-emerald-500/10 text-emerald-400 text-xs"><Check size={9} className="mr-1" />Pitch</Badge>}
                   {activeProspect.article_drafted && <Badge className="bg-emerald-500/10 text-emerald-400 text-xs"><Check size={9} className="mr-1" />Article</Badge>}
                 </div>
@@ -176,7 +176,7 @@ export default function GuestPosting() {
                         <p className="text-xs text-muted-foreground truncate">{p.url}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <Badge className="text-xs">DA ~{p.domain_authority}</Badge>
+                        {p.domain_authority != null && <Badge className="text-xs">DA ~{p.domain_authority}</Badge>}
                         <Badge className={`text-xs ${statusColors[p.status]}`}>{p.status}</Badge>
                       </div>
                     </div>

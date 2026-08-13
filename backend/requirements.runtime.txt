@@ -5,6 +5,7 @@ textstat>=0.7.0
 scikit-learn>=1.4.0
 pytrends>=4.9.0
 googlesearch-python>=1.2.3
+openpyxl>=3.1.2
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.3
 aiosignal==1.4.0

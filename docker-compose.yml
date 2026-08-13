@@ -1,0 +1,43 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - wp_mongo_data:/data/db
+
+  backend:
+    image: lstconsultancy/wordpress-manager-backend:latest
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "8002:8000"
+    environment:
+      - MONGO_URL=mongodb://mongo:27017
+      - DB_NAME=${DB_NAME}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_SEARCH_API_KEY=${GOOGLE_SEARCH_API_KEY}
+      - GOOGLE_SEARCH_CX=${GOOGLE_SEARCH_CX}
+      - GOOGLE_ADS_DEVELOPER_TOKEN=${GOOGLE_ADS_DEVELOPER_TOKEN}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - DATAFORSEO_LOGIN=${DATAFORSEO_LOGIN}
+      - DATAFORSEO_PASSWORD=${DATAFORSEO_PASSWORD}
+      - PAGESPEED_API_KEY=${PAGESPEED_API_KEY}
+
+  frontend:
+    image: lstconsultancy/wordpress-manager-frontend:latest
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3007:80"
+
+volumes:
+  wp_mongo_data:

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Link2, Plus, Loader2, RefreshCw, Mail, Shield, TrendingUp, Copy, Check } from "lucide-react";
+import { Link2, Plus, Loader2, RefreshCw, Mail, Shield, TrendingUp, Copy, Check, Download, UserCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { getSites, findBacklinkOpportunities, listBacklinkOpportunities, generateOutreachEmail, updateBacklinkStatus, generateDisavow, getDisavow, subscribeToTask } from "../lib/api";
+import { getSites, findBacklinkOpportunities, listBacklinkOpportunities, generateOutreachEmail, updateBacklinkStatus, generateDisavow, getDisavow, exportBacklinkOutreachExcel, subscribeToTask } from "../lib/api";
 
 const statusColors = {
   new: "bg-muted text-muted-foreground",
@@ -45,6 +45,7 @@ export default function BacklinkOutreach() {
   const [disavow, setDisavow] = useState(null);
   const [emailDialog, setEmailDialog] = useState(null);
   const [generatingEmail, setGeneratingEmail] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const [form, setForm] = useState({ competitor_urls: "", your_domain: "", niche: "" });
 
@@ -64,20 +65,60 @@ export default function BacklinkOutreach() {
 
   const handleScan = async () => {
     const urls = form.competitor_urls.split("\n").map(u => u.trim()).filter(Boolean);
-    if (!urls.length) return toast.error("Enter at least one competitor URL");
     if (!form.your_domain.trim()) return toast.error("Enter your domain");
-    setScanning(true); setProgress("Starting analysis…");
+    // Competitor URLs are optional now — leave blank and the backend scans
+    // your own site + AI to identify competitors automatically.
+    setScanning(true);
+    setProgress(urls.length ? "Starting analysis…" : "Starting analysis — no competitors given, will auto-discover them from your site…");
     try {
       const r = await findBacklinkOpportunities(selectedSite, { competitor_urls: urls, your_domain: form.your_domain, niche: form.niche });
+      // subscribeToTask only ever emits {type: "status", data} (plus {type:"error"}
+      // on a transport failure) — it polls GET /api/tasks/{id} and mirrors whatever
+      // the backend's task_status_store/db.task_runs record says. It never emits
+      // "progress"/"complete" as their own event types.
       subscribeToTask(r.data.task_id, evt => {
-        if (evt.type === "progress") setProgress(evt.data?.message || "…");
-        if (evt.type === "complete") { setScanning(false); setProgress(""); loadOpportunities(); toast.success(`Found ${evt.data?.count || 0} opportunities`); }
+        if (evt.type === "status") {
+          const message = evt.data?.progress?.message;
+          if (message) setProgress(message);
+          if (evt.data?.status === "completed") {
+            setScanning(false); setProgress("");
+            loadOpportunities();
+            const count = evt.data?.result?.count ?? evt.data?.progress?.count ?? 0;
+            toast.success(`Found ${count} opportunities`);
+          } else if (evt.data?.status === "failed") {
+            setScanning(false); setProgress("");
+            toast.error(evt.data?.error || "Scan failed");
+          }
+        }
         if (evt.type === "error") { setScanning(false); setProgress(""); toast.error(evt.data?.message || "Scan failed"); }
       });
     } catch (e) { setScanning(false); setProgress(""); toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  const handleExportExcel = async () => {
+    setExporting(true);
+    try {
+      const r = await exportBacklinkOutreachExcel(selectedSite);
+      const url = window.URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `backlink-outreach-${selectedSite}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("Excel report downloaded");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Export failed");
+    } finally { setExporting(false); }
+  };
+
   const handleGenerateEmail = async (opp) => {
+    // Opportunities now arrive pre-drafted (find-opportunities auto-drafts
+    // every one) — just show the existing draft instead of burning another
+    // AI call. Only actually (re-)generate if drafting failed/hasn't happened.
+    if (opp.email_content) {
+      setEmailDialog({ ...opp, email: opp.email_content });
+      return;
+    }
     setGeneratingEmail(true);
     try {
       const r = await generateOutreachEmail(selectedSite, opp.id);
@@ -124,7 +165,11 @@ export default function BacklinkOutreach() {
             <CardContent className="space-y-3">
               <div><label className="text-xs font-medium text-muted-foreground mb-1 block">Your Domain *</label><Input placeholder="example.com" value={form.your_domain} onChange={e => setForm(p => ({ ...p, your_domain: e.target.value }))} /></div>
               <div><label className="text-xs font-medium text-muted-foreground mb-1 block">Niche</label><Input placeholder="Plumbing, SaaS, etc." value={form.niche} onChange={e => setForm(p => ({ ...p, niche: e.target.value }))} /></div>
-              <div><label className="text-xs font-medium text-muted-foreground mb-1 block">Competitor URLs (one per line) *</label><Textarea rows={4} placeholder={"https://competitor1.com\nhttps://competitor2.com"} value={form.competitor_urls} onChange={e => setForm(p => ({ ...p, competitor_urls: e.target.value }))} /></div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Competitor URLs (one per line)</label>
+                <Textarea rows={4} placeholder={"https://competitor1.com\nhttps://competitor2.com"} value={form.competitor_urls} onChange={e => setForm(p => ({ ...p, competitor_urls: e.target.value }))} />
+                <p className="text-xs text-muted-foreground mt-1">Leave blank to auto-discover competitors from your own website instead.</p>
+              </div>
               <Button className="w-full" onClick={handleScan} disabled={scanning || !selectedSite}>
                 {scanning ? <><Loader2 size={14} className="mr-2 animate-spin" />Scanning…</> : <><TrendingUp size={14} className="mr-2" />Analyse Backlink Gap</>}
               </Button>
@@ -153,6 +198,9 @@ export default function BacklinkOutreach() {
               <CardTitle className="text-base">Opportunities ({opportunities.length})</CardTitle>
               <div className="flex items-center gap-2">
                 <Badge className="bg-emerald-500/10 text-emerald-400 text-xs">{acquired} acquired</Badge>
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleExportExcel} disabled={exporting || !selectedSite}>
+                  {exporting ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Download size={12} className="mr-1" />}Export
+                </Button>
                 <Button variant="ghost" size="sm" onClick={loadOpportunities} disabled={loading}><RefreshCw size={12} className={loading ? "animate-spin" : ""} /></Button>
               </div>
             </CardHeader>
@@ -177,12 +225,22 @@ export default function BacklinkOutreach() {
                                 <span className="text-xs text-muted-foreground">DA ~{opp.estimated_da}</span>
                                 <span className="text-xs text-muted-foreground">Relevance: {opp.relevance_score}/10</span>
                               </div>
+                              <div className="mt-1">
+                                {opp.recipient_email ? (
+                                  <span className="text-xs text-amber-500/90 flex items-center gap-1">
+                                    <UserCheck size={10} />Suggested: {opp.recipient_email}
+                                    {opp.recipient_email_confidence != null && ` (${opp.recipient_email_confidence}% via Hunter.io)`}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">No contact found — add one in Outreach Approvals</span>
+                                )}
+                              </div>
                             </div>
                             <div className="flex flex-col items-end gap-2 shrink-0">
                               <Badge className={`text-xs ${statusColors[opp.status]}`}>{opp.status}</Badge>
                               <div className="flex gap-1">
                                 <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleGenerateEmail(opp)} disabled={generatingEmail}>
-                                  <Mail size={10} className="mr-1" />Email
+                                  <Mail size={10} className="mr-1" />{opp.email_content ? "View Email" : "Draft Email"}
                                 </Button>
                                 <Select value={opp.status} onValueChange={val => handleStatusChange(opp.id, val)}>
                                   <SelectTrigger className="h-6 text-xs px-2 w-28"><SelectValue /></SelectTrigger>

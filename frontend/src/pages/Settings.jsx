@@ -78,6 +78,16 @@ export default function Settings() {
     google_service_account_json: "",
     dataforseo_login: "",
     dataforseo_password: "",
+    google_search_api_key: "",
+    google_search_cx: "",
+    hunter_api_key: "",
+    signalhire_api_key: "",
+    smtp_host: "",
+    smtp_port: 587,
+    smtp_username: "",
+    smtp_password: "",
+    smtp_from_email: "",
+    smtp_use_tls: true,
     google_trends_enabled: true,
   });
   const [dfsTestResult, setDfsTestResult] = useState(null);
@@ -192,6 +202,19 @@ export default function Settings() {
           ga4_property_id: r.data.ga4_property_id || "",
           gsc_site_url: r.data.gsc_site_url || "",
           google_service_account_json: r.data.google_analytics_credentials || "",
+          google_search_api_key: r.data.google_search_api_key || "",
+          google_search_cx: r.data.google_search_cx || "",
+          hunter_api_key: r.data.hunter_api_key || "",
+          signalhire_api_key: r.data.signalhire_api_key || "",
+          dataforseo_login: r.data.dataforseo_login || "",
+          dataforseo_password: r.data.dataforseo_password || "",
+          smtp_host: r.data.smtp_host || "",
+          smtp_port: r.data.smtp_port || 587,
+          smtp_username: r.data.smtp_username || "",
+          smtp_password: r.data.smtp_password || "",
+          smtp_from_email: r.data.smtp_from_email || "",
+          smtp_use_tls: r.data.smtp_use_tls ?? true,
+          google_trends_enabled: r.data.google_trends_enabled ?? true,
         });
       }
     } catch { toast.error("Failed to load settings"); }
@@ -218,6 +241,19 @@ export default function Settings() {
         ga4_property_id: formData.ga4_property_id || undefined,
         gsc_site_url: formData.gsc_site_url || undefined,
         google_analytics_credentials: formData.google_service_account_json || undefined,
+        dataforseo_login: formData.dataforseo_login || undefined,
+        dataforseo_password: formData.dataforseo_password || undefined,
+        google_search_api_key: formData.google_search_api_key || undefined,
+        google_search_cx: formData.google_search_cx || undefined,
+        hunter_api_key: formData.hunter_api_key || undefined,
+        signalhire_api_key: formData.signalhire_api_key || undefined,
+        smtp_host: formData.smtp_host || undefined,
+        smtp_port: formData.smtp_port || undefined,
+        smtp_username: formData.smtp_username || undefined,
+        smtp_password: formData.smtp_password || undefined,
+        smtp_from_email: formData.smtp_from_email || undefined,
+        smtp_use_tls: formData.smtp_use_tls,
+        google_trends_enabled: formData.google_trends_enabled,
       };
       await updateSettings(payload);
       toast.success("Settings saved!");
@@ -414,6 +450,148 @@ export default function Settings() {
                   className={formData.google_trends_enabled ? 'border-emerald-500/40 text-emerald-500' : ''}
                   onClick={() => setFormData({ ...formData, google_trends_enabled: !formData.google_trends_enabled })}>
                   {formData.google_trends_enabled ? 'Enabled' : 'Disabled'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Web Search Integration (Google Custom Search) */}
+          <Card className="content-card">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2">
+                <Key size={18} className="text-blue-500" /> Web Search Integration
+              </CardTitle>
+              <CardDescription>
+                Google Custom Search credentials — powers real discovery for Brand Mentions, Guest Post/Influencer/
+                Podcast/Community finding, and the Local Citations audit. Without these, those features fall back to
+                a clearly-labelled AI estimate instead of erroring out.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="cse-key">Google Custom Search API Key</Label>
+                <Input id="cse-key" type="password" placeholder="AIza..."
+                  value={formData.google_search_api_key}
+                  onChange={(e) => setFormData({ ...formData, google_search_api_key: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cse-cx">Search Engine ID (cx)</Label>
+                <Input id="cse-cx" type="text" placeholder="0123456789abcdef0"
+                  value={formData.google_search_cx}
+                  onChange={(e) => setFormData({ ...formData, google_search_cx: e.target.value })} />
+                <p className="text-xs text-muted-foreground">
+                  Create both from the{" "}
+                  <a href="https://programmablesearchengine.google.com/controlpanel/create" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    Programmable Search Engine
+                  </a>{" "}
+                  console (set it to search the entire web) and the{" "}
+                  <a href="https://developers.google.com/custom-search/v1/introduction" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    Custom Search JSON API
+                  </a>.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Contact Email Finder (Hunter.io + SignalHire) */}
+          <Card className="content-card">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2">
+                <Key size={18} className="text-purple-500" /> Contact Email Finder (Hunter.io + SignalHire)
+              </CardTitle>
+              <CardDescription>
+                Suggests a real contact email per backlink prospect domain when you run Find Opportunities on the
+                Backlink Outreach page. Hunter.io is tried first; if it has nothing for a domain (or isn't
+                configured), SignalHire is tried as a fallback. Without either, prospects are still discovered and
+                drafted automatically — they just arrive with no suggested contact, and you'll add the recipient
+                manually in Outreach Approvals before approving.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="hunter-key">Hunter.io API Key</Label>
+                <Input id="hunter-key" type="password" placeholder="API key"
+                  value={formData.hunter_api_key}
+                  onChange={(e) => setFormData({ ...formData, hunter_api_key: e.target.value })} />
+                <p className="text-xs text-muted-foreground">
+                  Get one from{" "}
+                  <a href="https://hunter.io/api-keys" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    hunter.io/api-keys
+                  </a>{" "}
+                  — the free tier includes 25 searches/month.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="signalhire-key">SignalHire API Key (fallback)</Label>
+                <Input id="signalhire-key" type="password" placeholder="API key"
+                  value={formData.signalhire_api_key}
+                  onChange={(e) => setFormData({ ...formData, signalhire_api_key: e.target.value })} />
+                <p className="text-xs text-muted-foreground">
+                  Get one from{" "}
+                  <a href="https://www.signalhire.com/api" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    signalhire.com/api
+                  </a>{" "}
+                  — only used when Hunter.io doesn't find a contact for a domain.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Outreach Sending (SMTP) */}
+          <Card className="content-card">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2">
+                <Key size={18} className="text-orange-500" /> Outreach Sending (SMTP)
+              </CardTitle>
+              <CardDescription>
+                Works with any provider that speaks standard SMTP (Gmail, SendGrid, Mailgun, AWS SES, your own mail
+                server). Required before an approved outreach draft (backlink, guest post, HARO, etc.) can actually
+                be sent from the Outreach approval workflow — nothing sends without this configured and an admin
+                approval first.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="smtp-host">SMTP Host</Label>
+                  <Input id="smtp-host" type="text" placeholder="smtp.gmail.com"
+                    value={formData.smtp_host}
+                    onChange={(e) => setFormData({ ...formData, smtp_host: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="smtp-port">Port</Label>
+                  <Input id="smtp-port" type="number" placeholder="587"
+                    value={formData.smtp_port}
+                    onChange={(e) => setFormData({ ...formData, smtp_port: parseInt(e.target.value, 10) || 587 })} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp-username">SMTP Username</Label>
+                <Input id="smtp-username" type="text" placeholder="you@yourdomain.com"
+                  value={formData.smtp_username}
+                  onChange={(e) => setFormData({ ...formData, smtp_username: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp-password">SMTP Password</Label>
+                <Input id="smtp-password" type="password" placeholder="App password or API key"
+                  value={formData.smtp_password}
+                  onChange={(e) => setFormData({ ...formData, smtp_password: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp-from">From Email Address</Label>
+                <Input id="smtp-from" type="email" placeholder="outreach@yourdomain.com"
+                  value={formData.smtp_from_email}
+                  onChange={(e) => setFormData({ ...formData, smtp_from_email: e.target.value })} />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Use STARTTLS</Label>
+                  <p className="text-xs text-muted-foreground">Almost always required — leave enabled unless your provider says otherwise</p>
+                </div>
+                <Button type="button" variant="outline" size="sm"
+                  className={formData.smtp_use_tls ? 'border-emerald-500/40 text-emerald-500' : ''}
+                  onClick={() => setFormData({ ...formData, smtp_use_tls: !formData.smtp_use_tls })}>
+                  {formData.smtp_use_tls ? 'Enabled' : 'Disabled'}
                 </Button>
               </div>
             </CardContent>

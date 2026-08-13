@@ -55,13 +55,8 @@ export default function OffPageAutopilot() {
   const breakdown = score?.breakdown || {};
   const metricCards = [
     { key: "backlinks_acquired", label: "Backlinks", icon: "🔗" },
-    { key: "brand_mentions", label: "Mentions", icon: "📢" },
     { key: "citations_consistent", label: "Citations", icon: "📍" },
     { key: "guest_posts_published", label: "Guest Posts", icon: "✍️" },
-    { key: "community_posts", label: "Community", icon: "💬" },
-    { key: "podcast_appearances", label: "Podcasts", icon: "🎙️" },
-    { key: "pr_campaigns", label: "PR Campaigns", icon: "📰" },
-    { key: "active_influencers", label: "Influencers", icon: "👥" },
   ];
 
   return (

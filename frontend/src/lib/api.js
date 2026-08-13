@@ -221,10 +221,6 @@ export const scrapeSiteMeta = (data) => api.post('/sites/scrape-meta', data);
 export const suggestTopics = (data) => api.post('/sites/suggest-topics', data);
 export const saveOnboarding = (siteId, data) => api.put(`/sites/${siteId}/onboarding`, data);
 
-// Feature 2: Search Visibility
-export const getSearchVisibility = (siteId) => api.get(`/search-visibility/${siteId}`);
-export const analyzeSearchVisibility = (siteId) => api.post(`/search-visibility/analyze/${siteId}`);
-
 // Feature 3: Keyword Tracking v2
 export const getTrackedKeywordsV2 = (siteId) => api.get(`/keywords/${siteId}`);
 export const addTrackedKeyword = (siteId, data) => api.post(`/keywords/${siteId}`, data);
@@ -402,28 +398,10 @@ export const generateKeywordClusters    = (siteId, data)            => api.post(
 export const listKeywordClusters        = (siteId)                  => api.get(`/keyword-clusters/${siteId}`);
 export const deleteKeywordCluster       = (siteId, clusterId)       => api.delete(`/keyword-clusters/${siteId}/${clusterId}`);
 
-// Feature: GBP Optimizer
-export const analyzeGBP                 = (siteId, data)            => api.post(`/gbp/${siteId}/analyze`, data);
-export const listGBPAnalyses            = (siteId)                  => api.get(`/gbp/${siteId}`);
-export const toggleGBPChecklistItem     = (siteId, analysisId, idx) => api.patch(`/gbp/${siteId}/${analysisId}/checklist/${idx}`);
-
-// Feature: Review Growth
-export const generateReviewPlan         = (siteId, data)            => api.post(`/reviews/${siteId}/plan`, data);
-export const listReviewPlans            = (siteId)                  => api.get(`/reviews/${siteId}`);
-export const setReviewWebhook           = (siteId, planId, data)    => api.patch(`/reviews/${siteId}/${planId}/webhook`, data);
-export const testReviewWebhook          = (siteId, planId)          => api.post(`/reviews/${siteId}/${planId}/test-webhook`);
-
 // Feature: Indexing Tracker
 export const checkIndexingStatus        = (siteId)                  => api.post(`/indexing/${siteId}/check`);
 export const getIndexingReport          = (siteId)                  => api.get(`/indexing/${siteId}`);
 export const submitSitemapToGSC         = (siteId, data)            => api.post(`/indexing/${siteId}/submit-sitemap`, data);
-
-// Feature: Revenue Dashboard
-export const getRevenueAttribution      = (siteId)                  => api.get(`/revenue/${siteId}/attribution`);
-export const getMonthlySummary          = (siteId)                  => api.get(`/revenue/${siteId}/monthly-summary`);
-export const updateRevenueSettings      = (siteId, data)            => api.post(`/revenue/${siteId}/settings`, data);
-export const getRevenueSettings         = (siteId)                  => api.get(`/revenue/${siteId}/settings`);
-export const exportRevenuePDF           = (siteId)                  => api.post(`/revenue/${siteId}/export-pdf`, {}, { responseType: 'blob' });
 
 // Off-Page SEO: Backlink Outreach
 export const findBacklinkOpportunities  = (siteId, data)            => api.post(`/backlink-outreach/${siteId}/find-opportunities`, data);
@@ -432,6 +410,7 @@ export const generateOutreachEmail      = (siteId, oppId)           => api.post(
 export const updateBacklinkStatus       = (siteId, oppId, data)     => api.patch(`/backlink-outreach/${siteId}/opportunity/${oppId}/status`, data);
 export const generateDisavow            = (siteId)                  => api.post(`/backlink-outreach/${siteId}/generate-disavow`);
 export const getDisavow                 = (siteId)                  => api.get(`/backlink-outreach/${siteId}/disavow`);
+export const exportBacklinkOutreachExcel = (siteId)                 => api.post(`/backlink-outreach/${siteId}/export-excel`, {}, { responseType: 'blob' });
 
 // Off-Page SEO: Guest Posting
 export const findGuestPostSites         = (siteId, data)            => api.post(`/guest-posts/${siteId}/find-sites`, data);
@@ -441,46 +420,12 @@ export const generateGuestArticle       = (siteId, prospectId)      => api.post(
 export const updateGuestProspect        = (siteId, prospectId, data)=> api.patch(`/guest-posts/${siteId}/prospect/${prospectId}`, data);
 export const checkGuestLiveLinks        = (siteId)                  => api.post(`/guest-posts/${siteId}/check-live-links`);
 
-// Off-Page SEO: Brand Mentions
-export const scanBrandMentions          = (siteId, data)            => api.post(`/brand-mentions/${siteId}/scan`, data);
-export const listBrandMentions          = (siteId)                  => api.get(`/brand-mentions/${siteId}/mentions`);
-export const generateMentionOutreach    = (siteId, mentionId)       => api.post(`/brand-mentions/${siteId}/generate-outreach/${mentionId}`);
-export const getBrandMentionSummary     = (siteId)                  => api.get(`/brand-mentions/${siteId}/summary`);
-
-// Off-Page SEO: Digital PR
-export const generatePressRelease       = (siteId, data)            => api.post(`/digital-pr/${siteId}/generate-press-release`, data);
-export const generatePRPitch            = (siteId, prId)            => api.post(`/digital-pr/${siteId}/generate-pitch/${prId}`);
-export const generateHaroResponse       = (siteId, data)            => api.post(`/digital-pr/${siteId}/generate-haro-response`, data);
-export const listPRCampaigns            = (siteId)                  => api.get(`/digital-pr/${siteId}/campaigns`);
-export const addPRCoverage              = (siteId, campId, data)    => api.patch(`/digital-pr/${siteId}/campaign/${campId}/coverage`, data);
-
 // Off-Page SEO: Local Citations
 export const auditLocalCitations        = (siteId, data)            => api.post(`/local-citations/${siteId}/audit`, data);
 export const listLocalCitations         = (siteId)                  => api.get(`/local-citations/${siteId}/citations`);
 export const generateCitationDescription= (siteId, dir)             => api.post(`/local-citations/${siteId}/generate-description/${dir}`);
 export const getCitationGaps            = (siteId)                  => api.get(`/local-citations/${siteId}/gaps`);
 export const updateCanonicalNAP         = (siteId, data)            => api.post(`/local-citations/${siteId}/update-nap`, data);
-
-// Off-Page SEO: Influencer Outreach
-export const findInfluencers            = (siteId, data)            => api.post(`/influencer/${siteId}/find-influencers`, data);
-export const listInfluencers            = (siteId)                  => api.get(`/influencer/${siteId}/influencers`);
-export const generateInfluencerPitch    = (siteId, infId)           => api.post(`/influencer/${siteId}/generate-pitch/${infId}`);
-export const generateCollabBrief        = (siteId, infId)           => api.post(`/influencer/${siteId}/generate-brief/${infId}`);
-export const updateInfluencerStatus     = (siteId, infId, data)     => api.patch(`/influencer/${siteId}/influencer/${infId}/status`, data);
-
-// Off-Page SEO: Community Engagement
-export const findCommunities            = (siteId, data)            => api.post(`/community/${siteId}/find-communities`, data);
-export const generateCommunityAnswer    = (siteId, threadId, data)  => api.post(`/community/${siteId}/generate-answer/${threadId}`, data);
-export const listCommunityOpportunities = (siteId)                  => api.get(`/community/${siteId}/opportunities`);
-export const updateCommunityOpp         = (siteId, oppId, data)     => api.patch(`/community/${siteId}/opportunity/${oppId}/status`, data);
-export const getCommunityPerformance    = (siteId)                  => api.get(`/community/${siteId}/performance`);
-
-// Off-Page SEO: Podcast Outreach
-export const findPodcasts               = (siteId, data)            => api.post(`/podcast/${siteId}/find-podcasts`, data);
-export const listPodcasts               = (siteId)                  => api.get(`/podcast/${siteId}/podcasts`);
-export const generatePodcastPitch       = (siteId, podId)           => api.post(`/podcast/${siteId}/generate-pitch/${podId}`);
-export const generateTalkingPoints      = (siteId, podId)           => api.post(`/podcast/${siteId}/generate-talking-points/${podId}`);
-export const updatePodcastStatus        = (siteId, podId, data)     => api.patch(`/podcast/${siteId}/podcast/${podId}/status`, data);
 
 // Off-Page SEO: Link Reclamation
 export const scanInbound404s            = (siteId)                  => api.post(`/link-reclamation/${siteId}/scan-inbound-404s`);
@@ -606,5 +551,19 @@ export const checkLiveRankings         = (siteId, data)             => api.post(
 export const getLiveBacklinks          = (siteId, data)             => api.post(`/link-builder/${siteId}/backlinks-live`, data);
 export const getCompetitorGap          = (siteId, data)             => api.post(`/keywords/${siteId}/competitor-gap`, data);
 export const testDataForSEO            = (login, password)          => api.get(`/integrations/dataforseo/test`, { params: { login, password } });
+
+// Platform Intelligence (§7) — cross-site portfolio view
+export const getPortfolioIntelligence  = ()                         => api.get(`/platform/portfolio`);
+
+// Verified Company Knowledge Base (§12)
+export const getCompanyProfile         = (siteId)                   => api.get(`/company-profile/${siteId}`);
+export const updateCompanyProfile      = (siteId, data)             => api.post(`/company-profile/${siteId}`, data);
+export const deleteCompanyProfile      = (siteId)                   => api.delete(`/company-profile/${siteId}`);
+
+// Trust & Safety Gate + Outreach Sending (§10/§11)
+export const setOutreachRecipient      = (collection, itemId, email) => api.patch(`/outreach/${collection}/${itemId}/recipient`, { recipient_email: email });
+export const approveOutreach           = (collection, itemId)        => api.post(`/outreach/${collection}/${itemId}/approve`);
+export const rejectOutreach            = (collection, itemId)        => api.post(`/outreach/${collection}/${itemId}/reject`);
+export const sendOutreach              = (collection, itemId)        => api.post(`/outreach/${collection}/${itemId}/send`);
 
 export default api;

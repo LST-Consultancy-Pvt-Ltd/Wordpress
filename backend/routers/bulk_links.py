@@ -1,0 +1,206 @@
+"""Bulk Publish/Unpublish (background task, REST with XML-RPC fallback) and
+Broken Link Detection (scan all posts/pages for dead outbound links via HEAD
+requests, list/dismiss results).
+"""
+import logging
+from typing import Optional
+
+import httpx
+from bs4 import BeautifulSoup
+from fastapi import BackgroundTasks, Depends, HTTPException
+
+from core.activity import log_activity
+from core.db import db
+from core.http_headers import BROWSER_HEADERS, INCONCLUSIVE_STATUSES
+from core.router import api_router
+from core.security import require_editor
+from core.tasks import create_task_queue, finish_task, make_task_id, push_event
+from models.legacy import BrokenLink, BulkPublishRequest
+from providers.wordpress import get_wp_credentials, wp_api_request, wp_xmlrpc_edit
+
+logger = logging.getLogger(__name__)
+
+# ========================
+# Routes: Bulk Publish/Unpublish
+# ========================
+
+@api_router.post("/bulk/publish")
+async def bulk_publish(data: BulkPublishRequest, background_tasks: BackgroundTasks, _: dict = Depends(require_editor)):
+    task_id = make_task_id()
+    await create_task_queue(task_id)
+    background_tasks.add_task(_bulk_publish, task_id, data)
+    return {"task_id": task_id}
+
+async def _bulk_publish(task_id: str, data: BulkPublishRequest):
+    try:
+        site = await get_wp_credentials(data.site_id)
+        endpoint_base = "posts" if data.content_type == "post" else "pages"
+        wp_status = "publish" if data.action == "publish" else "draft"
+        total = len(data.item_ids)
+        success_count = 0
+        for idx, item_id in enumerate(data.item_ids):
+            pct = int(((idx + 1) / total) * 100)
+            await push_event(task_id, "progress", {"message": f"Processing {idx+1}/{total}...", "percent": pct})
+            try:
+                response = await wp_api_request(site, "PUT", f"{endpoint_base}/{item_id}", {"status": wp_status})
+                if response.status_code == 200:
+                    await db[data.content_type + "s"].update_one(
+                        {"site_id": data.site_id, "wp_id": int(item_id)},
+                        {"$set": {"status": wp_status}}
+                    )
+                    success_count += 1
+                elif response.status_code in [401, 403]:
+                    # XML-RPC fallback for Hostinger/LiteSpeed
+                    logger.info(f"Bulk publish REST auth failed for {item_id}, using XML-RPC fallback")
+                    await wp_xmlrpc_edit(site, int(item_id), {"status": wp_status})
+                    await db[data.content_type + "s"].update_one(
+                        {"site_id": data.site_id, "wp_id": int(item_id)},
+                        {"$set": {"status": wp_status}}
+                    )
+                    success_count += 1
+                else:
+                    await push_event(task_id, "item_error", {"id": item_id, "error": response.text[:100]})
+            except Exception as ie:
+                await push_event(task_id, "item_error", {"id": item_id, "error": str(ie)})
+
+        await log_activity(data.site_id, f"bulk_{data.action}", f"Bulk {data.action}: {success_count}/{total} {data.content_type}s succeeded")
+        await push_event(task_id, "complete", {"message": f"Bulk {data.action} complete: {success_count}/{total} items", "percent": 100})
+    except Exception as e:
+        await push_event(task_id, "error", {"message": str(e)})
+    finally:
+        await finish_task(task_id)
+
+# ========================
+# Routes: Broken Link Detection
+# ========================
+
+@api_router.post("/broken-links/{site_id}/scan")
+async def scan_broken_links(site_id: str, background_tasks: BackgroundTasks):
+    """Queue a broken-link scan for all posts & pages. Returns task_id for SSE streaming."""
+    task_id = make_task_id()
+    await create_task_queue(task_id)
+    background_tasks.add_task(_scan_broken_links, task_id, site_id)
+    return {"task_id": task_id}
+
+
+async def _scan_broken_links(task_id: str, site_id: str):
+    try:
+        site = await db.sites.find_one({"id": site_id}, {"_id": 0})
+        if not site:
+            await push_event(task_id, "error", {"message": "Site not found"})
+            return
+
+        # Fetch posts and pages from WP REST API (stored copies first, fall back to live)
+        posts = await db.posts.find({"site_id": site_id}, {"_id": 0}).to_list(500)
+        pages = await db.pages.find({"site_id": site_id}, {"_id": 0}).to_list(500)
+        all_content = posts + pages
+
+        # Collect unique links per content item
+        link_map: list[dict] = []  # {post_id, post_title, url}
+        for item in all_content:
+            html = item.get("content", "") or ""
+            soup = BeautifulSoup(html, "html.parser")
+            seen = set()
+            for tag in soup.find_all("a", href=True):
+                href = tag["href"].strip()
+                # Only check absolute HTTP(S) URLs
+                if href.startswith("http://") or href.startswith("https://"):
+                    if href not in seen:
+                        seen.add(href)
+                        link_map.append({
+                            "post_id": item.get("wp_id", 0),
+                            "post_title": item.get("title", ""),
+                            "url": href,
+                        })
+
+        total = len(link_map)
+        await push_event(task_id, "status", {"message": f"Found {total} links to check...", "percent": 0})
+
+        # Clear previous results for this site
+        await db.broken_links.delete_many({"site_id": site_id})
+
+        results = []
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
+            for idx, link in enumerate(link_map):
+                pct = int(((idx + 1) / max(total, 1)) * 100)
+                try:
+                    resp = await hc.head(link["url"])
+                    if resp.status_code in INCONCLUSIVE_STATUSES:
+                        # HEAD blocked or not allowed — retry with a real GET
+                        # before concluding the link is actually broken.
+                        resp = await hc.get(link["url"])
+                    if resp.status_code < 400:
+                        link_status = "ok"
+                    elif resp.status_code in INCONCLUSIVE_STATUSES:
+                        # Still blocked/rate-limited even via GET — the site is
+                        # bot-protected, not necessarily dead. Flag separately
+                        # from a genuine "broken" so it isn't reported as dead.
+                        link_status = "blocked"
+                    else:
+                        link_status = "broken"
+                    status_code = resp.status_code
+                except httpx.TimeoutException:
+                    link_status = "timeout"
+                    status_code = None
+                except Exception:
+                    link_status = "broken"
+                    status_code = None
+
+                record = BrokenLink(
+                    site_id=site_id,
+                    post_id=link["post_id"],
+                    post_title=link["post_title"],
+                    url=link["url"],
+                    status=link_status,
+                    status_code=status_code,
+                )
+                results.append(record.model_dump())
+
+                if idx % 10 == 0 or idx == total - 1:
+                    await push_event(task_id, "progress", {
+                        "message": f"Checked {idx + 1}/{total} links...",
+                        "percent": pct,
+                    })
+
+        if results:
+            await db.broken_links.insert_many(results)
+
+        broken_count = sum(1 for r in results if r["status"] == "broken")
+        timeout_count = sum(1 for r in results if r["status"] == "timeout")
+        blocked_count = sum(1 for r in results if r["status"] == "blocked")
+        await push_event(task_id, "complete", {
+            "message": (
+                f"Scan complete: {total} links checked, {broken_count} broken, "
+                f"{timeout_count} timed out, {blocked_count} blocked by the target site (may still be live)."
+            ),
+            "percent": 100,
+            "total": total,
+            "broken": broken_count,
+            "timeout": timeout_count,
+            "blocked": blocked_count,
+        })
+        await log_activity(site_id, "broken_links_scan", f"Scanned {total} links: {broken_count} broken, {blocked_count} blocked")
+    except Exception as e:
+        logger.error(f"Broken link scan failed: {e}")
+        await push_event(task_id, "error", {"message": str(e)})
+    finally:
+        await finish_task(task_id)
+
+
+@api_router.get("/broken-links/{site_id}")
+async def get_broken_links(site_id: str, status: Optional[str] = None):
+    """Return stored scan results for a site. Optionally filter by status (ok/broken/timeout)."""
+    query: dict = {"site_id": site_id}
+    if status:
+        query["status"] = status
+    links = await db.broken_links.find(query, {"_id": 0}).sort("scanned_at", -1).to_list(1000)
+    return links
+
+
+@api_router.delete("/broken-links/{site_id}/{link_id}")
+async def dismiss_broken_link(site_id: str, link_id: str):
+    """Dismiss / delete a single broken-link result."""
+    result = await db.broken_links.delete_one({"id": link_id, "site_id": site_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Link record not found")
+    return {"deleted": True}

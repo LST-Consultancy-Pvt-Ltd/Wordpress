@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  ShieldAlert,
   RefreshCw,
   Filter,
 } from "lucide-react";
@@ -49,6 +50,14 @@ function StatusBadge({ status, statusCode }) {
       <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
         <Clock size={11} className="mr-1" />
         Timeout
+      </Badge>
+    );
+  }
+  if (status === "blocked") {
+    return (
+      <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20">
+        <ShieldAlert size={11} className="mr-1" />
+        Blocked {statusCode ? `(${statusCode})` : ""}
       </Badge>
     );
   }
@@ -251,6 +260,7 @@ export default function BrokenLinks() {
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
                   <SelectItem value="broken">Broken</SelectItem>
+                  <SelectItem value="blocked">Blocked</SelectItem>
                   <SelectItem value="timeout">Timeout</SelectItem>
                   <SelectItem value="ok">OK</SelectItem>
                 </SelectContent>
