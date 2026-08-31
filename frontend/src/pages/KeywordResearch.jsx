@@ -221,29 +221,51 @@ export default function KeywordResearch() {
           </div>
 
           {/* Overview cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Hash size={14} /> Volume</div>
                 <p className="text-2xl font-bold mt-1">{result.primary?.volume?.toLocaleString() ?? "—"}</p>
+                {result.primary?.cross_check && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    SEMrush: {result.primary.cross_check.volume?.toLocaleString() ?? "—"}/mo
+                  </p>
+                )}
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><BarChart3 size={14} /> Difficulty</div>
                 <p className="text-2xl font-bold mt-1 capitalize">{result.primary?.keyword_difficulty != null ? `${result.primary.keyword_difficulty}/100` : (result.primary?.difficulty || "—")}</p>
+                {result.primary?.keyword_difficulty_semrush != null && (
+                  <p className="text-xs text-muted-foreground mt-1">SEMrush: {result.primary.keyword_difficulty_semrush}/100</p>
+                )}
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><DollarSign size={14} /> CPC</div>
                 <p className="text-2xl font-bold mt-1">{result.primary?.cpc ? `$${Number(result.primary.cpc).toFixed(2)}` : "—"}</p>
+                {result.primary?.cross_check && (
+                  <p className="text-xs text-muted-foreground mt-1">SEMrush: ${Number(result.primary.cross_check.cpc || 0).toFixed(2)}</p>
+                )}
               </CardContent>
             </Card>
             <Card>
               <CardContent className="pt-6">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><TrendingUp size={14} /> Intent</div>
                 <p className="text-2xl font-bold mt-1 capitalize">{result.primary?.intent || "—"}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><TrendingUp size={14} /> Trend</div>
+                <p className="text-2xl font-bold mt-1 capitalize">
+                  {result.primary?.trend === "rising" ? "↑ Rising" : result.primary?.trend === "declining" ? "↓ Declining" : "—"}
+                </p>
+                {result.primary?.trend_source && (
+                  <p className="text-xs text-muted-foreground mt-1 capitalize">{result.primary.trend_source.replace(/_/g, " ")}</p>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -302,6 +324,40 @@ export default function KeywordResearch() {
             </Card>
           )}
 
+          {/* Already ranking for this topic (real Google Search Console data) */}
+          {result.already_ranking?.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Search size={16} /> You Already Rank For This
+                  <Badge className="bg-emerald-500/10 text-emerald-500 text-[10px]">Live Data — Search Console</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Query</TableHead>
+                      <TableHead>Position</TableHead>
+                      <TableHead>Clicks</TableHead>
+                      <TableHead>Impressions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {result.already_ranking.map((r, i) => (
+                      <TableRow key={i}>
+                        <TableCell>{r.keyword}</TableCell>
+                        <TableCell>{r.position ? Number(r.position).toFixed(1) : "—"}</TableCell>
+                        <TableCell>{r.clicks?.toLocaleString() ?? "—"}</TableCell>
+                        <TableCell>{r.impressions?.toLocaleString() ?? "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Tabs */}
           <Tabs defaultValue="related">
             <TabsList>
@@ -315,6 +371,15 @@ export default function KeywordResearch() {
             <TabsContent value="related" className="mt-4">
               <Card>
                 <CardContent className="pt-6">
+                  {result.related_data_source && (
+                    <div className="mb-3">
+                      {result.related_data_source === "dataforseo_labs" ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-500 text-[10px]">Live Data — DataForSEO Labs</Badge>
+                      ) : (
+                        <Badge className="bg-yellow-500/10 text-yellow-500 text-[10px]">AI Estimate</Badge>
+                      )}
+                    </div>
+                  )}
                   {result.related && result.related.length > 0 ? (
                     <ScrollArea className="h-[400px]">
                       <KeywordTable keywords={result.related} />
@@ -386,6 +451,15 @@ export default function KeywordResearch() {
             <TabsContent value="questions" className="mt-4">
               <Card>
                 <CardContent className="pt-6">
+                  {result.questions_data_source && (
+                    <div className="mb-3">
+                      {result.questions_data_source === "dataforseo_paa" ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-500 text-[10px]">Real "People Also Ask" — DataForSEO</Badge>
+                      ) : (
+                        <Badge className="bg-yellow-500/10 text-yellow-500 text-[10px]">AI Estimate</Badge>
+                      )}
+                    </div>
+                  )}
                   {result.questions && result.questions.length > 0 ? (
                     <ScrollArea className="h-[400px]">
                       <div className="space-y-2">

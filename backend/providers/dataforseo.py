@@ -132,6 +132,12 @@ async def _cache_get(key: str, ttl: int = 86400):
         cached_at = doc.get("cached_at")
         if isinstance(cached_at, str):
             cached_at = datetime.fromisoformat(cached_at)
+        if cached_at.tzinfo is None:
+            # Motor/PyMongo returns BSON datetimes as naive (UTC-valued but
+            # no tzinfo) since this client isn't configured with
+            # tz_aware=True — even though _cache_set wrote an aware UTC
+            # datetime. Re-attach it before comparing against an aware "now".
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - cached_at).total_seconds()
         if age < ttl:
             _dfs_mem_cache[key] = {"data": doc["data"], "ts": datetime.now(timezone.utc).timestamp()}

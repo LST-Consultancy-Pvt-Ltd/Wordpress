@@ -18,6 +18,8 @@ truth for outreach decisions until a real provider is wired in.
 `generate_disavow` refuses to run on estimated data — see that function.
 """
 import logging
+import re
+import uuid
 from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -39,7 +41,7 @@ from providers.dataforseo import _data_meta, _dfs_available, _dfs_check_spend, d
 from providers.google_cse import cse_available, google_custom_search
 from providers.hunter import hunter_available, hunter_domain_search
 from providers.signalhire import signalhire_available, signalhire_domain_search
-from providers.wordpress import wp_api_request
+from providers.wordpress import get_wp_credentials, wp_api_request
 from routers.company_profile import get_verified_nap
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,7 @@ async def _real_backlink_opportunities(site_id: str, your_domain_raw: str, compe
                 "relevance_score": max(1, min(10, round(rank / 10))),
                 "estimated_da": rank,
                 "reason": f"Currently links to competitor {comp_domain}",
+                "backlink_url": bl.get("url_from", ""),
             })
     return opps
 
@@ -208,6 +211,33 @@ async def _real_backlink_opportunities(site_id: str, your_domain_raw: str, compe
 async def find_backlink_opportunities(site_id: str, req: BacklinkOpportunityRequest, background_tasks: BackgroundTasks, user=Depends(require_editor)):
     task_id = make_task_id()
     await create_task_queue(task_id)
+
+    # Every click of "Find Opportunities" is its own search run. Without this,
+    # a "netsuite" search and a later "salesforce" search pile into one
+    # undifferentiated list with no way to tell which run surfaced what.
+    search_id = str(uuid.uuid4())
+    await db.backlink_searches.insert_one({
+        "id": search_id,
+        "site_id": site_id,
+        "user_id": user.get("id", ""),
+        "label": (req.niche or req.your_domain or "Backlink search").strip(),
+        "niche": req.niche,
+        "your_domain": req.your_domain,
+        "competitor_urls": req.competitor_urls,
+        "task_id": task_id,
+        "status": "running",
+        "created_at": datetime.utcnow(),
+        "discovered_count": 0,
+        "processed_count": 0,
+        "new_count": 0,
+        "duplicate_count": 0,
+    })
+
+    async def _fail_search(message: str):
+        await db.backlink_searches.update_one({"id": search_id}, {"$set": {
+            "status": "failed", "error": message, "completed_at": datetime.utcnow(),
+        }})
+
     async def run(tid):
         try:
             competitor_urls = req.competitor_urls
@@ -215,7 +245,9 @@ async def find_backlink_opportunities(site_id: str, req: BacklinkOpportunityRequ
                 await push_event(tid, "progress", {"message": f"No competitors given — scanning {req.your_domain} to identify them…"})
                 competitor_urls, discovery_meta = await _discover_competitor_domains(req.your_domain, req.niche)
                 if not competitor_urls:
-                    await push_event(tid, "error", {"message": "Could not automatically identify competitors from your website — try entering competitor URLs manually."})
+                    msg = "Could not automatically identify competitors from your website — try entering competitor URLs manually."
+                    await _fail_search(msg)
+                    await push_event(tid, "error", {"message": msg})
                     return
                 await log_activity(site_id, "competitor_discovery",
                                     f"Auto-discovered {len(competitor_urls)} competitor(s) for {req.your_domain} "
@@ -282,11 +314,23 @@ Return ONLY valid JSON array."""}]
                 if domain:
                     existing = await db.backlink_outreach.find_one({"site_id": site_id, "prospect_domain": domain})
                     if existing:
+                        # Don't insert a second row (that would duplicate the
+                        # prospect and risk clobbering real progress), but DO
+                        # record that this search also surfaced it — otherwise
+                        # a domain first found under an earlier search would
+                        # silently vanish from this one's results, which is
+                        # exactly the confusion per-search grouping is meant
+                        # to remove.
+                        await db.backlink_outreach.update_one(
+                            {"_id": existing["_id"]},
+                            {"$addToSet": {"search_ids": search_id}},
+                        )
                         existing["id"] = str(existing.pop("_id"))
+                        existing["search_ids"] = sorted(set(existing.get("search_ids") or []) | {search_id})
                         docs.append(existing)
                         skipped_duplicates += 1
                         await push_event(tid, "progress", {
-                            "message": f"Already tracking {domain} — skipping duplicate ({i}/{total})",
+                            "message": f"Already tracking {domain} — linked to this search ({i}/{total})",
                             "current": i, "total": total,
                         })
                         continue
@@ -304,6 +348,8 @@ Return ONLY valid JSON array."""}]
 
                 doc = {**o, "site_id": site_id, "user_id": user.get("id", ""),
                        "status": "new", "created_at": now, "updated_at": now,
+                       "search_id": search_id, "search_ids": [search_id],
+                       "niche": req.niche,
                        "email_drafted": email_drafted, "email_content": email_content, **data_meta}
 
                 if domain:
@@ -365,21 +411,163 @@ Return ONLY valid JSON array."""}]
                                     f"Found a suggested contact via SignalHire (Hunter.io fallback) for {signalhire_hits}/{total} backlink prospects")
             if skipped_duplicates:
                 await log_activity(site_id, "backlink_dedup",
-                                    f"Skipped {skipped_duplicates}/{total} already-known prospect domain(s)")
-            await push_event(tid, "complete", {"opportunities": docs, "count": len(docs), **data_meta})
+                                    f"Linked {skipped_duplicates}/{total} already-known prospect domain(s) to this search "
+                                    f"instead of duplicating them")
+            await db.backlink_searches.update_one({"id": search_id}, {"$set": {
+                "status": "completed",
+                "completed_at": datetime.utcnow(),
+                "competitor_urls": competitor_urls,
+                "discovered_count": discovered_count,
+                "processed_count": total,
+                "new_count": total - skipped_duplicates,
+                "duplicate_count": skipped_duplicates,
+                **data_meta,
+            }})
+            await push_event(tid, "complete", {
+                "opportunities": docs, "count": len(docs), "search_id": search_id, **data_meta,
+            })
         except Exception as e:
+            await _fail_search(str(e))
             await push_event(tid, "error", {"message": str(e)})
         finally:
             await finish_task(tid)
     background_tasks.add_task(run, task_id)
-    return {"task_id": task_id}
+    return {"task_id": task_id, "search_id": search_id}
+
+
+@api_router.get("/backlink-outreach/{site_id}/searches")
+async def list_backlink_searches(site_id: str, user=Depends(require_user)):
+    """Every past "Find Opportunities" run for this site, newest first, so the
+    UI can show one search's results at a time instead of one merged list."""
+    cursor = db.backlink_searches.find({"site_id": site_id}, {"_id": 0}).sort("created_at", -1).limit(100)
+    return await cursor.to_list(100)
+
+
+# How to actually work each kind of opportunity. Deterministic per
+# opportunity_type — no AI call, nothing invented: these are the real steps,
+# and the page-specific evidence (the backlink URL, the anchor, the contact)
+# is already on the opportunity itself.
+_APPROACH_PLAYBOOKS = {
+    "competitor_backlink": [
+        "Open the backlink URL on this opportunity and read the page that links to your competitor — note the section it sits in, the anchor text, and why the link is there (listicle, resource list, review, partner page, case study).",
+        "Decide what you're actually asking for: on a listicle or resource list you want to be added alongside them; on a review or case study you want your own equivalent piece, not an edit to theirs.",
+        "Identify the right person — the post's author byline first, then an editor or marketing contact. Any suggested contact shown here is a starting point from Hunter.io/SignalHire, not a confirmed owner of that page.",
+        "Write the email about THAT page, not about you: name the exact page title, say precisely what you'd add and where, and why their reader is better off for it.",
+        "Hand them the finished asset — exact anchor text, the URL, and a 1–2 sentence blurb they can paste in without writing anything themselves.",
+        "Send it, then set the status to Contacted. Follow up once after ~7 days and once more after ~14, then stop and mark Rejected.",
+    ],
+    "resource page": [
+        "Open the resource page and check it's genuinely curated and still maintained (recent additions, no dead links) — an abandoned page passes little value.",
+        "Confirm you actually fit one of its existing categories. If nothing fits, skip it; forcing a fit is what gets outreach ignored.",
+        "Pick the single best page of yours to pitch — usually a genuinely useful guide or tool, not your homepage or a sales page.",
+        "Find the page maintainer (author byline, 'suggest a resource' link, or site contact) and use their submission form if one exists — that beats cold email.",
+        "Keep the email to three sentences: which page you mean, which section your link belongs in, and one line on what it gives their readers.",
+        "Set the status to Contacted, then follow up once after ~10 days.",
+    ],
+    "broken link": [
+        "Verify the broken link is still broken — check it yourself before emailing; nothing kills credibility faster than reporting a working link.",
+        "Note exactly where it sits on the page (section heading, anchor text) so your email points to a precise spot.",
+        "Confirm you have a genuinely equivalent replacement — same topic and depth as the dead resource, not a loose approximation.",
+        "Lead with the favour: tell them the link is dead and where, and only then offer yours as one possible replacement.",
+        "Send to the page author or webmaster, set the status to Contacted, and follow up once after ~7 days.",
+    ],
+    "skyscraper": [
+        "Read the piece that's currently ranking and be honest about whether you can genuinely beat it — more depth, fresher data, better examples, or clearer structure.",
+        "Build the better asset first. Reaching out before it exists wastes the one chance you get with each prospect.",
+        "Pull the list of sites already linking to the original — those are your outreach targets, since they've already proven they link to this topic.",
+        "Email each linking site referencing the specific page of theirs that carries the old link, and what's materially better in yours.",
+        "Expect a low hit rate; work it in batches and set each to Contacted as you go.",
+    ],
+    "guest post": [
+        "Read the site's existing posts and their guest-post or 'write for us' guidelines before pitching anything.",
+        "Pitch 2–3 specific headlines that fit gaps in what they've already published — never a generic 'I'd like to write for you'.",
+        "Send to the editor named in the guidelines; use their submission form when one exists.",
+        "Agree the topic and the link placement (usually contextual in-body, or an author bio) before you write the draft.",
+        "Write it, submit it, then set the status to Contacted and follow up once after ~10 days.",
+    ],
+}
+
+_DEFAULT_PLAYBOOK = [
+    "Open the prospect's site and confirm it's a real, maintained site in a relevant space — skip anything thin, expired, or off-topic.",
+    "Find the specific page where a link to you would genuinely belong, and decide what you'd be asking them to add.",
+    "Identify the right person to contact; any suggested email here is a starting point, not a confirmed owner.",
+    "Write a short, page-specific email — what you'd add, where, and why their reader benefits.",
+    "Send it, set the status to Contacted, and follow up at most twice before stopping.",
+]
+
+
+def _approach_steps(opp: dict) -> list:
+    key = (opp.get("opportunity_type") or "").strip().lower()
+    return _APPROACH_PLAYBOOKS.get(key, _DEFAULT_PLAYBOOK)
+
 
 @api_router.get("/backlink-outreach/{site_id}/opportunities")
-async def list_backlink_opportunities(site_id: str, user=Depends(require_user)):
-    cursor = db.backlink_outreach.find({"site_id": site_id}).sort("created_at", -1).limit(200)
+async def list_backlink_opportunities(
+    site_id: str,
+    search_id: Optional[str] = None,
+    status: Optional[str] = None,
+    opportunity_type: Optional[str] = None,
+    approval_status: Optional[str] = None,
+    min_da: Optional[int] = None,
+    max_da: Optional[int] = None,
+    min_relevance: Optional[int] = None,
+    has_contact: Optional[bool] = None,
+    q: Optional[str] = None,
+    sort: str = "created_desc",
+    limit: int = 200,
+    user=Depends(require_user),
+):
+    query: dict = {"site_id": site_id}
+    and_clauses: list = []
+
+    if search_id:
+        # Match both the search that first created the opportunity and any
+        # later search that re-surfaced it (see the dedup branch above).
+        and_clauses.append({"$or": [{"search_ids": search_id}, {"search_id": search_id}]})
+    if status:
+        query["status"] = status
+    if opportunity_type:
+        query["opportunity_type"] = opportunity_type
+    if approval_status:
+        query["approval_status"] = approval_status
+    if min_relevance is not None:
+        query["relevance_score"] = {"$gte": min_relevance}
+    if q:
+        query["prospect_domain"] = {"$regex": re.escape(q), "$options": "i"}
+
+    da_range = {}
+    if min_da is not None:
+        da_range["$gte"] = min_da
+    if max_da is not None:
+        da_range["$lte"] = max_da
+    if da_range:
+        query["estimated_da"] = da_range
+
+    if has_contact is True:
+        and_clauses.append({"recipient_email": {"$nin": [None, ""]}})
+    elif has_contact is False:
+        and_clauses.append({"$or": [{"recipient_email": None}, {"recipient_email": ""}]})
+
+    if and_clauses:
+        query["$and"] = and_clauses
+
+    sort_spec = {
+        "created_desc": [("created_at", -1)],
+        "created_asc": [("created_at", 1)],
+        "da_desc": [("estimated_da", -1)],
+        "da_asc": [("estimated_da", 1)],
+        "relevance_desc": [("relevance_score", -1), ("estimated_da", -1)],
+        "domain_asc": [("prospect_domain", 1)],
+    }.get(sort, [("created_at", -1)])
+
+    cursor = db.backlink_outreach.find(query).sort(sort_spec).limit(max(1, min(limit, 1000)))
     docs = []
     async for d in cursor:
         d["id"] = str(d.pop("_id"))
+        # Computed on read rather than stored, so opportunities discovered
+        # before this existed get the guidance too and edits to the playbooks
+        # apply immediately without a migration.
+        d["approach_steps"] = _approach_steps(d)
         docs.append(d)
     return docs
 
@@ -483,6 +671,7 @@ async def export_backlink_outreach_excel(site_id: str, user=Depends(require_user
         ("Relevance Score", "relevance_score"),
         ("Estimated DA", "estimated_da"),
         ("Reason", "reason"),
+        ("Backlink URL", "backlink_url"),
         ("Status", "status"),
         ("Approval Status", "approval_status"),
         ("Recipient Email", "recipient_email"),
@@ -978,9 +1167,11 @@ Keep it short, friendly, and helpful. Return JSON: {{"subject":"...","body":"...
 
 @api_router.post("/link-reclamation/{site_id}/bulk-redirect")
 async def bulk_create_redirects(site_id: str, req: BulkRedirectRequest, user=Depends(require_editor)):
-    site = await db.sites.find_one({"_id": __import__("bson").ObjectId(site_id)})
-    if not site:
-        raise HTTPException(404, "Site not found")
+    # Sites are keyed by their uuid `id` field, not Mongo's `_id` — the old
+    # ObjectId(site_id) lookup could never match (and raised InvalidId on a
+    # uuid), so this endpoint always 404'd. get_wp_credentials is the correct
+    # accessor and also applies the non-WordPress platform guard.
+    site = await get_wp_credentials(site_id)
     results = []
     for item in req.redirects:
         try:

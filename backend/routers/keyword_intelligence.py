@@ -16,10 +16,14 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from bs4 import BeautifulSoup
 
+from core.crypto import get_decrypted_settings
 from core.db import db
 from core.security import require_user, require_editor
 from core.activity import log_activity
 from core.ai import get_ai_response
+from providers.google_analytics import fetch_gsc_metrics
+from providers.semrush import semrush_available, semrush_keyword_difficulty, semrush_keyword_overview
+from routers.keywords_intel import SERPAnalysisRequest, get_serp_analysis
 from providers.wordpress import get_wp_credentials, wp_api_request
 from providers.dataforseo import (
     DFS_TTL, dataforseo_post, _dfs_available, _dfs_check_spend,
@@ -126,34 +130,149 @@ Respond with JSON:
                         result["data_source"] = "dataforseo_cached"
                         result["is_estimated"] = False
 
-                # Real SERP data
-                serp_cache_k = _cache_key("serp", keyword, 2840, "en", "desktop")
-                serp_cached = await _cache_get(serp_cache_k, DFS_TTL["serp"])
-                if not serp_cached:
-                    serp_result = await dataforseo_post("/v3/serp/google/organic/live/advanced", [{
-                        "keyword": keyword, "location_code": 2840, "language_code": "en", "device": "desktop", "depth": 10,
-                    }])
-                    if serp_result:
-                        raw_items = serp_result[0].get("items", [])
-                        real_serp = []
-                        for item in raw_items:
-                            if item.get("type") == "organic":
-                                real_serp.append({
-                                    "title": item.get("title", ""), "url": item.get("url", ""),
-                                    "snippet": item.get("description", ""),
-                                    "domain_authority": item.get("domain_rank", 0),
-                                })
-                        if real_serp:
-                            result["serp"] = real_serp
-                        await _dfs_check_spend(site_id, 0.0006)
-                        await log_activity(site_id, "dataforseo_call", "DataForSEO SERP (research enhance): ~$0.0006")
-                else:
-                    organic = serp_cached.get("organic", [])
+                # Real SERP data + real People Also Ask questions — reuse
+                # get_serp_analysis (routers/keywords_intel.py-style function,
+                # defined later in this file) instead of duplicating its
+                # DataForSEO-call/caching/item-type-parsing logic. Calling it
+                # directly (bypassing its own Depends(require_editor)) is
+                # safe here: it only fires inside this `_dfs_available()`
+                # branch, so it always takes the real-data path, never its
+                # own internal AI-fallback branch (which would otherwise
+                # mean a second, redundant AI call on top of this endpoint's
+                # own upfront AI draft).
+                try:
+                    serp_analysis = await get_serp_analysis(
+                        site_id, SERPAnalysisRequest(keyword=keyword), _,
+                    )
+                    organic = serp_analysis.get("organic", [])
                     if organic:
                         result["serp"] = [{"title": o["title"], "url": o["url"], "snippet": o.get("description", ""),
                                            "domain_authority": o.get("domain_rank", 0)} for o in organic]
+                    paa = serp_analysis.get("people_also_ask", [])
+                    if paa:
+                        result["questions"] = [{"question": q["question"], "volume": None} for q in paa]
+                        result["questions_data_source"] = "dataforseo_paa"
+                    else:
+                        result["questions_data_source"] = "ai_estimate"
+                except Exception as serp_err:
+                    logger.warning(f"SERP/PAA enhancement failed for '{keyword}': {serp_err}")
+                    result.setdefault("questions_data_source", "ai_estimate")
+
+                # Real related keywords + real keyword difficulty + real
+                # search intent, all from one DataForSEO Labs call — replaces
+                # the AI-guessed related list/difficulty/intent with real
+                # data from the same paid account. Never used anywhere else
+                # in this codebase yet (confirmed before writing this).
+                try:
+                    labs_cache_k = _cache_key("labs_related", keyword, 2840, "en")
+                    labs_cached = await _cache_get(labs_cache_k, DFS_TTL["keyword_ideas"])
+                    if not labs_cached:
+                        labs_result = await dataforseo_post("/v3/dataforseo_labs/google/related_keywords/live", [{
+                            "keyword": keyword, "location_code": 2840, "language_code": "en",
+                            "limit": 20, "include_seed_keyword": True,
+                        }])
+                        # ~$0.012/task + $0.00012/item at limit=20 per DataForSEO's
+                        # published Labs pricing — verify against the current
+                        # DataForSEO dashboard, a mid-2026 rate increase was noted.
+                        await _dfs_check_spend(site_id, 0.02)
+                        await log_activity(site_id, "dataforseo_call", "DataForSEO Labs related_keywords (research enhance): ~$0.02")
+                        labs_items = (labs_result[0].get("items") if labs_result else None) or []
+                        await _cache_set(labs_cache_k, {"items": labs_items})
+                    else:
+                        labs_items = labs_cached.get("items", [])
+
+                    seed_info, related_items = None, []
+                    for it in labs_items:
+                        kd = it.get("keyword_data") or {}
+                        if kd.get("keyword") == keyword:
+                            seed_info = kd
+                        else:
+                            related_items.append(kd)
+
+                    if seed_info:
+                        kw_info = seed_info.get("keyword_info") or {}
+                        if kw_info.get("keyword_difficulty") is not None:
+                            result["primary"]["keyword_difficulty"] = kw_info["keyword_difficulty"]
+                        intent_info = seed_info.get("search_intent_info") or {}
+                        if intent_info.get("main_intent"):
+                            result["primary"]["intent"] = intent_info["main_intent"]
+
+                    if related_items:
+                        related_items.sort(key=lambda kd: (kd.get("keyword_info") or {}).get("search_volume", 0) or 0, reverse=True)
+                        real_related = []
+                        for kd in related_items[:20]:
+                            info = kd.get("keyword_info") or {}
+                            comp_level = info.get("competition_level", "MEDIUM")
+                            real_related.append({
+                                "keyword": kd.get("keyword", ""),
+                                "volume": info.get("search_volume", 0),
+                                "cpc": info.get("cpc", 0),
+                                "competition": comp_level.lower() if comp_level else "medium",
+                                "difficulty": info.get("keyword_difficulty"),
+                                "intent": (kd.get("search_intent_info") or {}).get("main_intent"),
+                            })
+                        result["related"] = real_related
+                        result["related_data_source"] = "dataforseo_labs"
+                    else:
+                        result["related_data_source"] = "ai_estimate"
+                except Exception as labs_err:
+                    logger.warning(f"DataForSEO Labs related-keywords enhancement failed for '{keyword}': {labs_err}")
+                    result.setdefault("related_data_source", "ai_estimate")
         except Exception as dfs_err:
             logger.warning(f"DataForSEO enhancement failed (using AI data): {dfs_err}")
+            result.setdefault("related_data_source", "ai_estimate")
+            result.setdefault("questions_data_source", "ai_estimate")
+
+        # Google Trends momentum on the primary keyword — reuses
+        # get_keyword_trends (same file) directly rather than duplicating its
+        # retry/backoff/cache logic. Its own Depends(require_editor) is only
+        # enforced by FastAPI's routing layer, not on a direct Python call,
+        # and this endpoint already requires require_user, so no new
+        # capability is exposed by calling it internally here.
+        try:
+            trend_result = await get_keyword_trends(site_id, TrendsRequest(keywords=[keyword]), _)
+            trend_info = (trend_result.get("trends") or {}).get(keyword)
+            if trend_info:
+                result["primary"]["trend"] = trend_info.get("trend")
+                result["primary"]["trend_source"] = trend_result.get("source")
+        except Exception as trend_err:
+            logger.warning(f"Trend lookup failed for '{keyword}': {trend_err}")
+
+        # Real "you already rank for this" via Google Search Console — the
+        # only source that can say "you already have traction here" instead
+        # of just suggesting new topics.
+        try:
+            settings = await get_decrypted_settings()
+            gsc_site_url = settings.get("gsc_site_url")
+            if gsc_site_url:
+                gsc_rows = await fetch_gsc_metrics(settings, gsc_site_url)
+                kw_tokens = set(keyword.lower().split())
+                matches = [
+                    r for r in gsc_rows
+                    if kw_tokens & set((r.get("keyword") or "").lower().split())
+                ]
+                matches.sort(key=lambda r: r.get("clicks", 0) or 0, reverse=True)
+                if matches:
+                    result["already_ranking"] = [
+                        {"keyword": r.get("keyword", ""), "impressions": r.get("impressions", 0),
+                         "clicks": r.get("clicks", 0), "position": r.get("ranking", 0)}
+                        for r in matches[:10]
+                    ]
+        except Exception as gsc_err:
+            logger.warning(f"GSC already-ranking lookup failed for '{keyword}': {gsc_err}")
+
+        # SEMrush cross-check — an independent, authoritative second opinion
+        # shown alongside DataForSEO's numbers, never overwriting them.
+        if await semrush_available():
+            try:
+                kd = await semrush_keyword_difficulty(site_id, keyword)
+                if kd is not None:
+                    result["primary"]["keyword_difficulty_semrush"] = kd
+                overview = await semrush_keyword_overview(site_id, keyword)
+                if overview:
+                    result["primary"]["cross_check"] = {"source": "semrush", **overview}
+            except Exception as semrush_err:
+                logger.warning(f"SEMrush cross-check failed for '{keyword}': {semrush_err}")
 
         await log_activity(site_id, "keyword_research", f"Keyword research for: {keyword}")
         return result

@@ -405,12 +405,20 @@ export const submitSitemapToGSC         = (siteId, data)            => api.post(
 
 // Off-Page SEO: Backlink Outreach
 export const findBacklinkOpportunities  = (siteId, data)            => api.post(`/backlink-outreach/${siteId}/find-opportunities`, data);
-export const listBacklinkOpportunities  = (siteId)                  => api.get(`/backlink-outreach/${siteId}/opportunities`);
+export const listBacklinkOpportunities  = (siteId, params = {})     => api.get(`/backlink-outreach/${siteId}/opportunities`, { params });
+export const listBacklinkSearches       = (siteId)                  => api.get(`/backlink-outreach/${siteId}/searches`);
 export const generateOutreachEmail      = (siteId, oppId)           => api.post(`/backlink-outreach/${siteId}/generate-email/${oppId}`);
 export const updateBacklinkStatus       = (siteId, oppId, data)     => api.patch(`/backlink-outreach/${siteId}/opportunity/${oppId}/status`, data);
 export const generateDisavow            = (siteId)                  => api.post(`/backlink-outreach/${siteId}/generate-disavow`);
 export const getDisavow                 = (siteId)                  => api.get(`/backlink-outreach/${siteId}/disavow`);
 export const exportBacklinkOutreachExcel = (siteId)                 => api.post(`/backlink-outreach/${siteId}/export-excel`, {}, { responseType: 'blob' });
+
+// Direct-posting directories (sign in & get listed — no outreach email)
+export const getDirectories             = (siteId)                  => api.get(`/directories/${siteId}`);
+export const prepareDirectoryListing    = (siteId, dirId)           => api.post(`/directories/${siteId}/prepare/${dirId}`);
+export const updateDirectorySubmission  = (siteId, dirId, data)     => api.patch(`/directories/${siteId}/submission/${dirId}`, data);
+export const verifyDirectoryListing     = (siteId, dirId)           => api.post(`/directories/${siteId}/verify/${dirId}`);
+export const verifyAllDirectoryListings = (siteId)                  => api.post(`/directories/${siteId}/verify-all`);
 
 // Off-Page SEO: Guest Posting
 export const findGuestPostSites         = (siteId, data)            => api.post(`/guest-posts/${siteId}/find-sites`, data);

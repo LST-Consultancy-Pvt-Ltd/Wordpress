@@ -26,6 +26,18 @@ async def get_wp_credentials(site_id: str, user_id: Optional[str] = None):
     site = await db.sites.find_one(query, {"_id": 0})
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
+    # Single chokepoint for every WordPress-backed feature in the app: a
+    # non-WordPress site (e.g. a self-hosted Next.js build) has no
+    # /wp-json REST API, so refuse here with an explanation rather than
+    # letting the caller fire a doomed request and surface a bare 502.
+    platform = site.get("platform", "wordpress")
+    if platform != "wordpress":
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{site.get('name', 'This site')}' is a {platform} site, not WordPress. "
+                   f"This feature manages content through the WordPress REST API and isn't available for it. "
+                   f"Domain-level SEO features (backlinks, keywords, citations, directories, indexing, site speed) all work.",
+        )
     if site.get("app_password"):
         site["app_password"] = decrypt_field(site["app_password"])
     if site.get("jwt_token"):

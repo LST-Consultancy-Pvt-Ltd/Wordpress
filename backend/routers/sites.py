@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.activity import log_activity
 from core.crypto import encrypt_field
+from core.http_headers import BROWSER_HEADERS
 from core.db import db
 from core.router import api_router
 from core.security import get_current_user, require_admin, require_editor
@@ -33,7 +34,7 @@ async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depen
     user_id = current_user["id"]
     site = WordPressSite(**site_data.model_dump(exclude={"wp_password"}), user_id=user_id)
 
-    if site.auth_type == "jwt":
+    if site.platform == "wordpress" and site.auth_type == "jwt":
         # Auto-generate JWT token using the plain password supplied by the user.
         # The plain password is NEVER stored — only the resulting JWT token is persisted.
         wp_password = site_data.wp_password.strip()
@@ -151,25 +152,41 @@ async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depen
                     detail=f"JWT plugin returned unexpected response: {token_resp.text[:300]}"
                 )
             site.jwt_token = jwt_token
-    elif site.auth_type == "app_password" and not site.app_password.strip():
+    elif site.platform == "wordpress" and site.auth_type == "app_password" and not site.app_password.strip():
         raise HTTPException(status_code=400, detail="Application Password is required when auth_type is 'app_password'.")
 
-    # Test WordPress connection — use /users/me which requires auth to verify credentials
-    try:
-        site_dict = site.model_dump()
-        auth_resp = await wp_api_request(site_dict, "GET", "../users/me")
-        if auth_resp.status_code == 200:
-            site.status = "connected"
-        elif auth_resp.status_code == 401:
-            site.status = "auth_error"
-            logger.warning(f"WordPress credentials invalid for {site.url}")
-        else:
-            # Fallback: try a public GET on posts — at least confirms URL is reachable
-            pub_resp = await wp_api_request(site_dict, "GET", "posts?per_page=1")
-            site.status = "connected" if pub_resp.status_code == 200 else "error"
-    except Exception as e:
-        logger.error(f"WordPress connection test failed: {e}")
-        site.status = "error"
+    if site.platform != "wordpress":
+        # A non-WordPress site (e.g. a self-hosted Next.js build) has no
+        # /wp-json to authenticate against, so it's tracked by URL for the
+        # domain-level SEO features. Plain reachability is the only thing
+        # meaningful to check, and no credentials are stored.
+        site.username, site.app_password, site.jwt_token = "", "", ""
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
+                resp = await hc.get(site.url.rstrip("/"))
+            site.status = "connected" if resp.status_code < 400 else "error"
+            if resp.status_code >= 400:
+                logger.warning(f"{site.url} returned HTTP {resp.status_code} on the reachability check")
+        except Exception as e:
+            logger.warning(f"Reachability check failed for {site.url}: {e}")
+            site.status = "error"
+    else:
+        # Test WordPress connection — use /users/me which requires auth to verify credentials
+        try:
+            site_dict = site.model_dump()
+            auth_resp = await wp_api_request(site_dict, "GET", "../users/me")
+            if auth_resp.status_code == 200:
+                site.status = "connected"
+            elif auth_resp.status_code == 401:
+                site.status = "auth_error"
+                logger.warning(f"WordPress credentials invalid for {site.url}")
+            else:
+                # Fallback: try a public GET on posts — at least confirms URL is reachable
+                pub_resp = await wp_api_request(site_dict, "GET", "posts?per_page=1")
+                site.status = "connected" if pub_resp.status_code == 200 else "error"
+        except Exception as e:
+            logger.error(f"WordPress connection test failed: {e}")
+            site.status = "error"
 
     # Encrypt sensitive fields before persisting
     site_to_save = site.model_dump()
@@ -178,7 +195,9 @@ async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depen
     if site_to_save.get("jwt_token"):
         site_to_save["jwt_token"] = encrypt_field(site_to_save["jwt_token"])
     await db.sites.insert_one(site_to_save)
-    await log_activity(site.id, "site_created", f"Added WordPress site: {site.name}", user_id=user_id)
+    await log_activity(site.id, "site_created",
+                       f"Added {'WordPress' if site.platform == 'wordpress' else site.platform} site: {site.name}",
+                       user_id=user_id)
 
     response_data = site.model_dump()
     response_data.pop("app_password", None)

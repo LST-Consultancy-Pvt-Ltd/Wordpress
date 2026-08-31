@@ -74,7 +74,7 @@ export default function Sites() {
   const [scraping, setScraping] = useState(false);
   const [savingOnboarding, setSavingOnboarding] = useState(false);
   const [suggestingTopics, setSuggestingTopics] = useState(false);
-  const [formData, setFormData] = useState({ name: "", url: "", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
+  const [formData, setFormData] = useState({ name: "", url: "", platform: "wordpress", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
   const [metaData, setMetaData] = useState({ description: "", target_audience: "" });
   const [topics, setTopics] = useState(["", "", "", ""]);
   const [topicInput, setTopicInput] = useState("");
@@ -83,7 +83,7 @@ export default function Sites() {
   const resetWizard = () => {
     setWizardStep(1);
     setCreatedSiteId(null);
-    setFormData({ name: "", url: "", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
+    setFormData({ name: "", url: "", platform: "wordpress", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
     setMetaData({ description: "", target_audience: "" });
     setTopics(["", "", "", ""]);
     setTopicInput("");
@@ -405,7 +405,35 @@ export default function Sites() {
                         onChange={e => setFormData({ ...formData, url: e.target.value })} required data-testid="site-url-input" />
                     </div>
 
-                    {/* Auth type toggle */}
+                    {/* Platform picker */}
+                    <div className="space-y-2">
+                      <Label>Platform</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, platform: "wordpress" })}
+                          className={`flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${formData.platform === "wordpress" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50"}`}>
+                          <span className="font-medium">WordPress</span>
+                          <span className="text-xs opacity-80">Full content management</span>
+                        </button>
+                        <button type="button"
+                          onClick={() => setFormData({ ...formData, platform: "nextjs" })}
+                          className={`flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${formData.platform === "nextjs" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/50"}`}>
+                          <span className="font-medium">Next.js / other</span>
+                          <span className="text-xs opacity-80">SEO tools only</span>
+                        </button>
+                      </div>
+                      {formData.platform !== "wordpress" && (
+                        <p className="text-xs text-muted-foreground">
+                          No credentials needed — the site is tracked by URL. Backlinks, keywords, citations,
+                          directories, indexing and site speed all work. WordPress-only features (Pages/Posts,
+                          Media, Plugins, Comments, Backups) won't be available for it.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Auth toggle + credentials — WordPress only */}
+                    {formData.platform === "wordpress" && (
+                    <>
                     <div className="space-y-2">
                       <Label>Authentication Method</Label>
                       <div className="grid grid-cols-2 gap-2">
@@ -457,6 +485,8 @@ export default function Sites() {
                           </p>
                         </div>
                       </>
+                    )}
+                    </>
                     )}
                   </div>
                   <div className="flex justify-end gap-2 pt-2">

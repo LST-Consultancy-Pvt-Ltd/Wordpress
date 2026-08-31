@@ -102,6 +102,12 @@ class WordPressSite(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     url: str
+    # "wordpress" drives content through the WP REST API (the original and
+    # default behaviour). Any other platform is tracked by URL only: the
+    # domain-level SEO features (backlinks, keywords, citations, indexing,
+    # directories, PageSpeed) all work, while WP-specific content management
+    # is refused with a clear message instead of a confusing gateway error.
+    platform: str = "wordpress"       # "wordpress" | "nextjs"
     username: str = ""
     app_password: str = ""
     auth_type: str = "app_password"   # "app_password" | "jwt"
@@ -114,6 +120,7 @@ class WordPressSite(BaseModel):
 class WordPressSiteCreate(BaseModel):
     name: str
     url: str
+    platform: str = "wordpress"       # "wordpress" | "nextjs"
     username: str = ""
     app_password: str = ""
     auth_type: str = "app_password"   # "app_password" | "jwt"
@@ -125,6 +132,7 @@ class WordPressSiteResponse(BaseModel):
     id: str
     name: str
     url: str
+    platform: str = "wordpress"
     username: str = ""
     app_password: str = "••••••••"
     auth_type: str = "app_password"
@@ -276,6 +284,7 @@ class Settings(BaseModel):
     smtp_use_tls: bool = True
     hunter_api_key: Optional[str] = None
     signalhire_api_key: Optional[str] = None
+    semrush_api_key: Optional[str] = None
     google_trends_enabled: bool = True
     supported_languages: List[str] = ["en"]
     default_language: str = "en"
@@ -302,6 +311,7 @@ class SettingsUpdate(BaseModel):
     smtp_use_tls: Optional[bool] = None
     hunter_api_key: Optional[str] = None
     signalhire_api_key: Optional[str] = None
+    semrush_api_key: Optional[str] = None
     google_trends_enabled: Optional[bool] = None
     supported_languages: Optional[List[str]] = None
     default_language: Optional[str] = None

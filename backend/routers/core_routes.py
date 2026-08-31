@@ -168,6 +168,8 @@ async def get_settings(_: dict = Depends(require_user)):
         settings["hunter_api_key"] = "***" + settings["hunter_api_key"][-4:] if len(settings["hunter_api_key"]) > 4 else "****"
     if settings.get("signalhire_api_key"):
         settings["signalhire_api_key"] = "***" + settings["signalhire_api_key"][-4:] if len(settings["signalhire_api_key"]) > 4 else "****"
+    if settings.get("semrush_api_key"):
+        settings["semrush_api_key"] = "***" + settings["semrush_api_key"][-4:] if len(settings["semrush_api_key"]) > 4 else "****"
     return Settings(**settings)
 
 @api_router.post("/settings", response_model=Settings)
@@ -226,6 +228,8 @@ async def update_settings(update: SettingsUpdate, _: dict = Depends(require_admi
         response["hunter_api_key"] = "***" + response["hunter_api_key"][-4:] if len(response["hunter_api_key"]) > 4 else "****"
     if response.get("signalhire_api_key"):
         response["signalhire_api_key"] = "***" + response["signalhire_api_key"][-4:] if len(response["signalhire_api_key"]) > 4 else "****"
+    if response.get("semrush_api_key"):
+        response["semrush_api_key"] = "***" + response["semrush_api_key"][-4:] if len(response["semrush_api_key"]) > 4 else "****"
 
     return Settings(**response)
 

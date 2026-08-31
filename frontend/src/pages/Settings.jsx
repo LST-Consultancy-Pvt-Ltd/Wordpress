@@ -82,6 +82,7 @@ export default function Settings() {
     google_search_cx: "",
     hunter_api_key: "",
     signalhire_api_key: "",
+    semrush_api_key: "",
     smtp_host: "",
     smtp_port: 587,
     smtp_username: "",
@@ -206,6 +207,7 @@ export default function Settings() {
           google_search_cx: r.data.google_search_cx || "",
           hunter_api_key: r.data.hunter_api_key || "",
           signalhire_api_key: r.data.signalhire_api_key || "",
+          semrush_api_key: r.data.semrush_api_key || "",
           dataforseo_login: r.data.dataforseo_login || "",
           dataforseo_password: r.data.dataforseo_password || "",
           smtp_host: r.data.smtp_host || "",
@@ -247,6 +249,7 @@ export default function Settings() {
         google_search_cx: formData.google_search_cx || undefined,
         hunter_api_key: formData.hunter_api_key || undefined,
         signalhire_api_key: formData.signalhire_api_key || undefined,
+        semrush_api_key: formData.semrush_api_key || undefined,
         smtp_host: formData.smtp_host || undefined,
         smtp_port: formData.smtp_port || undefined,
         smtp_username: formData.smtp_username || undefined,
@@ -532,6 +535,35 @@ export default function Settings() {
                     signalhire.com/api
                   </a>{" "}
                   — only used when Hunter.io doesn't find a contact for a domain.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Keyword Research Cross-Check (SEMrush) */}
+          <Card className="content-card">
+            <CardHeader>
+              <CardTitle className="font-heading flex items-center gap-2">
+                <Key size={18} className="text-purple-500" /> Cross-Check (SEMrush)
+              </CardTitle>
+              <CardDescription>
+                Adds a second, independent keyword-difficulty score and volume/CPC estimate from SEMrush next to
+                DataForSEO's numbers on the Keyword Research page. Optional — without it, only DataForSEO/AI data is
+                shown.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="semrush-key">SEMrush API Key</Label>
+                <Input id="semrush-key" type="password" placeholder="API key"
+                  value={formData.semrush_api_key}
+                  onChange={(e) => setFormData({ ...formData, semrush_api_key: e.target.value })} />
+                <p className="text-xs text-muted-foreground">
+                  Get one from{" "}
+                  <a href="https://developer.semrush.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                    developer.semrush.com
+                  </a>{" "}
+                  — requires a SEMrush subscription with API access.
                 </p>
               </div>
             </CardContent>

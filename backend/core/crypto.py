@@ -32,6 +32,7 @@ _SENSITIVE_SETTINGS_FIELDS = (
     "smtp_username", "smtp_password",  # §11: SMTP credentials for outreach sending
     "hunter_api_key",  # Hunter.io contact-finder credential for backlink outreach
     "signalhire_api_key",  # SignalHire contact-finder fallback credential for backlink outreach
+    "semrush_api_key",  # SEMrush keyword-research cross-check credential
 )
 
 

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 import os
 import logging
+import re
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from contextlib import asynccontextmanager
@@ -23,6 +24,37 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+class _RedactSecretsFilter(logging.Filter):
+    """Several providers (Hunter.io, Google CSE, SEMrush) authenticate via a
+    query-string parameter rather than a header, so httpx's own request
+    logger (`HTTP Request: GET https://...?api_key=...`) writes the raw
+    secret to disk on every call. Redact those values wherever they show up
+    in a log record, regardless of which logger emitted it."""
+    _PATTERN = re.compile(r'(?i)\b((?:api[_-]?key|apikey|access[_-]?key|token|secret|password)=)([^&\s"\']+)')
+
+    def _redact(self, value):
+        text = str(value)
+        return self._PATTERN.sub(r'\1***REDACTED***', text) if self._PATTERN.search(text) else value
+
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = self._redact(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {k: self._redact(v) for k, v in record.args.items()}
+            else:
+                record.args = tuple(self._redact(a) for a in record.args)
+        return True
+
+
+# Must go on the root HANDLERS, not the root logger: a logger's own filters
+# only run for records logged directly to it, and are skipped entirely for
+# records propagated up from child loggers like `httpx` — which are exactly
+# the ones carrying the leaked key. Handler filters do see propagated records.
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_RedactSecretsFilter())
 
 # Every symbol server.py used to define directly (Pydantic models, auth/crypto/AI
 # helpers, WordPress/DataForSEO/GA clients, etc.) now lives in core/, providers/,
@@ -325,6 +357,7 @@ import routers.content_seo_analytics  # noqa: E402,F401
 import routers.company_profile  # noqa: E402,F401
 import routers.outreach_gate  # noqa: E402,F401
 import routers.platform_intelligence  # noqa: E402,F401
+import routers.directories  # noqa: E402,F401
 
 # Include the router in the main app
 app.include_router(api_router)

@@ -486,6 +486,12 @@
     ]
   ],
   [
+    "/api/backlink-outreach/{site_id}/searches",
+    [
+      "GET"
+    ]
+  ],
+  [
     "/api/backups/{site_id}",
     [
       "GET"
@@ -723,6 +729,36 @@
     "/api/dashboard/stats",
     [
       "GET"
+    ]
+  ],
+  [
+    "/api/directories/{site_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/directories/{site_id}/prepare/{directory_id}",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/directories/{site_id}/submission/{directory_id}",
+    [
+      "PATCH"
+    ]
+  ],
+  [
+    "/api/directories/{site_id}/verify-all",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/directories/{site_id}/verify/{directory_id}",
+    [
+      "POST"
     ]
   ],
   [

@@ -16,6 +16,7 @@ route-parity test) — each test uses a fresh uuid4 site_id and cleans up its
 own documents in a `finally` block inside that single coroutine.
 """
 import asyncio
+import json
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -36,6 +37,9 @@ from routers.opportunities import (
 )
 from providers.hunter import _pick_best_email, hunter_domain_search
 from providers.signalhire import _company_name_guess, _pick_best_contact, signalhire_domain_search
+import routers.keyword_intelligence as kwintel
+from routers.keyword_intelligence import KeywordResearchRequest, research_keyword
+from providers.semrush import _parse_semrush_csv
 
 
 _loop = asyncio.new_event_loop()
@@ -252,7 +256,8 @@ def test_find_backlink_opportunities_continues_when_hunter_returns_none():
                  patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
                  patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"Hi","body":"Body"}')), \
                  patch.object(opp, "hunter_available", new=AsyncMock(return_value=True)), \
-                 patch.object(opp, "hunter_domain_search", new=AsyncMock(return_value=None)):
+                 patch.object(opp, "hunter_domain_search", new=AsyncMock(return_value=None)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
                 await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
                 await bg()
             docs = await db.backlink_outreach.find({"site_id": site_id}, {"_id": 0}).to_list(10)
@@ -286,7 +291,8 @@ def test_find_backlink_opportunities_continues_when_email_draft_fails_for_one_op
                  patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
                  patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
                  patch.object(opp, "get_ai_response", new=AsyncMock(side_effect=HTTPException(429, "Daily AI spend budget reached"))), \
-                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)):
+                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
                 await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
                 await bg()
             docs = await db.backlink_outreach.find({"site_id": site_id}, {"_id": 0}).to_list(10)
@@ -486,7 +492,8 @@ def test_find_backlink_opportunities_skips_domains_already_on_file():
                  patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
                  patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
                  patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"New","body":"New body"}')), \
-                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)):
+                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
                 await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
                 await bg()
 
@@ -544,6 +551,43 @@ def test_real_backlink_opportunities_processes_every_competitor_not_just_the_fir
             domains = {o["prospect_domain"] for o in opps}
             assert len(opps) == 13  # 12 from the first competitor + 1 from the second
             assert "second.example" in domains  # proves the second competitor was actually queried
+
+            # The real backlink URL (DataForSEO's url_from) must survive onto
+            # the opportunity, not just be used-and-discarded for deriving
+            # the domain.
+            second_opp = next(o for o in opps if o["prospect_domain"] == "second.example")
+            assert second_opp["backlink_url"] == "https://second.example/y"
+        finally:
+            await _cleanup(site_id)
+
+    _run(go())
+
+
+def test_find_backlink_opportunities_stores_real_backlink_url_on_opportunity():
+    site_id = _new_site_id()
+    canned_backlinks = [{
+        "items": [
+            {"domain_from": "evidence.example", "url_from": "https://evidence.example/resources/tools",
+             "domain_from_rank": 40, "anchor": "great tool", "dofollow": True},
+        ]
+    }]
+    req = BacklinkOpportunityRequest(competitor_urls=["https://competitor.example"], your_domain="mysite.example")
+
+    async def go():
+        try:
+            bg = BackgroundTasks()
+            with patch.object(opp, "_dfs_available", new=AsyncMock(return_value=True)), \
+                 patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
+                 patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
+                 patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"Hi","body":"Body"}')), \
+                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
+                await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
+                await bg()
+            docs = await db.backlink_outreach.find({"site_id": site_id}, {"_id": 0}).to_list(10)
+
+            assert len(docs) == 1
+            assert docs[0]["backlink_url"] == "https://evidence.example/resources/tools"
         finally:
             await _cleanup(site_id)
 
@@ -604,7 +648,8 @@ def test_find_backlink_opportunities_auto_discovers_competitors_when_none_given(
                  patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
                  patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
                  patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"Hi","body":"Body"}')), \
-                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)):
+                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
                 await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
                 await bg()
 
@@ -658,7 +703,8 @@ def test_find_backlink_opportunities_processes_only_top_30_by_relevance_when_mor
                  patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
                  patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned_backlinks)), \
                  patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"Hi","body":"Body"}')), \
-                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)):
+                 patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+                 patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
                 await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
                 await bg()
 
@@ -672,5 +718,421 @@ def test_find_backlink_opportunities_processes_only_top_30_by_relevance_when_mor
             assert processed_domains.isdisjoint(lowest_10_excluded)
         finally:
             await _cleanup(site_id)
+
+    _run(go())
+
+
+# --- Keyword Research power-up tests: DataForSEO Labs, real PAA, Google
+# Trends, GSC "already ranking", SEMrush cross-check ---
+
+_AI_SEED_RESULT = {
+    "primary": {"keyword": "seo tools", "volume": 10, "difficulty": "low",
+                "cpc": 0.1, "competition": "low", "intent": "informational"},
+    "related": [{"keyword": "ai guessed keyword", "volume": 5, "difficulty": "low", "cpc": 0.05, "competition": "low", "intent": "informational"}],
+    "questions": [{"question": "ai guessed question?", "volume": 5}],
+    "serp": [],
+}
+
+
+def _patched_research_keyword(**overrides):
+    """Common patch set for research_keyword tests — every dependency
+    defaults to a harmless/off state; pass overrides to exercise one path
+    at a time, same spirit as the opportunities.py tests above."""
+    defaults = dict(
+        get_ai_response=AsyncMock(return_value=json.dumps(_AI_SEED_RESULT)),
+        _dfs_available=AsyncMock(return_value=False),
+        _cache_get=AsyncMock(return_value=None),
+        _cache_set=AsyncMock(return_value=True),
+        _dfs_check_spend=AsyncMock(return_value=True),
+        dataforseo_post=AsyncMock(return_value=[]),
+        get_serp_analysis=AsyncMock(return_value={"organic": [], "people_also_ask": []}),
+        get_keyword_trends=AsyncMock(return_value={"trends": {}, "source": "ai_estimate"}),
+        get_decrypted_settings=AsyncMock(return_value={}),
+        fetch_gsc_metrics=AsyncMock(return_value=[]),
+        semrush_available=AsyncMock(return_value=False),
+    )
+    defaults.update(overrides)
+    return [patch.object(kwintel, name, new=mock) for name, mock in defaults.items()]
+
+
+def test_research_keyword_uses_real_dataforseo_labs_related_keywords():
+    keyword = "seo tools"
+    labs_items = [
+        {"keyword_data": {"keyword": keyword,
+                           "keyword_info": {"search_volume": 1000, "cpc": 2.5, "competition_level": "MEDIUM", "keyword_difficulty": 42},
+                           "search_intent_info": {"main_intent": "commercial"}}},
+        {"keyword_data": {"keyword": "best seo tools",
+                           "keyword_info": {"search_volume": 800, "cpc": 3.1, "competition_level": "HIGH", "keyword_difficulty": 55},
+                           "search_intent_info": {"main_intent": "commercial"}}},
+        {"keyword_data": {"keyword": "free seo tools",
+                           "keyword_info": {"search_volume": 600, "cpc": 1.2, "competition_level": "LOW", "keyword_difficulty": 20},
+                           "search_intent_info": {"main_intent": "informational"}}},
+    ]
+
+    async def dfs_side_effect(endpoint, payload):
+        if "related_keywords" in endpoint:
+            return [{"items": labs_items}]
+        return []
+
+    async def go():
+        patches = _patched_research_keyword(
+            _dfs_available=AsyncMock(return_value=True),
+            dataforseo_post=AsyncMock(side_effect=dfs_side_effect),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert result["related_data_source"] == "dataforseo_labs"
+        assert {r["keyword"] for r in result["related"]} == {"best seo tools", "free seo tools"}
+        # Real DataForSEO KD/intent replace the AI seed's guesses.
+        assert result["primary"]["keyword_difficulty"] == 42
+        assert result["primary"]["intent"] == "commercial"
+
+    _run(go())
+
+
+def test_research_keyword_falls_back_to_ai_related_when_labs_fails():
+    keyword = "seo tools"
+
+    async def dfs_side_effect(endpoint, payload):
+        if "related_keywords" in endpoint:
+            raise Exception("DataForSEO Labs unavailable")
+        return []
+
+    async def go():
+        patches = _patched_research_keyword(
+            _dfs_available=AsyncMock(return_value=True),
+            dataforseo_post=AsyncMock(side_effect=dfs_side_effect),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        # A Labs failure never takes down the whole request — the original
+        # AI-generated related list survives untouched.
+        assert result["related_data_source"] == "ai_estimate"
+        assert result["related"] == _AI_SEED_RESULT["related"]
+
+    _run(go())
+
+
+def test_research_keyword_uses_real_people_also_ask_questions():
+    keyword = "seo tools"
+
+    async def go():
+        patches = _patched_research_keyword(
+            _dfs_available=AsyncMock(return_value=True),
+            get_serp_analysis=AsyncMock(return_value={
+                "organic": [],
+                "people_also_ask": [{"question": "what is seo?"}, {"question": "how does seo work?"}],
+            }),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert result["questions_data_source"] == "dataforseo_paa"
+        # Real PAA questions never carry a fabricated volume number.
+        assert result["questions"] == [
+            {"question": "what is seo?", "volume": None},
+            {"question": "how does seo work?", "volume": None},
+        ]
+
+    _run(go())
+
+
+def test_research_keyword_falls_back_to_ai_questions_when_no_paa():
+    keyword = "seo tools"
+
+    async def go():
+        patches = _patched_research_keyword(
+            _dfs_available=AsyncMock(return_value=True),
+            get_serp_analysis=AsyncMock(return_value={"organic": [], "people_also_ask": []}),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert result["questions_data_source"] == "ai_estimate"
+        assert result["questions"] == _AI_SEED_RESULT["questions"]
+
+    _run(go())
+
+
+def test_research_keyword_adds_google_trends_momentum():
+    keyword = "seo tools"
+
+    async def go():
+        patches = _patched_research_keyword(
+            get_keyword_trends=AsyncMock(return_value={
+                "trends": {keyword: {"trend": "rising", "values": [1, 2, 3]}},
+                "source": "google_trends",
+            }),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert result["primary"]["trend"] == "rising"
+        assert result["primary"]["trend_source"] == "google_trends"
+
+    _run(go())
+
+
+def test_research_keyword_adds_semrush_cross_check_without_overwriting_dataforseo():
+    keyword = "seo tools"
+
+    async def go():
+        patches = _patched_research_keyword(
+            _dfs_available=AsyncMock(return_value=True),
+            dataforseo_post=AsyncMock(return_value=[{"items": [{
+                "keyword": keyword, "search_volume": 1000, "cpc": 2.5,
+                "competition": 0.4, "competition_level": "MEDIUM", "monthly_searches": [],
+            }]}]),
+            semrush_available=AsyncMock(return_value=True),
+            semrush_keyword_difficulty=AsyncMock(return_value=37),
+            semrush_keyword_overview=AsyncMock(return_value={"volume": 500, "cpc": 1.1, "competition": 0.3}),
+        )
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert result["primary"]["keyword_difficulty_semrush"] == 37
+        assert result["primary"]["cross_check"] == {"source": "semrush", "volume": 500, "cpc": 1.1, "competition": 0.3}
+        # Additive, not overwritten — the DataForSEO-sourced volume/difficulty survive.
+        assert result["primary"]["volume"] == 1000
+
+    _run(go())
+
+
+def test_research_keyword_omits_semrush_fields_when_not_configured():
+    keyword = "seo tools"
+
+    async def go():
+        patches = _patched_research_keyword(semrush_available=AsyncMock(return_value=False))
+        with patches[0]:
+            for p in patches[1:]:
+                p.start()
+            try:
+                result = await research_keyword("site-1", KeywordResearchRequest(keyword=keyword), {"id": "test-user"})
+            finally:
+                for p in patches[1:]:
+                    p.stop()
+
+        assert "keyword_difficulty_semrush" not in result["primary"]
+        assert "cross_check" not in result["primary"]
+
+    _run(go())
+
+
+def test_parse_semrush_csv_parses_header_and_rows():
+    rows = _parse_semrush_csv("Ph;Nq;Cp\nseo tools;1000;2.5\nbest seo tools;800;3.1")
+    assert rows == [
+        {"Ph": "seo tools", "Nq": "1000", "Cp": "2.5"},
+        {"Ph": "best seo tools", "Nq": "800", "Cp": "3.1"},
+    ]
+
+
+def test_parse_semrush_csv_returns_empty_on_error_body():
+    assert _parse_semrush_csv("ERROR 50 :: NOTHING FOUND") == []
+    assert _parse_semrush_csv("") == []
+
+
+def test_semrush_check_spend_raises_once_daily_unit_budget_exceeded():
+    from providers import semrush as semrush_provider
+
+    async def go():
+        site_id = f"semrush-budget-{uuid.uuid4()}"
+        try:
+            with patch.object(semrush_provider, "SEMRUSH_DAILY_UNIT_LIMIT", 10):
+                await semrush_provider._semrush_check_spend(site_id, 5)
+                await semrush_provider._semrush_check_spend(site_id, 5)
+                with pytest.raises(Exception):
+                    await semrush_provider._semrush_check_spend(site_id, 1)
+        finally:
+            await db.semrush_daily_spend.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+# --- Per-search grouping, filters, approach steps, and direct-posting
+# directories (the Backlink Outreach rework) ---
+
+def _canned(domain, rank=40):
+    return [{"items": [{"domain_from": domain, "url_from": f"https://{domain}/page",
+                        "domain_from_rank": rank, "anchor": "a", "dofollow": True}]}]
+
+
+async def _run_search(site_id, niche, canned):
+    """Drive one full find_backlink_opportunities run with everything mocked.
+
+    Must await inside the patch context: find_backlink_opportunities is async,
+    so merely calling it builds a coroutine whose body would otherwise not run
+    until after the mocks were torn down."""
+    req = BacklinkOpportunityRequest(competitor_urls=["https://competitor.example"],
+                                     your_domain="mysite.example", niche=niche)
+    bg = BackgroundTasks()
+    with patch.object(opp, "_dfs_available", new=AsyncMock(return_value=True)), \
+         patch.object(opp, "_dfs_check_spend", new=AsyncMock(return_value=True)), \
+         patch.object(opp, "dataforseo_post", new=AsyncMock(return_value=canned)), \
+         patch.object(opp, "get_ai_response", new=AsyncMock(return_value='{"subject":"Hi","body":"Body"}')), \
+         patch.object(opp, "hunter_available", new=AsyncMock(return_value=False)), \
+         patch.object(opp, "signalhire_available", new=AsyncMock(return_value=False)):
+        result = await find_backlink_opportunities(site_id, req, bg, user={"id": "test-user"})
+        await bg()  # run the scheduled background task while still mocked
+    return result
+
+
+def test_each_search_is_recorded_and_scoped_separately():
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            first = await _run_search(site_id, "netsuite", _canned("netsuite-prospect.example"))
+            second = await _run_search(site_id, "salesforce", _canned("salesforce-prospect.example"))
+
+            searches = await opp.list_backlink_searches(site_id, user={"id": "test-user"})
+            assert {s["label"] for s in searches} == {"netsuite", "salesforce"}
+            assert all(s["status"] == "completed" for s in searches)
+
+            # Filtering by one search returns only that search's prospect.
+            only_ns = await opp.list_backlink_opportunities(site_id, search_id=first["search_id"], user={"id": "u"})
+            assert [o["prospect_domain"] for o in only_ns] == ["netsuite-prospect.example"]
+            only_sf = await opp.list_backlink_opportunities(site_id, search_id=second["search_id"], user={"id": "u"})
+            assert [o["prospect_domain"] for o in only_sf] == ["salesforce-prospect.example"]
+
+            # Unfiltered still shows everything.
+            everything = await opp.list_backlink_opportunities(site_id, user={"id": "u"})
+            assert len(everything) == 2
+        finally:
+            await _cleanup(site_id)
+            await db.backlink_searches.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_domain_found_again_in_a_later_search_shows_under_both_searches():
+    """The dedup skip must not make a prospect vanish from the newer search —
+    that's exactly the confusion per-search grouping exists to remove."""
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            first = await _run_search(site_id, "netsuite", _canned("shared-prospect.example"))
+            second = await _run_search(site_id, "salesforce", _canned("shared-prospect.example"))
+
+            # Still exactly one row — no duplicate inserted.
+            docs = await db.backlink_outreach.find({"site_id": site_id}, {"_id": 0}).to_list(10)
+            assert len(docs) == 1
+            assert sorted(docs[0]["search_ids"]) == sorted([first["search_id"], second["search_id"]])
+
+            # ...and it is visible under BOTH searches.
+            for sid in (first["search_id"], second["search_id"]):
+                listed = await opp.list_backlink_opportunities(site_id, search_id=sid, user={"id": "u"})
+                assert [o["prospect_domain"] for o in listed] == ["shared-prospect.example"]
+        finally:
+            await _cleanup(site_id)
+            await db.backlink_searches.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_opportunity_filters_and_approach_steps():
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await _run_search(site_id, "netsuite", [{"items": [
+                {"domain_from": "high-da.example", "url_from": "https://high-da.example/a",
+                 "domain_from_rank": 90, "anchor": "a", "dofollow": True},
+                {"domain_from": "low-da.example", "url_from": "https://low-da.example/b",
+                 "domain_from_rank": 10, "anchor": "b", "dofollow": True},
+            ]}])
+
+            high_only = await opp.list_backlink_opportunities(site_id, min_da=50, user={"id": "u"})
+            assert [o["prospect_domain"] for o in high_only] == ["high-da.example"]
+
+            by_domain = await opp.list_backlink_opportunities(site_id, q="low-da", user={"id": "u"})
+            assert [o["prospect_domain"] for o in by_domain] == ["low-da.example"]
+
+            no_contact = await opp.list_backlink_opportunities(site_id, has_contact=False, user={"id": "u"})
+            assert len(no_contact) == 2  # neither got a Hunter/SignalHire suggestion
+            with_contact = await opp.list_backlink_opportunities(site_id, has_contact=True, user={"id": "u"})
+            assert with_contact == []
+
+            by_da = await opp.list_backlink_opportunities(site_id, sort="da_desc", user={"id": "u"})
+            assert [o["prospect_domain"] for o in by_da] == ["high-da.example", "low-da.example"]
+
+            # Every opportunity carries actionable steps, matched to its type.
+            assert all(o["approach_steps"] for o in by_da)
+            assert by_da[0]["approach_steps"] == opp._APPROACH_PLAYBOOKS["competitor_backlink"]
+        finally:
+            await _cleanup(site_id)
+            await db.backlink_searches.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_directory_listing_refuses_to_invent_copy_without_a_verified_profile():
+    from fastapi import HTTPException as _HTTPExc
+    import routers.directories as dirs
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            with pytest.raises(_HTTPExc) as exc:
+                await dirs.prepare_directory_listing(site_id, "clutch", user={"id": "u"})
+            assert exc.value.status_code == 400
+            assert "company profile" in exc.value.detail.lower()
+        finally:
+            await db.directory_submissions.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_directory_verification_reports_unknown_not_absent_without_google_cse():
+    """A missing Google CSE key must never be reported as 'listing not found' —
+    same evidence-rule discipline as every other provider fallback."""
+    import routers.directories as dirs
+
+    site_id = _new_site_id()
+
+    async def go():
+        with patch.object(dirs, "cse_available", new=AsyncMock(return_value=False)):
+            result = await dirs._verify_one(site_id, "clutch", "Acme Ltd")
+        assert result["found"] is None
+        assert "couldn't be verified" in result["note"]
 
     _run(go())
