@@ -1136,3 +1136,85 @@ def test_directory_verification_reports_unknown_not_absent_without_google_cse():
         assert "couldn't be verified" in result["note"]
 
     _run(go())
+
+
+# --- Non-WordPress site support (e.g. a self-hosted Next.js build) ---
+
+def test_non_wordpress_site_connects_without_wordpress_credentials():
+    """A Next.js site has no /wp-json to authenticate against, so it must
+    connect on plain reachability alone and store no credentials."""
+    import routers.sites as sites_router
+    from models.legacy import WordPressSiteCreate
+
+    class _Resp:
+        status_code = 200
+
+    class _Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **k): return _Resp()
+
+    async def go():
+        created = None
+        try:
+            with patch.object(sites_router.httpx, "AsyncClient", lambda *a, **k: _Client()):
+                created = await sites_router.create_site(
+                    WordPressSiteCreate(name="NextSite", url="https://next.example", platform="nextjs"),
+                    current_user={"id": "test-user"},
+                )
+            assert created.platform == "nextjs"
+            assert created.status == "connected"  # reachability only, no WP call
+            doc = await db.sites.find_one({"id": created.id})
+            assert not doc.get("app_password")
+            assert not doc.get("jwt_token")
+        finally:
+            if created:
+                await db.sites.delete_many({"id": created.id})
+                await db.activity_logs.delete_many({"site_id": created.id})
+
+    _run(go())
+
+
+def test_wordpress_only_features_refuse_a_non_wordpress_site_with_a_clear_message():
+    """get_wp_credentials is the chokepoint every WP-backed feature goes
+    through — it must explain itself rather than let callers fire a doomed
+    request and surface a bare 502."""
+    from providers.wordpress import get_wp_credentials
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await db.sites.insert_one({
+                "id": site_id, "name": "NextSite", "url": "https://next.example",
+                "platform": "nextjs", "user_id": "global",
+            })
+            with pytest.raises(HTTPException) as exc:
+                await get_wp_credentials(site_id)
+            assert exc.value.status_code == 400
+            assert "not WordPress" in exc.value.detail
+        finally:
+            await db.sites.delete_many({"id": site_id})
+
+    _run(go())
+
+
+def test_wordpress_sites_are_unaffected_by_the_platform_guard():
+    """Regression: sites with no explicit platform (every pre-existing site)
+    must keep working exactly as before."""
+    from providers.wordpress import get_wp_credentials
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await db.sites.insert_one({
+                "id": site_id, "name": "WP Site", "url": "https://wp.example",
+                "user_id": "global",  # no `platform` key at all — legacy doc
+            })
+            site = await get_wp_credentials(site_id)
+            assert site["url"] == "https://wp.example"
+        finally:
+            await db.sites.delete_many({"id": site_id})
+
+    _run(go())

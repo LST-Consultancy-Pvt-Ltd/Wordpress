@@ -358,6 +358,7 @@ import routers.company_profile  # noqa: E402,F401
 import routers.outreach_gate  # noqa: E402,F401
 import routers.platform_intelligence  # noqa: E402,F401
 import routers.directories  # noqa: E402,F401
+import routers.nextjs_content  # noqa: E402,F401
 
 # Include the router in the main app
 app.include_router(api_router)

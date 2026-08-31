@@ -194,6 +194,8 @@ async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depen
         site_to_save["app_password"] = encrypt_field(site_to_save["app_password"])
     if site_to_save.get("jwt_token"):
         site_to_save["jwt_token"] = encrypt_field(site_to_save["jwt_token"])
+    if site_to_save.get("bridge_token"):
+        site_to_save["bridge_token"] = encrypt_field(site_to_save["bridge_token"])
     await db.sites.insert_one(site_to_save)
     await log_activity(site.id, "site_created",
                        f"Added {'WordPress' if site.platform == 'wordpress' else site.platform} site: {site.name}",
@@ -202,6 +204,7 @@ async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depen
     response_data = site.model_dump()
     response_data.pop("app_password", None)
     response_data.pop("jwt_token", None)
+    response_data.pop("bridge_token", None)
     return WordPressSiteResponse(**response_data)
 
 @api_router.get("/sites/{site_id}", response_model=WordPressSiteResponse)

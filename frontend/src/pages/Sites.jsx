@@ -74,7 +74,7 @@ export default function Sites() {
   const [scraping, setScraping] = useState(false);
   const [savingOnboarding, setSavingOnboarding] = useState(false);
   const [suggestingTopics, setSuggestingTopics] = useState(false);
-  const [formData, setFormData] = useState({ name: "", url: "", platform: "wordpress", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
+  const [formData, setFormData] = useState({ name: "", url: "", platform: "wordpress", bridge_url: "", bridge_token: "", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
   const [metaData, setMetaData] = useState({ description: "", target_audience: "" });
   const [topics, setTopics] = useState(["", "", "", ""]);
   const [topicInput, setTopicInput] = useState("");
@@ -83,7 +83,7 @@ export default function Sites() {
   const resetWizard = () => {
     setWizardStep(1);
     setCreatedSiteId(null);
-    setFormData({ name: "", url: "", platform: "wordpress", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
+    setFormData({ name: "", url: "", platform: "wordpress", bridge_url: "", bridge_token: "", username: "", app_password: "", auth_type: "app_password", jwt_token: "", wp_password: "" });
     setMetaData({ description: "", target_audience: "" });
     setTopics(["", "", "", ""]);
     setTopicInput("");
@@ -430,6 +430,32 @@ export default function Sites() {
                         </p>
                       )}
                     </div>
+
+                    {/* Optional publishing bridge, for non-WordPress sites */}
+                    {formData.platform !== "wordpress" && (
+                      <div className="space-y-3 rounded-lg border border-dashed p-3">
+                        <div>
+                          <Label className="text-sm">Publishing bridge <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Only needed if you want to publish blog posts from here into the site. Install the
+                            SEO Bridge endpoint in your app first (see nextjs-bridge/README.md), then paste its
+                            URL and token. You can add these later.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="bridge_url">Bridge URL</Label>
+                          <Input id="bridge_url" placeholder="https://your-site.com/api/seo-bridge"
+                            value={formData.bridge_url}
+                            onChange={e => setFormData({ ...formData, bridge_url: e.target.value })} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="bridge_token">Bridge Token</Label>
+                          <Input id="bridge_token" type="password" placeholder="SEO_BRIDGE_TOKEN value"
+                            value={formData.bridge_token}
+                            onChange={e => setFormData({ ...formData, bridge_token: e.target.value })} />
+                        </div>
+                      </div>
+                    )}
 
                     {/* Auth toggle + credentials — WordPress only */}
                     {formData.platform === "wordpress" && (

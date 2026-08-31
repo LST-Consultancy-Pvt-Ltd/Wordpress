@@ -1386,6 +1386,30 @@
     ]
   ],
   [
+    "/api/nextjs/{site_id}/health",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/posts",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/posts",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/posts/{slug}",
+    [
+      "DELETE"
+    ]
+  ],
+  [
     "/api/notifications",
     [
       "GET"

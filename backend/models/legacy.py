@@ -108,6 +108,11 @@ class WordPressSite(BaseModel):
     # directories, PageSpeed) all work, while WP-specific content management
     # is refused with a clear message instead of a confusing gateway error.
     platform: str = "wordpress"       # "wordpress" | "nextjs"
+    # Non-WordPress publishing target: the SEO Bridge endpoint inside the
+    # site's own app (see nextjs-bridge/ in this repo). Only meaningful when
+    # platform != "wordpress"; the token is encrypted at rest like the WP ones.
+    bridge_url: str = ""
+    bridge_token: str = ""
     username: str = ""
     app_password: str = ""
     auth_type: str = "app_password"   # "app_password" | "jwt"
@@ -121,6 +126,8 @@ class WordPressSiteCreate(BaseModel):
     name: str
     url: str
     platform: str = "wordpress"       # "wordpress" | "nextjs"
+    bridge_url: str = ""
+    bridge_token: str = ""
     username: str = ""
     app_password: str = ""
     auth_type: str = "app_password"   # "app_password" | "jwt"
@@ -133,6 +140,7 @@ class WordPressSiteResponse(BaseModel):
     name: str
     url: str
     platform: str = "wordpress"
+    bridge_url: str = ""
     username: str = ""
     app_password: str = "••••••••"
     auth_type: str = "app_password"

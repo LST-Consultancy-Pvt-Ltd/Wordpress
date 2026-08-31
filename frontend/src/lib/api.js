@@ -413,6 +413,12 @@ export const generateDisavow            = (siteId)                  => api.post(
 export const getDisavow                 = (siteId)                  => api.get(`/backlink-outreach/${siteId}/disavow`);
 export const exportBacklinkOutreachExcel = (siteId)                 => api.post(`/backlink-outreach/${siteId}/export-excel`, {}, { responseType: 'blob' });
 
+// Next.js sites: content publishing via the SEO Bridge endpoint in their app
+export const nextjsBridgeHealth      = (siteId)                  => api.get(`/nextjs/${siteId}/health`);
+export const nextjsListPosts         = (siteId)                  => api.get(`/nextjs/${siteId}/posts`);
+export const nextjsPublishPost       = (siteId, data)            => api.post(`/nextjs/${siteId}/posts`, data);
+export const nextjsDeletePost        = (siteId, slug)            => api.delete(`/nextjs/${siteId}/posts/${slug}`);
+
 // Direct-posting directories (sign in & get listed — no outreach email)
 export const getDirectories             = (siteId)                  => api.get(`/directories/${siteId}`);
 export const prepareDirectoryListing    = (siteId, dirId)           => api.post(`/directories/${siteId}/prepare/${dirId}`);
