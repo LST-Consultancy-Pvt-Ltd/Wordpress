@@ -3,6 +3,7 @@ Broken Link Detection (scan all posts/pages for dead outbound links via HEAD
 requests, list/dismiss results).
 """
 import logging
+import re
 from typing import Optional
 
 import httpx
@@ -19,6 +20,10 @@ from models.legacy import BrokenLink, BulkPublishRequest
 from providers.wordpress import get_wp_credentials, wp_api_request, wp_xmlrpc_edit
 
 logger = logging.getLogger(__name__)
+
+# Markdown link forms, for MDX-backed sites synced through the Next.js bridge.
+_MD_LINK_RE = re.compile(r"\[[^\]]*\]\(\s*(https?://[^)\s]+)")
+_MD_AUTOLINK_RE = re.compile(r"<(https?://[^>\s]+)>")
 
 # ========================
 # Routes: Bulk Publish/Unpublish
@@ -98,11 +103,17 @@ async def _scan_broken_links(task_id: str, site_id: str):
         # Collect unique links per content item
         link_map: list[dict] = []  # {post_id, post_title, url}
         for item in all_content:
-            html = item.get("content", "") or ""
-            soup = BeautifulSoup(html, "html.parser")
+            body = item.get("content", "") or ""
             seen = set()
-            for tag in soup.find_all("a", href=True):
-                href = tag["href"].strip()
+
+            hrefs = [tag["href"].strip() for tag in BeautifulSoup(body, "html.parser").find_all("a", href=True)]
+            # Markdown/MDX content (Next.js sites) writes links as [text](url)
+            # and <url>, which the HTML parser above cannot see — without this
+            # a scan of an MDX site would report zero links and look clean.
+            hrefs += [m.group(1).strip() for m in _MD_LINK_RE.finditer(body)]
+            hrefs += [m.group(1).strip() for m in _MD_AUTOLINK_RE.finditer(body)]
+
+            for href in hrefs:
                 # Only check absolute HTTP(S) URLs
                 if href.startswith("http://") or href.startswith("https://"):
                     if href not in seen:

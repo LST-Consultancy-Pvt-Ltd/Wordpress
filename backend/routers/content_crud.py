@@ -14,6 +14,9 @@ from core.db import db
 from core.router import api_router
 from core.security import require_editor
 from models.legacy import PageCreate, PostCreate
+from providers.content import (
+    is_wordpress, nextjs_create_post, nextjs_delete_post, nextjs_update_post,
+)
 from providers.wordpress import (
     get_wp_credentials, wp_api_request, wp_error_to_http, wp_xmlrpc_delete,
     wp_xmlrpc_edit, wp_xmlrpc_write,
@@ -162,6 +165,14 @@ async def get_posts(site_id: str):
 
 @api_router.post("/posts")
 async def create_post(post_data: PostCreate, _: dict = Depends(require_editor)):
+    # Non-WordPress sites publish through their SEO Bridge instead; the
+    # WordPress path below (with its XML-RPC fallback) is left untouched.
+    if not await is_wordpress(post_data.site_id):
+        result = await nextjs_create_post(
+            post_data.site_id, post_data.title, post_data.content, post_data.status,
+        )
+        await log_activity(post_data.site_id, "post_created", f"Created post: {post_data.title}")
+        return result
     site = await get_wp_credentials(post_data.site_id)
     wp_data = {
         "title": post_data.title,
@@ -232,6 +243,10 @@ async def create_post(post_data: PostCreate, _: dict = Depends(require_editor)):
 
 @api_router.put("/posts/{site_id}/{wp_id}")
 async def update_post(site_id: str, wp_id: int, post_data: dict, _: dict = Depends(require_editor)):
+    if not await is_wordpress(site_id):
+        result = await nextjs_update_post(site_id, wp_id, post_data)
+        await log_activity(site_id, "post_updated", f"Updated post: {result.get('slug', wp_id)}")
+        return result
     site = await get_wp_credentials(site_id)
     try:
         response = await wp_api_request(site, "PUT", f"posts/{wp_id}", post_data)
@@ -266,6 +281,10 @@ async def update_post(site_id: str, wp_id: int, post_data: dict, _: dict = Depen
 
 @api_router.delete("/posts/{site_id}/{wp_id}")
 async def delete_post(site_id: str, wp_id: int, _: dict = Depends(require_editor)):
+    if not await is_wordpress(site_id):
+        result = await nextjs_delete_post(site_id, wp_id)
+        await log_activity(site_id, "post_deleted", f"Deleted post: {result.get('slug', wp_id)}")
+        return result
     site = await get_wp_credentials(site_id)
     try:
         response = await wp_api_request(site, "DELETE", f"posts/{wp_id}?force=true")

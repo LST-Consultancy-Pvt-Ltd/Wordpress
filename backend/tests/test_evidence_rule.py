@@ -1218,3 +1218,182 @@ def test_wordpress_sites_are_unaffected_by_the_platform_guard():
             await db.sites.delete_many({"id": site_id})
 
     _run(go())
+
+
+# --- Next.js content sync (fills the same db.posts cache the WP sync fills,
+# so the content analysers work against a Next.js site unchanged) ---
+
+def test_nextjs_sync_pulls_bridge_posts_into_the_shared_content_cache():
+    import routers.sites as sites_router
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await db.sites.insert_one({
+                "id": site_id, "name": "NextSite", "url": "https://next.example",
+                "platform": "nextjs", "user_id": "global",
+                "bridge_url": "https://next.example/api/seo-bridge", "bridge_token": "",
+            })
+
+            listed = [{"slug": "hello-world", "title": "Hello World", "date": "2026-08-01", "draft": False}]
+            full = {
+                "slug": "hello-world",
+                "frontmatter": {"title": "Hello World", "date": "2026-08-01"},
+                "raw": '---\ntitle: "Hello World"\ndate: "2026-08-01"\n---\nBody text with [a link](https://example.com/x).',
+            }
+
+            with patch.object(sites_router, "get_bridge_credentials",
+                              new=AsyncMock(return_value={"url": "https://next.example",
+                                                          "bridge_url": "https://next.example/api/seo-bridge",
+                                                          "bridge_token": "t"})), \
+                 patch.object(sites_router, "bridge_health",
+                              new=AsyncMock(return_value={"revalidatePaths": ["/blog"]})), \
+                 patch.object(sites_router, "bridge_list_posts", new=AsyncMock(return_value=listed)), \
+                 patch.object(sites_router, "bridge_request", new=AsyncMock(return_value=full)):
+                result = await sites_router.sync_site(site_id)
+
+            assert result["posts"] == 1
+            assert result["pages"] == 0  # Next.js pages are components, not records
+
+            doc = await db.posts.find_one({"site_id": site_id, "slug": "hello-world"}, {"_id": 0})
+            assert doc["title"] == "Hello World"
+            assert doc["status"] == "publish"
+            # Frontmatter stripped so analysers see prose, and the public URL is
+            # built from the blog base the bridge actually reported.
+            assert doc["content"].startswith("Body text")
+            assert "---" not in doc["content"]
+            assert doc["link"] == "https://next.example/blog/hello-world"
+            assert isinstance(doc["wp_id"], int) and doc["wp_id"] > 0
+        finally:
+            await db.sites.delete_many({"id": site_id})
+            await db.posts.delete_many({"site_id": site_id})
+            await db.activity_logs.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_broken_link_scan_sees_markdown_links_not_just_html():
+    """MDX content writes [text](url); without markdown extraction an MDX site
+    would scan clean while actually carrying dead links."""
+    import routers.bulk_links as bl
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
+                                       "platform": "nextjs", "user_id": "global"})
+            await db.posts.insert_one({
+                "site_id": site_id, "wp_id": 1, "title": "Post",
+                "content": 'Read [the guide](https://md.example/guide) or <https://auto.example/x> '
+                           'or <a href="https://html.example/y">this</a>.',
+            })
+
+            captured = {}
+
+            async def fake_push(task_id, kind, payload):
+                if kind == "status":
+                    captured["status"] = payload
+
+            with patch.object(bl, "push_event", new=AsyncMock(side_effect=fake_push)), \
+                 patch.object(bl, "finish_task", new=AsyncMock()), \
+                 patch.object(bl, "log_activity", new=AsyncMock()), \
+                 patch.object(bl.httpx, "AsyncClient", lambda *a, **k: _FakeHTTP()):
+                await bl._scan_broken_links("task-1", site_id)
+
+            found = {d["url"] for d in await db.broken_links.find({"site_id": site_id}, {"_id": 0}).to_list(10)}
+            assert found == {
+                "https://md.example/guide",     # markdown link
+                "https://auto.example/x",       # autolink
+                "https://html.example/y",       # plain HTML anchor
+            }
+        finally:
+            await db.sites.delete_many({"id": site_id})
+            await db.posts.delete_many({"site_id": site_id})
+            await db.broken_links.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+class _FakeResp:
+    status_code = 200
+
+
+class _FakeHTTP:
+    async def __aenter__(self): return self
+    async def __aexit__(self, *a): return False
+    async def head(self, *a, **k): return _FakeResp()
+    async def get(self, *a, **k): return _FakeResp()
+
+
+# --- Platform-neutral content writes: the same endpoints serve WordPress and
+# Next.js, keyed by the same numeric wp_id ---
+
+def test_nextjs_post_create_update_delete_through_the_shared_endpoints():
+    import routers.content_crud as crud
+    import providers.content as content
+    from models.legacy import PostCreate
+
+    site_id = _new_site_id()
+    site_stub = {"url": "https://next.example", "bridge_url": "https://next.example/api/seo-bridge",
+                 "bridge_token": "t"}
+
+    async def go():
+        try:
+            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
+                                       "platform": "nextjs", "user_id": "global",
+                                       "bridge_url": site_stub["bridge_url"]})
+
+            published = {}
+
+            async def fake_publish(site, post):
+                published.update(post)
+                return {"slug": post.get("slug") or "my-first-post"}
+
+            with patch.object(content, "get_bridge_credentials", new=AsyncMock(return_value=site_stub)), \
+                 patch.object(content, "bridge_health", new=AsyncMock(return_value={"revalidatePaths": ["/blog"]})), \
+                 patch.object(content, "bridge_publish_post", new=AsyncMock(side_effect=fake_publish)), \
+                 patch.object(content, "bridge_request", new=AsyncMock(return_value={
+                     "frontmatter": {"title": "My First Post", "date": "2026-08-01"},
+                     "raw": '---\ntitle: "My First Post"\n---\nOriginal body.'})), \
+                 patch.object(content, "bridge_delete_post", new=AsyncMock(return_value={"deleted": "my-first-post"})):
+
+                created = await crud.create_post(
+                    PostCreate(site_id=site_id, title="My First Post", content="Hello.", status="publish"),
+                    _={"id": "u"},
+                )
+                assert created["slug"] == "my-first-post"
+                wp_id = created["wp_id"]
+                assert wp_id == content.stable_post_id("my-first-post")
+
+                # The post is cached like a WordPress one, so the read endpoint
+                # and every db.posts-based analyser see it.
+                doc = await db.posts.find_one({"site_id": site_id, "wp_id": wp_id}, {"_id": 0})
+                assert doc["status"] == "publish"
+                assert doc["link"] == "https://next.example/blog/my-first-post"
+
+                # A title-only update must not wipe the body — the bridge PUT
+                # replaces the file, so current content is merged in first.
+                await crud.update_post(site_id, wp_id, {"title": "Renamed"}, _={"id": "u"})
+                assert published["title"] == "Renamed"
+                assert published["content"] == "Original body."
+
+                await crud.delete_post(site_id, wp_id, _={"id": "u"})
+                assert await db.posts.find_one({"site_id": site_id, "wp_id": wp_id}) is None
+        finally:
+            await db.sites.delete_many({"id": site_id})
+            await db.posts.delete_many({"site_id": site_id})
+            await db.activity_logs.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_sync_and_writes_agree_on_the_slug_to_id_mapping():
+    """Regression guard: sync and the write paths must derive wp_id from a slug
+    identically, or a synced post could never be updated or deleted."""
+    import routers.sites as sites_router
+    import providers.content as content
+    assert sites_router.stable_post_id is content.stable_post_id
+    assert content.stable_post_id("hello-world") == content.stable_post_id("hello-world")
+    assert content.stable_post_id("hello-world") != content.stable_post_id("other-post")

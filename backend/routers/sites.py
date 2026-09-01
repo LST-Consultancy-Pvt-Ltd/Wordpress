@@ -17,6 +17,10 @@ from core.db import db
 from core.router import api_router
 from core.security import get_current_user, require_admin, require_editor
 from models.legacy import WordPressSite, WordPressSiteCreate, WordPressSiteResponse
+from providers.content import stable_post_id, strip_frontmatter
+from providers.nextjs import (
+    bridge_health, bridge_list_posts, bridge_request, get_bridge_credentials,
+)
 from providers.wordpress import _wp_auth_headers, get_wp_credentials, wp_api_request
 
 logger = logging.getLogger(__name__)
@@ -360,7 +364,74 @@ async def test_site_write(site_id: str):
         return {"status": "error", "message": str(exc)}
 
 @api_router.post("/sites/{site_id}/sync")
+async def _sync_bridge_site(site_id: str):
+    """Pull posts from a Next.js site's SEO Bridge into the same db.posts
+    cache the WordPress sync fills, so the content analysers (broken links,
+    duplicate content, internal linking, reports) work against it unchanged.
+
+    Only posts are synced: `pages` in a Next.js app are React components in
+    the repo, not CMS records, so there is nothing to pull or write back."""
+    site = await get_bridge_credentials(site_id)
+    try:
+        health = await bridge_health(site)
+    except HTTPException:
+        health = {}
+    # The bridge reports which paths it revalidates; the first is the blog
+    # index, which gives us a real base for post URLs instead of a guess.
+    blog_base = (health.get("revalidatePaths") or ["/blog"])[0].rstrip("/")
+    base_url = (site.get("url") or "").rstrip("/")
+
+    posts = await bridge_list_posts(site)
+    synced, failed = 0, 0
+    for entry in posts:
+        slug = entry.get("slug")
+        if not slug:
+            continue
+        try:
+            full = await bridge_request(site, "GET", f"posts/{slug}")
+        except HTTPException as e:
+            logger.warning(f"Could not fetch post '{slug}' from the bridge: {e.detail}")
+            failed += 1
+            continue
+        raw = full.get("raw", "") or ""
+        frontmatter = full.get("frontmatter", {}) or {}
+        # Store the body without frontmatter so analysers see prose, and so an
+        # edit written back through the bridge round-trips cleanly.
+        body = strip_frontmatter(raw)
+        await db.posts.update_one(
+            {"site_id": site_id, "slug": slug},
+            {"$set": {
+                "site_id": site_id,
+                "wp_id": stable_post_id(slug),
+                "slug": slug,
+                "title": entry.get("title") or frontmatter.get("title") or slug,
+                "content": body,
+                "content_format": "mdx",
+                "status": "draft" if entry.get("draft") else "publish",
+                "link": f"{base_url}{blog_base}/{slug}",
+                "modified": frontmatter.get("date") or entry.get("date") or "",
+                "synced_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        synced += 1
+
+    await db.sites.update_one(
+        {"id": site_id},
+        {"$set": {"last_sync": datetime.now(timezone.utc).isoformat(), "status": "connected"}},
+    )
+    await log_activity(site_id, "site_synced", f"Synced {synced} post(s) from the Next.js bridge")
+    return {"synced": True, "posts": synced, "pages": 0, "failed": failed,
+            "note": "Next.js pages are components in your repo, not CMS records, so only posts are synced."}
+
+
 async def sync_site(site_id: str):
+    site_doc = await db.sites.find_one({"id": site_id}, {"_id": 0})
+    if not site_doc:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if site_doc.get("platform", "wordpress") != "wordpress":
+        return await _sync_bridge_site(site_id)
+
     site = await get_wp_credentials(site_id)
 
     try:
