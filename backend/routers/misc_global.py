@@ -21,6 +21,7 @@ from core.ai import get_ai_response
 from core.config import SECRET_KEY
 from core.db import db
 from core.router import api_router
+from providers.content import get_site_any
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.wordpress import get_wp_credentials, wp_api_request
@@ -89,7 +90,9 @@ async def mark_all_notifications_read(site_id: str, current_user: dict = Depends
 @api_router.post("/uptime/{site_id}/deep-check")
 async def uptime_deep_check(site_id: str, current_user: dict = Depends(require_editor)):
     """Comprehensive uptime check: HTTP status, DNS lookup, TTFB, SSL, CWV, CDN detection."""
-    site = await get_wp_credentials(site_id, current_user["id"])
+    # Pure HTTP/DNS/SSL probe of the public URL — works on any platform,
+    # so it must not go through the WordPress-only credential guard.
+    site = await get_site_any(site_id, current_user["id"])
     site_url = site["url"].rstrip("/")
     import time as _time
     from urllib.parse import urlparse

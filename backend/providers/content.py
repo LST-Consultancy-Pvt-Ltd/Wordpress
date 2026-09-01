@@ -43,6 +43,23 @@ def strip_frontmatter(raw: str) -> str:
     return _FRONTMATTER_RE.sub("", raw or "")
 
 
+async def get_site_any(site_id: str, user_id: str | None = None) -> dict:
+    """The site document regardless of platform.
+
+    For features that only need the site's public URL and then speak plain
+    HTTP to it — sitemap.xml, robots.txt, uptime probes, PageSpeed. Those work
+    on any platform, so they must NOT go through get_wp_credentials(), whose
+    WordPress-only guard would refuse them for a Next.js site even though
+    nothing WordPress-specific is involved."""
+    query = {"id": site_id}
+    if user_id and user_id != "global":
+        query["user_id"] = user_id
+    site = await db.sites.find_one(query, {"_id": 0})
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return site
+
+
 async def get_platform(site_id: str) -> str:
     site = await db.sites.find_one({"id": site_id}, {"_id": 0, "platform": 1})
     if not site:

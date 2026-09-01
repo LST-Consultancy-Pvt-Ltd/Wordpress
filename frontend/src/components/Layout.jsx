@@ -111,6 +111,7 @@ const navGroups = [
     label: "SEO & Analytics",
     items: [
       { path: "/seo", icon: Search, label: "SEO" },
+      { path: "/onpage-seo", icon: Gauge, label: "On-Page SEO" },
       { path: "/keyword-tracking", icon: Target, label: "Keyword Tracking" },
       { path: "/keyword-clusters", icon: Hash, label: "Keyword Clusters" },
       { path: "/site-speed", icon: Gauge, label: "Site Speed" },

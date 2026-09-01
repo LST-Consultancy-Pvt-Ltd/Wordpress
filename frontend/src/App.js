@@ -7,6 +7,7 @@ import AICommand from "./pages/AICommand";
 import Pages from "./pages/Pages";
 import Posts from "./pages/Posts";
 import SEO from "./pages/SEO";
+import OnPageSEO from "./pages/OnPageSEO";
 import ContentRefresh from "./pages/ContentRefresh";
 import Settings from "./pages/Settings";
 import Activity from "./pages/Activity";
@@ -84,6 +85,7 @@ function App() {
             <Route path="pages" element={<Pages />} />
             <Route path="posts" element={<Posts />} />
             <Route path="seo" element={<SEO />} />
+            <Route path="onpage-seo" element={<OnPageSEO />} />
             <Route path="content-refresh" element={<ContentRefresh />} />
             <Route path="broken-links" element={<BrokenLinks />} />
             <Route path="duplicate-content" element={<DuplicateContent />} />

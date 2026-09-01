@@ -413,6 +413,12 @@ export const generateDisavow            = (siteId)                  => api.post(
 export const getDisavow                 = (siteId)                  => api.get(`/backlink-outreach/${siteId}/disavow`);
 export const exportBacklinkOutreachExcel = (siteId)                 => api.post(`/backlink-outreach/${siteId}/export-excel`, {}, { responseType: 'blob' });
 
+// On-page SEO audit (platform-neutral — reads rendered HTML of live URLs)
+export const scanOnPageSEO           = (siteId, data = {})       => api.post(`/onpage/${siteId}/scan`, data);
+export const getOnPageAudit          = (siteId)                  => api.get(`/onpage/${siteId}`);
+export const getOnPageHistory        = (siteId)                  => api.get(`/onpage/${siteId}/history`);
+export const auditSinglePage         = (siteId, url)             => api.post(`/onpage/${siteId}/page`, { urls: [url] });
+
 // Next.js sites: content publishing via the SEO Bridge endpoint in their app
 export const nextjsBridgeHealth      = (siteId)                  => api.get(`/nextjs/${siteId}/health`);
 export const nextjsListPosts         = (siteId)                  => api.get(`/nextjs/${siteId}/posts`);

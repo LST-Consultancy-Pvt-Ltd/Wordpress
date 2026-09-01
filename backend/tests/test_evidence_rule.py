@@ -1397,3 +1397,107 @@ def test_sync_and_writes_agree_on_the_slug_to_id_mapping():
     assert sites_router.stable_post_id is content.stable_post_id
     assert content.stable_post_id("hello-world") == content.stable_post_id("hello-world")
     assert content.stable_post_id("hello-world") != content.stable_post_id("other-post")
+
+
+# --- Platform-neutral on-page SEO: signals come from rendered HTML, scores are
+# deterministic (an AI-invented 0-100 would be unreproducible and worthless) ---
+
+_GOOD_PAGE = """<html><head>
+<title>NetSuite Implementation Partner for Mid-Market Manufacturers</title>
+<meta name="description" content="We implement NetSuite ERP for mid-market manufacturers, covering discovery, data migration, integration and training, with fixed-fee delivery and post-launch support included.">
+<link rel="canonical" href="https://ex.com/netsuite">
+<meta property="og:title" content="NetSuite Implementation"><meta property="og:description" content="ERP delivery">
+<meta property="og:image" content="https://ex.com/og.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Service"}</script>
+</head><body><h1>NetSuite Implementation</h1><h2>What we do</h2>
+<p>%s</p><img src="a.png" alt="chart"></body></html>""" % (" ".join(["word"] * 620))
+
+_BAD_PAGE = """<html><head><title>Home</title>
+<meta name="robots" content="noindex">
+</head><body><h1>A</h1><h1>B</h1><p>Short.</p><img src="a.png"></body></html>"""
+
+
+def test_onpage_scoring_is_deterministic_and_reads_rendered_html():
+    from providers.onpage import extract_signals, score_page
+
+    good = score_page(extract_signals(_GOOD_PAGE, "https://ex.com/netsuite"))
+    bad = score_page(extract_signals(_BAD_PAGE, "https://ex.com/"))
+
+    assert good["score"] > 90
+    assert bad["score"] < 40
+    # Same input, same score — reproducible, unlike an AI-assigned number.
+    assert score_page(extract_signals(_GOOD_PAGE, "https://ex.com/netsuite"))["score"] == good["score"]
+
+    sig = extract_signals(_GOOD_PAGE, "https://ex.com/netsuite")
+    assert sig["h1_count"] == 1
+    assert sig["schema_types"] == ["Service"]
+    assert sig["word_count"] >= 600
+    assert sig["images_missing_alt"] == 0
+
+    factors = {i["factor"] for i in bad["issues"]}
+    assert "indexable" in factors          # noindex is caught
+    assert "h1" in factors                 # two H1s
+    assert "description" in factors        # missing entirely
+    assert bad["factor_scores"]["indexable"] == 0
+
+
+def test_onpage_audit_reports_unreachable_pages_rather_than_scoring_them_zero():
+    """A network failure must never be presented as bad SEO."""
+    import providers.onpage as onpage
+
+    async def go():
+        with patch.object(onpage, "fetch_page", new=AsyncMock(return_value=(None, 403, "HTTP 403"))):
+            result = await onpage.audit_url("https://blocked.example/")
+        assert result["ok"] is False
+        assert result["score"] is None      # not 0
+        assert result["error"] == "HTTP 403"
+
+    _run(go())
+
+
+def test_onpage_scan_falls_back_to_synced_posts_when_there_is_no_sitemap():
+    import routers.onpage_seo as onpage_router
+
+    site_id = _new_site_id()
+
+    async def go():
+        try:
+            await db.posts.insert_many([
+                {"site_id": site_id, "wp_id": 1, "link": "https://next.example/blog/a", "title": "A"},
+                {"site_id": site_id, "wp_id": 2, "link": "https://next.example/blog/b", "title": "B"},
+            ])
+            site = {"id": site_id, "url": "https://next.example"}
+
+            class _Resp:
+                status_code = 404
+                text = ""
+
+            class _Client:
+                async def __aenter__(self): return self
+                async def __aexit__(self, *a): return False
+                async def get(self, *a, **k): return _Resp()
+
+            with patch.object(onpage_router.httpx, "AsyncClient", lambda *a, **k: _Client()):
+                urls, source = await onpage_router._discover_urls(site, 50)
+
+            assert source == "synced posts"
+            assert urls == ["https://next.example/blog/a", "https://next.example/blog/b"]
+        finally:
+            await db.posts.delete_many({"site_id": site_id})
+
+    _run(go())
+
+
+def test_url_only_features_work_on_non_wordpress_sites():
+    """Regression: the WordPress platform guard must not block features that
+    only read the site URL and then speak plain HTTP (sitemap, robots, uptime)."""
+    import routers.seo_technical_utils as tech
+    import routers.misc_global as misc
+    import routers.monitoring_triggers as mon
+    import inspect
+
+    for mod, fn in ((tech, "get_sitemap"), (tech, "get_robots_txt"), (tech, "regenerate_sitemap"),
+                    (misc, "uptime_deep_check"), (mon, "multi_region_uptime_check")):
+        src = inspect.getsource(getattr(mod, fn))
+        assert "get_wp_credentials" not in src, f"{fn} still goes through the WordPress guard"
+        assert "get_site_any" in src, f"{fn} should use the platform-neutral accessor"

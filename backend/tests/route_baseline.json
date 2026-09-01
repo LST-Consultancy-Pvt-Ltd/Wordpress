@@ -1464,6 +1464,30 @@
     ]
   ],
   [
+    "/api/onpage/{site_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/history",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/page",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/scan",
+    [
+      "POST"
+    ]
+  ],
+  [
     "/api/outreach/{collection}/{item_id}/approve",
     [
       "POST"

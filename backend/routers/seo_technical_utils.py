@@ -22,7 +22,8 @@ from core.seo_impact import estimate_seo_impact
 from providers.wordpress import get_wp_credentials, wp_api_request
 from core.ai import get_ai_response
 from core.crypto import get_decrypted_settings
-from core.router import api_router  # the shared APIRouter instance — every @api_router.get/post/... decorator in the copied code registers onto this
+from core.router import api_router
+from providers.content import get_site_any
 
 
 # ========================
@@ -155,7 +156,7 @@ async def apply_schema_markup(site_id: str, schema_id: str, _: dict = Depends(re
 
 @api_router.get("/sitemap/{site_id}")
 async def get_sitemap(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
+    site = await get_site_any(site_id)
     base_url = site.get("url", "").rstrip("/")
     candidates = [
         f"{base_url}/wp-sitemap.xml",
@@ -192,7 +193,7 @@ async def get_sitemap(site_id: str, _: dict = Depends(require_editor)):
 
 @api_router.post("/sitemap/{site_id}/regenerate")
 async def regenerate_sitemap(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
+    site = await get_site_any(site_id)
     base_url = site.get("url", "").rstrip("/")
     results = []
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
@@ -211,7 +212,7 @@ async def regenerate_sitemap(site_id: str, _: dict = Depends(require_editor)):
 
 @api_router.get("/robots/{site_id}")
 async def get_robots_txt(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
+    site = await get_site_any(site_id)
     base_url = site.get("url", "").rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
