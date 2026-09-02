@@ -61,8 +61,12 @@ async def get_site_any(site_id: str, user_id: str | None = None) -> dict:
 
 
 async def get_platform(site_id: str) -> str:
-    site = await db.sites.find_one({"id": site_id}, {"_id": 0, "platform": 1})
-    if not site:
+    # Project `id` as well and test for None explicitly: a legacy site document
+    # has no `platform` field, so projecting only that field returns an EMPTY
+    # dict for a site that does exist — and a truthiness check would then
+    # report "Site not found" for every pre-existing WordPress site.
+    site = await db.sites.find_one({"id": site_id}, {"_id": 0, "id": 1, "platform": 1})
+    if site is None:
         raise HTTPException(status_code=404, detail="Site not found")
     return site.get("platform", "wordpress")
 

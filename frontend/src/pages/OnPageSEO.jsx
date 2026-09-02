@@ -1,17 +1,20 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
-  Gauge, Loader2, RefreshCw, ScanLine, AlertTriangle, ExternalLink, ChevronDown, Search,
+  Gauge, Loader2, RefreshCw, ScanLine, AlertTriangle, ExternalLink, ChevronDown, Search, Save, Undo2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "../components/ui/table";
-import { getSites, scanOnPageSEO, getOnPageAudit, subscribeToTask } from "../lib/api";
+import {
+  getSites, scanOnPageSEO, getOnPageAudit, listOnPagePages, setPageMeta, clearPageMeta, subscribeToTask,
+} from "../lib/api";
 import { toast } from "sonner";
 
 const scoreTone = (s) =>
@@ -25,6 +28,15 @@ const sevTone = {
   medium: "bg-yellow-500/10 text-yellow-500",
   low: "bg-muted text-muted-foreground",
 };
+
+function routePathOf(url) {
+  try {
+    const path = new URL(url).pathname || "/";
+    return path.length > 1 ? path.replace(/\/+$/, "") : "/";
+  } catch {
+    return url || "/";
+  }
+}
 
 function ScoreRing({ score }) {
   const pct = score == null ? 0 : score;
@@ -54,6 +66,10 @@ export default function OnPageSEO() {
   const [maxPages, setMaxPages] = useState("50");
   const [expanded, setExpanded] = useState({});
   const [query, setQuery] = useState("");
+  const [pagesData, setPagesData] = useState(null);   // { pages, meta_editing_supported, ... }
+  const [drafts, setDrafts] = useState({});         // path -> { title, description }
+  const [savingPath, setSavingPath] = useState("");
+  const [saveError, setSaveError] = useState({});
 
   useEffect(() => {
     getSites().then(r => { setSites(r.data); if (r.data.length) setSelectedSite(r.data[0].id); }).catch(() => {});
@@ -66,7 +82,68 @@ export default function OnPageSEO() {
     catch { setAudit(null); } finally { setLoading(false); }
   }, [selectedSite]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadPages = useCallback(async () => {
+    if (!selectedSite) return;
+    try { const r = await listOnPagePages(selectedSite); setPagesData(r.data); }
+    catch { setPagesData(null); }
+  }, [selectedSite]);
+
+  useEffect(() => { load(); loadPages(); }, [load, loadPages]);
+
+  const overrideFor = (path) => pagesData?.pages?.find(p => p.path === path)?.override || null;
+
+  const draftFor = (page) => {
+    const d = drafts[page.path];
+    if (d) return d;
+    const ov = overrideFor(page.path) || {};
+    return {
+      title: ov.title ?? page.live_title ?? page.signals?.title ?? "",
+      description: ov.description ?? page.live_description ?? page.signals?.description ?? "",
+    };
+  };
+
+  // Layouts commonly append a site name to every title (e.g. " | LST
+  // Consultancy"). The audit measures the RENDERED title, so the stored value
+  // has to be shorter by that overhead — without showing this, a "56 char"
+  // edit still fails the 50–60 check and looks broken.
+  const titleOverhead = (page) => {
+    const stored = overrideFor(page.path)?.title;
+    const rendered = page.live_title || page.signals?.title || "";
+    if (!stored || !rendered || rendered.length <= stored.length) return 0;
+    return rendered.startsWith(stored) ? rendered.length - stored.length : 0;
+  };
+
+  const handleSaveMeta = async (page) => {
+    const d = draftFor(page);
+    setSavingPath(page.path);
+    setSaveError(e => ({ ...e, [page.path]: null }));
+    try {
+      const r = await setPageMeta(selectedSite, { path: page.path, title: d.title, description: d.description });
+      setDrafts(p => { const n = { ...p }; delete n[page.path]; return n; });
+      await loadPages(); await load();
+      const rs = r.data?.rescored;
+      if (rs?.score != null) toast.success(`Saved — ${page.path} now scores ${rs.score}/100`);
+      else toast.success(`Saved meta for ${page.path}`);
+    } catch (e) {
+      const msg = e.response?.data?.detail || "Could not save";
+      // Inline as well as a toast: a save that looks fine but silently failed
+      // is the worst outcome, and a toast is easy to miss.
+      setSaveError(er => ({ ...er, [page.path]: msg }));
+      toast.error(msg);
+    } finally { setSavingPath(""); }
+  };
+
+  const handleClearMeta = async (page) => {
+    setSavingPath(page.path);
+    try {
+      await clearPageMeta(selectedSite, page.path);
+      setDrafts(p => { const n = { ...p }; delete n[page.path]; return n; });
+      await loadPages();
+      toast.success(`Override removed — your page's own metadata applies again`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not clear");
+    } finally { setSavingPath(""); }
+  };
 
   const handleScan = async () => {
     setScanning(true);
@@ -78,7 +155,7 @@ export default function OnPageSEO() {
           const m = evt.data?.progress?.message;
           if (m) setProgress(m);
           if (evt.data?.status === "completed") {
-            setScanning(false); setProgress(""); load();
+            setScanning(false); setProgress(""); load(); loadPages();
             toast.success(evt.data?.result?.message || "Audit complete");
           } else if (evt.data?.status === "failed") {
             setScanning(false); setProgress("");
@@ -93,8 +170,25 @@ export default function OnPageSEO() {
     }
   };
 
-  const pages = (audit?.pages || []).filter(p =>
+  // Both sources must yield the SAME row shape. Previously the fallback set
+  // path to the full URL, which left the meta inputs empty and made saves
+  // write the override under a mangled key, so edits silently did nothing.
+  const rows = (pagesData?.pages?.length ? pagesData.pages : (audit?.pages || []).map(p => ({
+    url: p.url,
+    path: routePathOf(p.url),
+    score: p.score,
+    audited: true,
+    ok: p.ok,
+    error: p.error,
+    signals: p.signals,
+    issues: p.issues || [],
+    issue_count: (p.issues || []).length,
+    live_title: p.signals?.title || "",
+    live_description: p.signals?.description || "",
+  })));
+  const pages = rows.filter(p =>
     !query.trim() || (p.url || "").toLowerCase().includes(query.trim().toLowerCase()));
+  const canEditMeta = pagesData?.meta_editing_supported;
 
   return (
     <motion.div className="page-container" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -151,6 +245,12 @@ export default function OnPageSEO() {
                           : <><ScanLine size={12} className="mr-1.5" />Run audit</>}
               </Button>
             </div>
+
+            {pagesData && !pagesData.meta_editing_supported && pagesData.meta_editing_note && (
+              <p className="text-xs text-muted-foreground border-l-2 border-muted pl-2">
+                {pagesData.meta_editing_note}
+              </p>
+            )}
 
             {audit?.factor_summary?.length > 0 && (
               <div className="space-y-2 pt-1">
@@ -226,16 +326,22 @@ export default function OnPageSEO() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
-                            {p.ok ? `${p.issues?.length || 0}` : (p.error || "unreachable")}
+                            {p.audited === false ? "not audited"
+                              : p.ok === false ? (p.error || "unreachable")
+                              : `${p.issue_count ?? p.issues?.length ?? 0}`}
                           </TableCell>
                         </TableRow>
                         {expanded[p.url] && (
                           <TableRow key={p.url + i + "-detail"}>
                             <TableCell colSpan={3} className="bg-muted/20">
-                              {!p.ok ? (
+                              {p.audited === false ? (
+                                <p className="text-xs text-muted-foreground py-1">
+                                  Not audited yet — run an audit to score this page.
+                                </p>
+                              ) : p.ok === false ? (
                                 <p className="text-xs text-yellow-500 py-1">
-                                  Could not fetch this page ({p.error}). Not scored — a network or
-                                  firewall problem isn't an SEO problem.
+                                  Could not fetch this page{p.error ? ` (${p.error})` : ""}. Not scored —
+                                  a network or firewall problem isn't an SEO problem.
                                 </p>
                               ) : (
                                 <div className="space-y-2 py-1">
@@ -258,6 +364,60 @@ export default function OnPageSEO() {
                                       {p.signals.schema_types?.length
                                         ? p.signals.schema_types.join(", ") : "no schema"}
                                     </p>
+                                  )}
+
+                                  {canEditMeta && p.path && (
+                                    <div className="pt-2 mt-1 border-t space-y-2">
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-xs font-medium">Meta title &amp; description</p>
+                                        {overrideFor(p.path) && (
+                                          <Badge className="text-[10px] bg-primary/10 text-primary">override active</Badge>
+                                        )}
+                                      </div>
+                                      <div>
+                                        <Input className="h-7 text-xs" placeholder="Meta title"
+                                          value={draftFor(p).title}
+                                          onChange={e => setDrafts(d => ({
+                                            ...d, [p.path]: { ...draftFor(p), title: e.target.value } }))} />
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                                          {(() => {
+                                            const oh = titleOverhead(p);
+                                            const len = draftFor(p).title.length;
+                                            return oh
+                                              ? `${len} chars · your site appends ${oh} → renders as ${len + oh} · aim ${50 - oh}–${60 - oh} here`
+                                              : `${len} chars · aim 50–60`;
+                                          })()}
+                                        </p>
+                                      </div>
+                                      <div>
+                                        <Textarea rows={2} className="text-xs" placeholder="Meta description"
+                                          value={draftFor(p).description}
+                                          onChange={e => setDrafts(d => ({
+                                            ...d, [p.path]: { ...draftFor(p), description: e.target.value } }))} />
+                                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                                          {draftFor(p).description.length} chars · aim 150–160
+                                        </p>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button size="sm" className="h-7 text-xs"
+                                          onClick={() => handleSaveMeta(p)} disabled={savingPath === p.path}>
+                                          {savingPath === p.path
+                                            ? <Loader2 size={11} className="mr-1 animate-spin" />
+                                            : <Save size={11} className="mr-1" />}Save
+                                        </Button>
+                                        {overrideFor(p.path) && (
+                                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                                            onClick={() => handleClearMeta(p)} disabled={savingPath === p.path}>
+                                            <Undo2 size={11} className="mr-1" />Reset to page default
+                                          </Button>
+                                        )}
+                                      </div>
+                                      {saveError[p.path] && (
+                                        <p className="text-[11px] text-red-400 border-l-2 border-red-400/50 pl-2">
+                                          Save failed — {saveError[p.path]}
+                                        </p>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}

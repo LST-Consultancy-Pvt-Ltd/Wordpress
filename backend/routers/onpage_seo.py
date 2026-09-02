@@ -11,6 +11,7 @@ import logging
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from typing import Optional
 
 import httpx
 from fastapi import BackgroundTasks, Depends, HTTPException
@@ -22,13 +23,38 @@ from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from providers.content import get_site_any
+from providers.content import get_platform, get_site_any
+from providers.nextjs import (
+    bridge_clear_meta, bridge_list_meta, bridge_set_meta, get_bridge_credentials,
+)
 from providers.onpage import SCORING_FACTORS, audit_url
 
 logger = logging.getLogger(__name__)
 
 MAX_PAGES_PER_SCAN = 50
 CRAWL_DELAY_SECONDS = 0.4  # polite pacing against the site's own server
+
+
+def _route_path(url: str) -> str:
+    """The override store is keyed by route path; audits record full URLs."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path or "/"
+    if len(path) > 1:
+        path = path.rstrip("/")
+    return path or "/"
+
+
+class MetaUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    path: str = ""                      # route path, e.g. "/about"
+    url: str = ""                       # or a full URL, converted to a path
+    title: Optional[str] = None
+    description: Optional[str] = None
+    canonical: Optional[str] = None
+    ogTitle: Optional[str] = None
+    ogDescription: Optional[str] = None
+    ogImage: Optional[str] = None
+    noindex: Optional[bool] = None
 
 
 class OnPageScanRequest(BaseModel):
@@ -172,6 +198,156 @@ async def get_onpage_audit(site_id: str, user=Depends(require_user)):
         return {"site_id": site_id, "site_score": None, "pages": [], "factor_summary": [],
                 "pages_audited": 0, "message": "No audit yet — run a scan."}
     return doc
+
+
+@api_router.get("/onpage/{site_id}/pages")
+async def list_onpage_pages(site_id: str, user=Depends(require_user)):
+    """Every page known for this site, with its latest score and any SEO
+    metadata override currently in force. This is the browse-and-fix view:
+    pages come from the last audit (or the sitemap if none has run yet), and
+    overrides come from the site's own bridge."""
+    site = await get_site_any(site_id)
+    platform = site.get("platform", "wordpress")
+
+    audit = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
+    by_url: dict[str, dict] = {}
+    for page in (audit or {}).get("pages", []):
+        by_url[page["url"]] = page
+
+    audited = bool(by_url)
+    if not by_url:
+        # No audit has run yet — list the pages we know about so they can still
+        # be browsed and edited, explicitly flagged as un-audited rather than
+        # left to look like fetch failures.
+        urls, _source = await _discover_urls(site, MAX_PAGES_PER_SCAN)
+        for u in urls:
+            by_url[u] = {"url": u, "score": None, "issues": [], "ok": None, "audited": False}
+
+    overrides: dict = {}
+    meta_supported = platform != "wordpress"
+    meta_error = None
+    if meta_supported:
+        try:
+            bridge_site = await get_bridge_credentials(site_id)
+            overrides = await bridge_list_meta(bridge_site)
+        except HTTPException as e:
+            meta_supported, meta_error = False, e.detail
+
+    pages = []
+    for url, page in by_url.items():
+        route = _route_path(url)
+        signals = page.get("signals") or {}
+        pages.append({
+            "url": url,
+            "path": route,
+            "score": page.get("score"),
+            # `audited` distinguishes "we fetched it and it failed" from "we
+            # have never looked at it" — conflating those told the user their
+            # pages were unreachable when they simply hadn't been scanned.
+            "audited": page.get("audited", audited),
+            "ok": page.get("ok"),
+            "error": page.get("error"),
+            "signals": signals or None,
+            "issue_count": len(page.get("issues") or []),
+            "issues": page.get("issues") or [],
+            "live_title": signals.get("title", ""),
+            "live_description": signals.get("description", ""),
+            "override": overrides.get(route),
+        })
+    pages.sort(key=lambda p: (p["score"] is None, p["score"] if p["score"] is not None else 0))
+
+    return {
+        "site_id": site_id,
+        "platform": platform,
+        "pages": pages,
+        "meta_editing_supported": meta_supported,
+        "meta_editing_note": meta_error or (
+            None if meta_supported else
+            "Editing metadata here is for non-WordPress sites. For WordPress, use the SEO page's apply-meta action."
+        ),
+        "audited_at": (audit or {}).get("created_at"),
+    }
+
+
+@api_router.put("/onpage/{site_id}/meta")
+async def set_onpage_meta(site_id: str, body: MetaUpdate, user=Depends(require_editor)):
+    """Set the meta title/description (and OG/canonical/noindex) for one page.
+
+    Writes to the site's own override store through the bridge, so it applies
+    to static pages as well as blog posts — a static page's metadata lives in
+    generateMetadata() and cannot be rewritten from outside the repo."""
+    if await get_platform(site_id) == "wordpress":
+        raise HTTPException(
+            status_code=400,
+            detail="This endpoint writes overrides through the Next.js SEO Bridge. "
+                   "For a WordPress site, use the SEO page's apply-meta action instead.",
+        )
+    raw = body.path.strip() or body.url.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Supply either `path` (e.g. \"/about\") or `url`.")
+    # Accept a full URL in either field and always reduce it to a route path.
+    # A full URL stored as the key would land under something like
+    # "/https:/host/page" — an override the site could never read back.
+    route = _route_path(raw) if "://" in raw else _route_path("http://x" + (raw if raw.startswith("/") else "/" + raw))
+
+    fields = {k: v for k, v in body.model_dump(
+        exclude={"path", "url"}, exclude_none=True).items()}
+    if not fields:
+        raise HTTPException(status_code=400, detail="Nothing to set — supply at least one field, e.g. `title`.")
+
+    site = await get_bridge_credentials(site_id)
+    result = await bridge_set_meta(site, route, fields)
+    await log_activity(site_id, "onpage_meta_updated",
+                       f"Updated SEO metadata for {route}: {', '.join(sorted(fields))}")
+
+    # Re-score the live page so the caller sees the effect of the edit rather
+    # than having to re-run a whole audit. The bridge revalidates on write, but
+    # give the render a moment to land before fetching.
+    rescored = None
+    page_url = f"{(site.get('url') or '').rstrip('/')}{route}"
+    try:
+        await asyncio.sleep(1.5)
+        fresh = await audit_url(page_url)
+        if fresh.get("ok"):
+            rescored = {
+                "url": page_url,
+                "score": fresh.get("score"),
+                "issues": fresh.get("issues", []),
+                "title": (fresh.get("signals") or {}).get("title", ""),
+                "description": (fresh.get("signals") or {}).get("description", ""),
+            }
+            # Keep the stored audit in step so the table and site score reflect it.
+            audit = await db.onpage_audits.find_one({"site_id": site_id}, sort=[("created_at", -1)])
+            if audit:
+                pages = audit.get("pages", [])
+                for idx, existing in enumerate(pages):
+                    if existing.get("url") == page_url:
+                        pages[idx] = fresh
+                        break
+                scored = [p["score"] for p in pages if p.get("score") is not None]
+                await db.onpage_audits.update_one(
+                    {"_id": audit["_id"]},
+                    {"$set": {"pages": pages,
+                              "site_score": round(sum(scored) / len(scored)) if scored else None}},
+                )
+        else:
+            rescored = {"url": page_url, "score": None, "error": fresh.get("error")}
+    except Exception as e:
+        logger.warning(f"Could not re-score {page_url} after a metadata update: {e}")
+
+    return {**result, "rescored": rescored}
+
+
+@api_router.delete("/onpage/{site_id}/meta")
+async def clear_onpage_meta(site_id: str, path: str, user=Depends(require_editor)):
+    """Remove the override for a route, handing control back to the page's own
+    generateMetadata()."""
+    if await get_platform(site_id) == "wordpress":
+        raise HTTPException(status_code=400, detail="Not applicable to WordPress sites.")
+    site = await get_bridge_credentials(site_id)
+    result = await bridge_clear_meta(site, path)
+    await log_activity(site_id, "onpage_meta_cleared", f"Cleared SEO metadata override for {path}")
+    return result
 
 
 @api_router.get("/onpage/{site_id}/history")

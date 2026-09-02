@@ -418,6 +418,9 @@ export const scanOnPageSEO           = (siteId, data = {})       => api.post(`/o
 export const getOnPageAudit          = (siteId)                  => api.get(`/onpage/${siteId}`);
 export const getOnPageHistory        = (siteId)                  => api.get(`/onpage/${siteId}/history`);
 export const auditSinglePage         = (siteId, url)             => api.post(`/onpage/${siteId}/page`, { urls: [url] });
+export const listOnPagePages         = (siteId)                  => api.get(`/onpage/${siteId}/pages`);
+export const setPageMeta             = (siteId, data)            => api.put(`/onpage/${siteId}/meta`, data);
+export const clearPageMeta           = (siteId, path)            => api.delete(`/onpage/${siteId}/meta`, { params: { path } });
 
 // Next.js sites: content publishing via the SEO Bridge endpoint in their app
 export const nextjsBridgeHealth      = (siteId)                  => api.get(`/nextjs/${siteId}/health`);

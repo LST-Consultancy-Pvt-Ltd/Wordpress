@@ -34,9 +34,11 @@ async def get_wp_credentials(site_id: str, user_id: Optional[str] = None):
     if platform != "wordpress":
         raise HTTPException(
             status_code=400,
-            detail=f"'{site.get('name', 'This site')}' is a {platform} site, not WordPress. "
-                   f"This feature manages content through the WordPress REST API and isn't available for it. "
-                   f"Domain-level SEO features (backlinks, keywords, citations, directories, indexing, site speed) all work.",
+            detail=f"This feature writes through the WordPress REST API, so it isn't available for "
+                   f"'{site.get('name', 'this site')}' (a {platform} site). "
+                   f"For page-level SEO scoring here, use the On-Page SEO page — it audits your live "
+                   f"pages directly and works on any stack. Keyword research, backlinks, directories, "
+                   f"citations, indexing, site speed, broken links and sitemap/robots all work too.",
         )
     if site.get("app_password"):
         site["app_password"] = decrypt_field(site["app_password"])

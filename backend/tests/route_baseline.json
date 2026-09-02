@@ -1476,9 +1476,27 @@
     ]
   ],
   [
+    "/api/onpage/{site_id}/meta",
+    [
+      "DELETE"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/meta",
+    [
+      "PUT"
+    ]
+  ],
+  [
     "/api/onpage/{site_id}/page",
     [
       "POST"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/pages",
+    [
+      "GET"
     ]
   ],
   [
