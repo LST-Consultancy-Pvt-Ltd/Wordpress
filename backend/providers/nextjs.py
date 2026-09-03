@@ -11,10 +11,13 @@ Errors are mapped to actionable HTTP responses rather than bare gateway
 failures: a missing bridge, a wrong token and an unreachable site each say
 what to fix. Nothing here ever invents a success.
 """
+import base64
 import logging
+import os
 from typing import Optional
 from urllib.parse import quote
 
+import anthropic
 import httpx
 from fastapi import HTTPException
 
@@ -121,6 +124,12 @@ async def bridge_delete_post(site: dict, slug: str) -> dict:
     return await bridge_request(site, "DELETE", f"posts/{slug}")
 
 
+async def bridge_get_post(site: dict, slug: str) -> dict:
+    """Raw content of one post — {slug, frontmatter, raw}, `raw` including the
+    frontmatter block, so callers editing the body must strip it first."""
+    return await bridge_request(site, "GET", f"posts/{slug}")
+
+
 # --- SEO metadata overrides -------------------------------------------------
 # A static Next.js page keeps its metadata in generateMetadata(), so it can't
 # be rewritten from outside the repo. The bridge instead stores overrides on
@@ -186,40 +195,127 @@ async def bridge_get_page_meta(site: dict, slug: str) -> dict:
     return _normalize_meta_entry(body if isinstance(body, dict) else {})
 
 
-async def bridge_set_meta(site: dict, route_path: str, fields: dict) -> dict:
-    """Write SEO metadata for one page.
+# Every field the SEO metadata contract defines. A bridge that stores
+# overrides by route path can hold all of them; one that edits a page record
+# by slug typically holds only the three that page record has a slot for.
+META_FIELDS_FULL = ("title", "description", "canonical",
+                    "ogTitle", "ogDescription", "ogImage", "noindex")
+META_FIELDS_PAGES = ("title", "description", "ogImage")
 
-    Bridges key pages by SLUG and expose the write as PUT /pages/:slug. The
-    write REPLACES the metadata object, so the current value is read first and
-    the incoming fields merged onto it — otherwise editing just the title
-    would silently drop a field like ogImage that nobody asked to change.
+# The home page has no slug of its own, so a slug-keyed bridge exposes it
+# under a conventional name. Probed in this order.
+HOME_SLUG_CANDIDATES = ("home", "index", "homepage")
 
-    Three body dialects exist in the wild. Crucially, a bridge that does not
-    recognise the shape it is handed may still answer 200 OK while echoing the
-    UNCHANGED metadata and writing nothing — so trying a dialect and trusting
-    the status code reports a success that never happened. Each attempt is
-    therefore verified against the echoed metadata, and a dialect only counts
-    as accepted when the values actually came back changed.
+
+async def bridge_meta_dialect(site: dict) -> str:
+    """Which metadata contract this bridge implements: "meta-store" (overrides
+    keyed by route path, every field supported) or "pages" (a page record
+    edited by slug, three fields supported).
+
+    Determined from the SHAPE of GET /meta rather than guessed, because
+    guessing wrong is silent: a bridge handed a body it does not recognise
+    answers 200 OK, echoes the metadata it already had and writes nothing.
     """
+    try:
+        body = await bridge_request(site, "GET", "meta")
+    except HTTPException:
+        return "pages"
+    if isinstance(body, dict):
+        if isinstance(body.get("meta"), dict):
+            return "meta-store"
+        if isinstance(body.get("pages"), list) or isinstance(body.get("posts"), list):
+            return "pages"
+    return "pages"
+
+
+async def bridge_meta_capabilities(site: dict) -> dict:
+    """What can actually be written for this site, so the UI can offer the
+    fields that work and explain the ones that do not instead of accepting an
+    edit the bridge will drop on the floor."""
+    dialect = await bridge_meta_dialect(site)
+    fields = META_FIELDS_FULL if dialect == "meta-store" else META_FIELDS_PAGES
+    return {
+        "dialect": dialect,
+        "supported_fields": list(fields),
+        "unsupported_fields": [f for f in META_FIELDS_FULL if f not in fields],
+        "note": (
+            "This bridge stores overrides by route path and can hold the full metadata set."
+            if dialect == "meta-store" else
+            "This bridge edits the page record by slug, which has slots for the SEO title, "
+            "description and OG image only. Canonical, OG title/description and noindex live in "
+            "the page's own generateMetadata() and have to be changed in the repo — the "
+            "Next.js snippets on the Reporting tab generate that code for you."
+        ),
+    }
+
+
+async def _resolve_page_slug(site: dict, route_path: str) -> str:
+    """The slug a slug-keyed bridge files this route under. Everything but the
+    home page is the path itself; the home page is probed against the
+    conventional names, since an empty slug is not addressable in a URL."""
     slug = (route_path or "").strip().strip("/")
-    if not slug:
-        raise HTTPException(
-            status_code=400,
-            detail="This bridge addresses pages by slug, and the home page has an empty slug — "
-                   "it can't be edited through this endpoint.",
-        )
+    if slug:
+        return slug
+    for candidate in HOME_SLUG_CANDIDATES:
+        try:
+            body = await bridge_request(site, "GET", f"pages/{candidate}")
+        except HTTPException:
+            continue
+        if isinstance(body, dict) and (body.get("slug") is not None or body.get("seo")):
+            return candidate
+    raise HTTPException(
+        status_code=400,
+        detail="This bridge addresses pages by slug and does not expose the home page under any of "
+               f"{', '.join(HOME_SLUG_CANDIDATES)}. Edit the home page's metadata in its own "
+               "generateMetadata(), or add a /meta override store to the bridge.",
+    )
+
+
+async def bridge_set_meta(site: dict, route_path: str, fields: dict) -> dict:
+    """Write SEO metadata for one route.
+
+    Two contracts exist. A path-keyed override store (`PUT /meta` with a
+    `path` in the body) accepts the whole metadata set. A slug-keyed page
+    record (`PUT /pages/:slug`) accepts the SEO title, description and OG
+    image, and silently ignores anything else — so the fields that could not
+    be written are returned rather than reported as saved.
+
+    On the slug-keyed contract the write REPLACES the metadata object, so the
+    current value is read first and the incoming fields merged onto it;
+    otherwise editing just the title would drop ogImage. And because a bridge
+    handed an unrecognised body still answers 200 OK while echoing the
+    UNCHANGED metadata, every attempt is verified against that echo — a
+    dialect only counts as accepted when the values came back changed.
+    """
+    dialect = await bridge_meta_dialect(site)
+
+    if dialect == "meta-store":
+        payload = {"path": route_path or "/",
+                   **{k: v for k, v in fields.items() if k in META_FIELDS_FULL}}
+        result = await bridge_request(site, "PUT", "meta", payload)
+        return {**(result if isinstance(result, dict) else {}),
+                "dialect": dialect,
+                "applied_fields": [k for k in fields if k in META_FIELDS_FULL],
+                "unsupported_fields": [k for k in fields if k not in META_FIELDS_FULL]}
+
+    slug = await _resolve_page_slug(site, route_path)
+    unsupported = [k for k in fields if k not in META_FIELDS_PAGES and fields[k] is not None]
 
     current = await bridge_get_page_meta(site, slug)
     merged = {**current}
-    for key in ("title", "description", "ogImage"):
-        if key in fields and fields[key] is not None:
+    for key in META_FIELDS_PAGES:
+        if key in fields:
             merged[key] = fields[key]
-    merged = {k: v for k, v in merged.items() if v}
-    core = {k: v for k, v in merged.items() if k in ("title", "description", "ogImage")}
+    core = {k: v for k, v in merged.items() if k in META_FIELDS_PAGES and v not in (None, "")}
+    # A field explicitly set to None/"" must reach the bridge as null so it
+    # clears the stored value; dropping it would silently keep the old text.
+    for key in META_FIELDS_PAGES:
+        if key in fields and fields[key] in (None, ""):
+            core[key] = None
 
     dialects = [
         ("top-level", core),
-        ("nested seo", {"seo": core}),
+        ("nested seo", {"seo": {k: v for k, v in core.items() if v is not None}}),
         ("flat seoTitle", {
             **({"seoTitle": core["title"]} if "title" in core else {}),
             **({"seoDescription": core["description"]} if "description" in core else {}),
@@ -227,6 +323,7 @@ async def bridge_set_meta(site: dict, route_path: str, fields: dict) -> dict:
         }),
     ]
 
+    desired = {k: v for k, v in core.items() if v is not None}
     last_resp: dict = {}
     for name, body in dialects:
         try:
@@ -239,10 +336,12 @@ async def bridge_set_meta(site: dict, route_path: str, fields: dict) -> dict:
                 raise
             continue
         last_resp = resp if isinstance(resp, dict) else {}
-        if _meta_write_applied(last_resp, core):
+        if _meta_write_applied(last_resp, desired):
             if name != "top-level":
                 logger.info(f"Meta write for '{slug}' accepted via '{name}' dialect")
-            return last_resp
+            return {**last_resp, "dialect": dialect, "slug": slug,
+                    "applied_fields": [k for k in fields if k in META_FIELDS_PAGES],
+                    "unsupported_fields": unsupported}
         logger.info(f"Meta write for '{slug}' via '{name}' dialect returned OK but changed nothing; trying next")
 
     raise HTTPException(
@@ -272,5 +371,111 @@ def _meta_write_applied(resp: dict, desired: dict) -> bool:
             return False
     return True
 
+
 async def bridge_clear_meta(site: dict, route_path: str) -> dict:
-    return await bridge_request(site, "DELETE", f"meta?path={quote(route_path, safe='/')}")
+    """Remove the override for a route, handing control back to the page's own
+    metadata. On a slug-keyed bridge there is no delete, so the supported
+    fields are explicitly nulled — which is the same end state."""
+    dialect = await bridge_meta_dialect(site)
+    if dialect == "meta-store":
+        return await bridge_request(site, "DELETE", f"meta?path={quote(route_path, safe='/')}")
+    slug = await _resolve_page_slug(site, route_path)
+    body = {field: None for field in META_FIELDS_PAGES}
+    resp = await bridge_request(site, "PUT", f"pages/{slug}/", body)
+    return {**(resp if isinstance(resp, dict) else {}), "cleared": route_path, "dialect": dialect}
+
+
+# --- Page body-copy blocks ---------------------------------------------------
+# generateMetadata() covers <title>/<meta>, but a static page's actual body
+# text is compiled TSX and can't be rewritten the same way. A page that wants
+# specific pieces of copy to be editable wraps them in getContentBlock() (see
+# nextjs-bridge/lib/page-content.ts), which self-registers the block's default
+# in the bridge's content store on first render — so a page only shows up
+# below once it has actually been rendered at least once with a wrapped block.
+
+async def bridge_get_content(site: dict) -> dict:
+    """Every page's content-block overrides, keyed by route path."""
+    body = await bridge_request(site, "GET", "content")
+    return body.get("content") or {}
+
+
+async def bridge_get_page_content(site: dict, route_path: str) -> dict:
+    """{key: value} blocks for one page. {} when the page has none yet."""
+    body = await bridge_request(site, "GET", f"content?path={quote(route_path, safe='/')}")
+    return body.get("content") or {}
+
+
+async def bridge_set_content_block(site: dict, route_path: str, key: str, value: str) -> dict:
+    return await bridge_request(site, "PUT", "content", {"path": route_path, "key": key, "value": value})
+
+
+async def bridge_clear_content_block(site: dict, route_path: str, key: Optional[str] = None) -> dict:
+    """Removes one block, or (with `key` omitted) every block on the page."""
+    qs = f"path={quote(route_path, safe='/')}"
+    if key:
+        qs += f"&key={quote(key)}"
+    return await bridge_request(site, "DELETE", f"content?{qs}")
+
+
+# --- Image alt text ----------------------------------------------------------
+# A page that wants specific images editable wraps them in <EditableImg> (see
+# nextjs-bridge/lib/editable-image.tsx), which self-registers the image's
+# default alt (and src, for a thumbnail) on first render — a page only shows
+# up below once it has actually been rendered at least once with a wrapped
+# image, same as content blocks.
+
+async def bridge_get_images(site: dict) -> dict:
+    """Every page's registered images, keyed by route path."""
+    body = await bridge_request(site, "GET", "images")
+    return body.get("images") or {}
+
+
+async def bridge_get_page_images(site: dict, route_path: str) -> dict:
+    """{key: {alt, src?}} for one page. {} when the page has none yet."""
+    body = await bridge_request(site, "GET", f"images?path={quote(route_path, safe='/')}")
+    return body.get("images") or {}
+
+
+async def bridge_set_image_alt(site: dict, route_path: str, key: str, alt: str) -> dict:
+    return await bridge_request(site, "PUT", "images", {"path": route_path, "key": key, "alt": alt})
+
+
+async def bridge_clear_image_alt(site: dict, route_path: str, key: Optional[str] = None) -> dict:
+    """Removes one image's override, or (with `key` omitted) every image on the page."""
+    qs = f"path={quote(route_path, safe='/')}"
+    if key:
+        qs += f"&key={quote(key)}"
+    return await bridge_request(site, "DELETE", f"images?{qs}")
+
+
+async def generate_alt_text_from_url(image_url: str, fallback_label: str = "") -> str:
+    """Claude vision writes alt text for a publicly-reachable image URL — the
+    Next.js counterpart to the WordPress AI alt-text generator in
+    routers/admin_migration.py, which does the same thing for a WP media ID.
+    Never raises: any failure falls back to a plain label so the caller
+    always has something to save rather than a blocked action."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            img_resp = await client.get(image_url)
+            img_resp.raise_for_status()
+            img_b64 = base64.b64encode(img_resp.content).decode()
+            content_type = img_resp.headers.get("content-type", "image/jpeg").split(";")[0]
+    except Exception:
+        return fallback_label or "Image"
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+        msg = await client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=200,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": content_type, "data": img_b64}},
+                    {"type": "text", "text": "Write a concise, descriptive SEO alt text for this image in under 125 characters. Return only the alt text, no quotes or explanation."},
+                ],
+            }],
+        )
+        return msg.content[0].text.strip().strip('"')
+    except Exception:
+        return fallback_label or "Image"

@@ -22,6 +22,14 @@
  *   GET    /api/seo-bridge/meta?path=/x  the override for one route
  *   PUT    /api/seo-bridge/meta          upsert one (body: {path, title, description, ...})
  *   DELETE /api/seo-bridge/meta?path=/x  remove one
+ *   GET    /api/seo-bridge/content              body-copy blocks for every page
+ *   GET    /api/seo-bridge/content?path=/x      body-copy blocks for one page
+ *   PUT    /api/seo-bridge/content               upsert one block (body: {path, key, value})
+ *   DELETE /api/seo-bridge/content?path=/x&key=y remove one block (whole page if key omitted)
+ *   GET    /api/seo-bridge/images                image alt text for every page
+ *   GET    /api/seo-bridge/images?path=/x        image alt text for one page
+ *   PUT    /api/seo-bridge/images                 upsert one image's alt (body: {path, key, alt, src?})
+ *   DELETE /api/seo-bridge/images?path=/x&key=y   remove one image (whole page if key omitted)
  *   GET    /api/seo-bridge/posts         list posts
  *   GET    /api/seo-bridge/posts/:slug   read one post
  *   POST   /api/seo-bridge/posts         create (body: {slug?, title, content, ...})
@@ -196,6 +204,62 @@ async function writeMetaStore(store: Record<string, Record<string, unknown>>) {
   await fs.writeFile(META_FILE, JSON.stringify(store, null, 2), "utf8");
 }
 
+/* ------------------------------------------------------------------ *
+ * Page body-copy blocks
+ *
+ * generateMetadata() covers <title>/<meta> tags, but the actual page body is
+ * compiled TSX — there's no equivalent hook for rewriting arbitrary text on
+ * a static page. Instead, the page's own code wraps each editable piece of
+ * copy in <Editable> or getContentBlock()/getContentBlocks() (see lib/page-content.tsx),
+ * which reads from this same JSON store on first render. That call also
+ * self-registers the block (page path + key + current default) the first
+ * time it runs, so a block becomes visible and editable here without a
+ * manual manifest step — no page needs to be listed until it has actually
+ * been rendered at least once with a wrapped block.
+ * ------------------------------------------------------------------ */
+
+const CONTENT_FILE = path.join(contentRoot, "_content-blocks.json");
+
+async function readContentStore(): Promise<Record<string, Record<string, unknown>>> {
+  try {
+    return JSON.parse(await fs.readFile(CONTENT_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeContentStore(store: Record<string, Record<string, unknown>>) {
+  await fs.mkdir(contentRoot, { recursive: true });
+  await fs.writeFile(CONTENT_FILE, JSON.stringify(store, null, 2), "utf8");
+}
+
+/* ------------------------------------------------------------------ *
+ * Image alt text
+ *
+ * Same self-registering pattern as content blocks, in a separate store
+ * (images have their own shape — alt + the src they were registered with —
+ * and browsing "images on this page" is a distinct action from browsing
+ * "text on this page"). The page's own code wraps an <img> in <EditableImg>
+ * (see lib/editable-image.tsx), which reads/registers here on first render.
+ * ------------------------------------------------------------------ */
+
+const IMAGES_FILE = path.join(contentRoot, "_image-alt.json");
+
+type ImageEntry = { alt: string; src?: string; updatedAt?: string };
+
+async function readImagesStore(): Promise<Record<string, Record<string, ImageEntry>>> {
+  try {
+    return JSON.parse(await fs.readFile(IMAGES_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+async function writeImagesStore(store: Record<string, Record<string, ImageEntry>>) {
+  await fs.mkdir(contentRoot, { recursive: true });
+  await fs.writeFile(IMAGES_FILE, JSON.stringify(store, null, 2), "utf8");
+}
+
 function json(data: unknown, status = 200) {
   return NextResponse.json(data as any, { status });
 }
@@ -251,6 +315,27 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       return json({ path: key, meta: store[key] || null });
     }
     return json({ meta: store, count: Object.keys(store).length, file: path.relative(process.cwd(), META_FILE) });
+  }
+
+  if (segments[0] === "content") {
+    const store = await readContentStore();
+    const wanted = req.nextUrl.searchParams.get("path");
+    if (wanted) {
+      const key = normalizeRoutePath(wanted);
+      const { updatedAt, ...blocks } = store[key] || {};
+      return json({ path: key, content: Object.keys(blocks).length ? blocks : null });
+    }
+    return json({ content: store, count: Object.keys(store).length, file: path.relative(process.cwd(), CONTENT_FILE) });
+  }
+
+  if (segments[0] === "images") {
+    const store = await readImagesStore();
+    const wanted = req.nextUrl.searchParams.get("path");
+    if (wanted) {
+      const key = normalizeRoutePath(wanted);
+      return json({ path: key, images: store[key] || null });
+    }
+    return json({ images: store, count: Object.keys(store).length, file: path.relative(process.cwd(), IMAGES_FILE) });
   }
 
   if (segments[0] === "posts" && segments.length === 1) {
@@ -309,6 +394,62 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     return json({ path: key, meta: store[key] || null, revalidated: [key, ...REVALIDATE_PATHS] });
   }
 
+  if (segments[0] === "content") {
+    let body: any;
+    try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+    const key = String(body?.key || "").trim();
+    if (!body?.path || !key) return json({ error: "`path` and `key` are required." }, 400);
+    if (body?.value === undefined || body?.value === null) return json({ error: "`value` is required." }, 400);
+    const routeKey = normalizeRoutePath(body.path);
+    const store = await readContentStore();
+    const page = { ...(store[routeKey] || {}) };
+
+    // ifAbsent is how getContentBlock() self-registers a page's default copy
+    // on first render — it must never clobber an edit made from the CMS.
+    if (body?.ifAbsent === true && key in page) {
+      return json({ path: routeKey, key, value: page[key], registered: false });
+    }
+
+    page[key] = String(body.value);
+    page.updatedAt = new Date().toISOString();
+    store[routeKey] = page;
+    await writeContentStore(store);
+    if (body?.ifAbsent !== true) {
+      try { revalidatePath(routeKey); } catch { /* a bad path must not fail the write */ }
+      revalidateAll();
+    }
+    return json({ path: routeKey, key, value: page[key], registered: true });
+  }
+
+  if (segments[0] === "images") {
+    let body: any;
+    try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+    const key = String(body?.key || "").trim();
+    if (!body?.path || !key) return json({ error: "`path` and `key` are required." }, 400);
+    if (body?.alt === undefined || body?.alt === null) return json({ error: "`alt` is required (use an empty string to explicitly mark decorative)." }, 400);
+    const routeKey = normalizeRoutePath(body.path);
+    const store = await readImagesStore();
+    const page = { ...(store[routeKey] || {}) };
+
+    // ifAbsent is how EditableImg self-registers a default alt on first
+    // render — it must never clobber an edit made from the CMS.
+    if (body?.ifAbsent === true && key in page) {
+      return json({ path: routeKey, key, image: page[key], registered: false });
+    }
+
+    const entry: ImageEntry = { alt: String(body.alt) };
+    if (body?.src) entry.src = String(body.src);
+    else if (page[key]?.src) entry.src = page[key].src;
+    entry.updatedAt = new Date().toISOString();
+    page[key] = entry;
+    store[routeKey] = page;
+    await writeImagesStore(store);
+    if (body?.ifAbsent !== true) {
+      try { revalidatePath(routeKey); } catch { /* a bad path must not fail the write */ }
+    }
+    return json({ path: routeKey, key, image: page[key], registered: true });
+  }
+
   if (segments[0] !== "posts" || segments.length !== 2) return json({ error: "Unknown endpoint" }, 404);
   try {
     return json(await writePost(await req.json(), segments[1]));
@@ -321,6 +462,48 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
   const denied = guard(req);
   if (denied) return denied;
   const segments = (await ctx.params).path || [];
+
+  if (segments[0] === "images") {
+    const wanted = req.nextUrl.searchParams.get("path");
+    if (!wanted) return json({ error: "`path` query parameter is required." }, 400);
+    const routeKey = normalizeRoutePath(wanted);
+    const wantedKey = req.nextUrl.searchParams.get("key");
+    const store = await readImagesStore();
+    if (!(routeKey in store)) return json({ error: "No image overrides for that page" }, 404);
+    if (wantedKey) {
+      const page = { ...store[routeKey] };
+      if (!(wantedKey in page)) return json({ error: "No such image on that page" }, 404);
+      delete page[wantedKey];
+      if (Object.keys(page).length === 0) delete store[routeKey];
+      else store[routeKey] = page;
+    } else {
+      delete store[routeKey];
+    }
+    await writeImagesStore(store);
+    try { revalidatePath(routeKey); } catch { /* ignore */ }
+    return json({ deleted: wantedKey ? `${routeKey}:${wantedKey}` : routeKey });
+  }
+
+  if (segments[0] === "content") {
+    const wanted = req.nextUrl.searchParams.get("path");
+    if (!wanted) return json({ error: "`path` query parameter is required." }, 400);
+    const routeKey = normalizeRoutePath(wanted);
+    const wantedKey = req.nextUrl.searchParams.get("key");
+    const store = await readContentStore();
+    if (!(routeKey in store)) return json({ error: "No content overrides for that page" }, 404);
+    if (wantedKey) {
+      const page = { ...store[routeKey] };
+      if (!(wantedKey in page)) return json({ error: "No such block on that page" }, 404);
+      delete page[wantedKey];
+      if (Object.keys(page).filter((k) => k !== "updatedAt").length === 0) delete store[routeKey];
+      else { page.updatedAt = new Date().toISOString(); store[routeKey] = page; }
+    } else {
+      delete store[routeKey];
+    }
+    await writeContentStore(store);
+    try { revalidatePath(routeKey); } catch { /* ignore */ }
+    return json({ deleted: wantedKey ? `${routeKey}:${wantedKey}` : routeKey });
+  }
 
   if (segments[0] === "meta") {
     const wanted = req.nextUrl.searchParams.get("path");

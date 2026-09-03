@@ -13,7 +13,10 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
 } from "../components/ui/dropdown-menu";
 import { toast } from "sonner";
-import { getSites, editorListPosts, editorGetPost, editorSavePost, editorAIAssist } from "../lib/api";
+import {
+  getSites, editorListPosts, editorGetPost, editorSavePost, editorAIAssist,
+  nextjsListPosts, nextjsGetPost, nextjsPublishPost,
+} from "../lib/api";
 
 const readingTime = (text) => {
   const words = (text || "").replace(/<[^>]+>/g, "").split(/\s+/).filter(Boolean).length;
@@ -21,6 +24,10 @@ const readingTime = (text) => {
 };
 
 const wordCount = (html) => (html || "").replace(/<[^>]+>/g, "").split(/\s+/).filter(Boolean).length;
+
+// Blog post content is fetched with its frontmatter block still attached
+// (title/date/etc.); the body editor only shows/saves the copy beneath it.
+const stripFrontmatter = (raw) => (raw || "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 
 export default function LiveEditor() {
   const [sites, setSites] = useState([]);
@@ -38,6 +45,9 @@ export default function LiveEditor() {
   const editorRef = useRef(null);
   const iframeRef = useRef(null);
 
+  const selectedSiteObj = sites.find(s => s.id === selectedSite);
+  const platform = selectedSiteObj?.platform || "wordpress";
+
   useEffect(() => {
     getSites().then(r => {
       setSites(r.data);
@@ -46,12 +56,22 @@ export default function LiveEditor() {
   }, []);
 
   useEffect(() => {
-    if (selectedSite) {
+    if (!selectedSite) return;
+    setPost(null);
+    if (platform === "nextjs") {
+      nextjsListPosts(selectedSite)
+        .then(r => {
+          const posts = (Array.isArray(r.data) ? r.data : r.data.posts || [])
+            .map(p => ({ id: p.slug, title: p.title || p.slug, status: p.draft ? "draft" : "publish" }));
+          setPostList({ posts, pages: [] });
+        })
+        .catch(() => setPostList({ posts: [], pages: [] }));
+    } else {
       editorListPosts(selectedSite)
         .then(r => setPostList(r.data))
         .catch(() => setPostList({ posts: [], pages: [] }));
     }
-  }, [selectedSite]);
+  }, [selectedSite, platform]);
 
   useEffect(() => {
     if (iframeRef.current && content) {
@@ -63,11 +83,20 @@ export default function LiveEditor() {
 
   const loadPost = async (id, type) => {
     setLoading(true);
+    setPost(null);
     try {
-      const r = await editorGetPost(selectedSite, parseInt(id), type);
-      setPost(r.data);
-      setContent(r.data.content || "");
-      setTitle(r.data.title || "");
+      if (platform === "nextjs") {
+        const r = await nextjsGetPost(selectedSite, id);
+        const fm = r.data.frontmatter || {};
+        setPost({ id, slug: id, type: "post", status: fm.draft === "true" ? "draft" : "publish" });
+        setContent(stripFrontmatter(r.data.raw));
+        setTitle(fm.title || id);
+      } else {
+        const r = await editorGetPost(selectedSite, parseInt(id), type);
+        setPost(r.data);
+        setContent(r.data.content || "");
+        setTitle(r.data.title || "");
+      }
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to load post");
     } finally { setLoading(false); }
@@ -77,7 +106,11 @@ export default function LiveEditor() {
     if (!post) return;
     setSaving(true);
     try {
-      await editorSavePost(selectedSite, post.id, { content, title, status });
+      if (platform === "nextjs") {
+        await nextjsPublishPost(selectedSite, { title, content, slug: post.slug, draft: status !== "publish" });
+      } else {
+        await editorSavePost(selectedSite, post.id, { content, title, status });
+      }
       toast.success(status === "publish" ? "Published!" : "Saved as draft");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Save failed");
@@ -136,7 +169,7 @@ export default function LiveEditor() {
           <motion.h1 className="page-title" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
             Live Editor
           </motion.h1>
-          <p className="page-description">Edit WordPress posts with AI assistance and live preview</p>
+          <p className="page-description">Edit posts with AI assistance and live preview</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           <Select value={selectedSite} onValueChange={setSelectedSite}>

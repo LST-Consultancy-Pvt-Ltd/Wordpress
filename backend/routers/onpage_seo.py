@@ -1,23 +1,34 @@
-"""On-page SEO audit that works on any platform.
+"""On-page SEO: a complete, platform-neutral SEO audit and editing workspace.
 
-Sources every signal from the rendered HTML of the live URL, so a Next.js
-site, a WordPress site or anything else is audited the same way and the score
-is comparable across them. Contrast routers/auto_seo.py, which reads Yoast /
-RankMath fields through the WordPress REST API and therefore only ever works
-for WordPress.
+Every signal is sourced from what a crawler sees — the rendered HTML of the
+live URL, the response headers, robots.txt, the sitemap and the PageSpeed
+Insights API — so a Next.js site, a WordPress site or a hand-rolled static
+site are audited identically and their scores are comparable. Contrast
+routers/auto_seo.py, which reads Yoast / RankMath fields through the WordPress
+REST API and therefore only ever works for WordPress.
+
+Writes go through whatever the site actually exposes. For a Next.js site that
+is the SEO Bridge, whose metadata contract is discovered rather than assumed:
+a bridge handed a body it does not recognise answers 200 OK and writes
+nothing, so anything that could not be stored is reported back as unsupported
+instead of being shown as saved.
 """
 import asyncio
+import csv
+import io
 import logging
 import uuid
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
-from fastapi import BackgroundTasks, Depends, HTTPException
+from fastapi import BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from core.activity import log_activity
+from core.crypto import get_decrypted_settings
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
@@ -25,23 +36,25 @@ from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.content import get_platform, get_site_any
 from providers.nextjs import (
-    bridge_clear_meta, bridge_list_meta, bridge_set_meta, get_bridge_credentials,
+    bridge_clear_meta, bridge_list_meta, bridge_meta_capabilities, bridge_set_meta,
+    get_bridge_credentials,
 )
-from providers.onpage import SCORING_FACTORS, audit_url
+from providers.onpage import SCORING_FACTORS, audit_url  # noqa: F401  (audit_url re-exported)
+from providers import seo_audit
+from providers.seo_audit import (
+    extract_page_signals, fetch_document, fetch_robots, fetch_sitemaps, route_path,
+    run_full_audit, score_page,
+)
 
 logger = logging.getLogger(__name__)
 
-MAX_PAGES_PER_SCAN = 50
-CRAWL_DELAY_SECONDS = 0.4  # polite pacing against the site's own server
+MAX_PAGES_PER_SCAN = 25
+HARD_PAGE_LIMIT = 200
 
 
 def _route_path(url: str) -> str:
     """The override store is keyed by route path; audits record full URLs."""
-    from urllib.parse import urlparse
-    path = urlparse(url).path or "/"
-    if len(path) > 1:
-        path = path.rstrip("/")
-    return path or "/"
+    return route_path(url)
 
 
 class MetaUpdate(BaseModel):
@@ -57,131 +70,147 @@ class MetaUpdate(BaseModel):
     noindex: Optional[bool] = None
 
 
+class FocusKeyword(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    path: str = ""
+    url: str = ""
+    keyword: str = ""
+    secondary: list[str] = []
+    intent: str = ""                    # informational / commercial / transactional / navigational
+
+
 class OnPageScanRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    urls: list[str] = []          # explicit list wins; otherwise auto-discovered
+    urls: list[str] = []                # explicit list wins; otherwise auto-discovered
     max_pages: int = MAX_PAGES_PER_SCAN
+    check_links: bool = True            # verify every internal + external link
+    measure_cwv: bool = False           # PageSpeed Insights; 20–40s per URL
+    psi_sample: int = 3                 # how many URLs to measure when it is on
 
 
 async def _discover_urls(site: dict, limit: int) -> tuple[list[str], str]:
-    """Prefer the sitemap (authoritative and platform-neutral); fall back to
-    the synced content cache. Returns (urls, source) so the UI can say where
-    the list came from rather than implying completeness it can't guarantee."""
+    """Page list for this site, preferring the sitemap (authoritative and
+    platform-neutral) and falling back to homepage links then synced content.
+    Returns (urls, source) so the UI can say where the list came from rather
+    than implying a completeness it cannot guarantee."""
     base = (site.get("url") or "").rstrip("/")
-    urls: list[str] = []
+    if not base:
+        return [], "none"
+    cached = [d["link"] for d in await db.posts.find(
+        {"site_id": site["id"], "link": {"$nin": [None, ""]}}, {"_id": 0, "link": 1}
+    ).to_list(limit) if d.get("link")]
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        robots = await fetch_robots(client, base)
+        sitemap = await fetch_sitemaps(client, base, robots.get("sitemaps"))
+        return await seo_audit.discover_urls(client, base, sitemap, limit, cached)
 
-    for candidate in (f"{base}/sitemap.xml", f"{base}/sitemap_index.xml", f"{base}/wp-sitemap.xml"):
-        try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as c:
-                resp = await c.get(candidate)
-            if resp.status_code != 200 or not resp.text.strip().startswith("<"):
-                continue
-            root = ET.fromstring(resp.text)
-            locs = [el.text.strip() for el in root.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc") if el.text]
-            if not locs:
-                locs = [el.text.strip() for el in root.iter("loc") if el.text]
-            # A sitemap index points at more sitemaps; follow the first few.
-            if locs and all(l.endswith(".xml") for l in locs[:3]):
-                nested: list[str] = []
-                for child in locs[:5]:
-                    try:
-                        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as c:
-                            r2 = await c.get(child)
-                        if r2.status_code == 200 and r2.text.strip().startswith("<"):
-                            r2root = ET.fromstring(r2.text)
-                            nested += [el.text.strip() for el in r2root.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc") if el.text]
-                    except Exception:
-                        continue
-                locs = [u for u in nested if not u.endswith(".xml")] or locs
-            urls = [u for u in locs if u.startswith("http")]
-            if urls:
-                return urls[:limit], f"sitemap ({candidate.rsplit('/', 1)[-1]})"
-        except Exception as e:
-            logger.warning(f"Sitemap discovery failed at {candidate}: {e}")
-            continue
 
-    cached = await db.posts.find({"site_id": site["id"], "link": {"$nin": [None, ""]}},
-                                {"_id": 0, "link": 1}).to_list(limit)
-    urls = [d["link"] for d in cached if d.get("link")]
-    if urls:
-        return urls[:limit], "synced posts"
-    if base:
-        return [base], "homepage only"
-    return [], "none"
+async def _focus_keywords(site_id: str) -> dict[str, dict]:
+    docs = await db.onpage_keywords.find({"site_id": site_id}, {"_id": 0}).to_list(1000)
+    return {d["path"]: d for d in docs}
+
+
+async def _gsc_snapshot(site: dict) -> dict:
+    """Live Search Console data when credentials are configured. Never invents
+    a connection: without credentials the report says so and explains what to
+    add, rather than presenting inference as Google's own numbers."""
+    try:
+        settings = await get_decrypted_settings()
+    except Exception as e:
+        return {"connected": False, "error": f"Could not read settings: {e}"}
+    if not (settings.get("google_search_console_credentials")
+            or settings.get("google_analytics_credentials")):
+        return {"connected": False,
+                "error": "No Search Console credentials configured. Add a Google service-account "
+                         "JSON and gsc_site_url in Settings."}
+    property_url = settings.get("gsc_site_url") or (site.get("url") or "")
+    try:
+        from providers.google_analytics import fetch_gsc_metrics
+        rows = await fetch_gsc_metrics(settings, property_url)
+    except Exception as e:
+        return {"connected": False, "error": f"Search Console request failed: {e}",
+                "property": property_url}
+    if not rows:
+        return {"connected": False, "property": property_url,
+                "error": f"Search Console returned no rows for {property_url}. The property URL must "
+                         f"match how it is verified in Search Console, exactly."}
+    return {
+        "connected": True, "property": property_url,
+        "clicks": sum(r.get("clicks", 0) for r in rows),
+        "impressions": sum(r.get("impressions", 0) for r in rows),
+        "indexed_count": len({r.get("page_url", "") for r in rows if r.get("page_url")}),
+        "queries": sorted(rows, key=lambda r: -r.get("clicks", 0))[:50],
+    }
 
 
 @api_router.post("/onpage/{site_id}/scan")
 async def scan_onpage_seo(site_id: str, req: OnPageScanRequest, background_tasks: BackgroundTasks,
                           user=Depends(require_editor)):
-    """Crawl the site's live pages and score each one. Works on any platform."""
+    """Crawl the site's live pages and evaluate every SEO category."""
     site = await get_site_any(site_id)
     task_id = make_task_id()
-    await create_task_queue(task_id)
+    await create_task_queue(task_id, task_type="onpage_audit", site_id=site_id)
 
     async def run(tid):
         try:
-            limit = max(1, min(req.max_pages, 200))
-            if req.urls:
-                urls, source = req.urls[:limit], "supplied"
-            else:
-                await push_event(tid, "progress", {"message": "Discovering pages…"})
-                urls, source = await _discover_urls(site, limit)
+            limit = max(1, min(req.max_pages, HARD_PAGE_LIMIT))
 
-            if not urls:
-                await push_event(tid, "error", {
-                    "message": "No pages found to audit. Add a sitemap at /sitemap.xml, or sync the site first.",
-                })
-                return
+            async def progress(message: str, current: int = 0, total: int = 0):
+                await push_event(tid, "progress", {"message": message,
+                                                   "current": current, "total": total})
 
-            await push_event(tid, "progress", {"message": f"Auditing {len(urls)} pages from {source}…"})
-            pages, failed = [], 0
-            for idx, url in enumerate(urls, start=1):
-                result = await audit_url(url)
-                if not result["ok"]:
-                    failed += 1
-                pages.append(result)
-                await push_event(tid, "progress", {
-                    "message": f"Audited {idx}/{len(urls)} — {url}",
-                    "current": idx, "total": len(urls),
-                })
-                if idx < len(urls):
-                    await asyncio.sleep(CRAWL_DELAY_SECONDS)
+            keywords = await _focus_keywords(site_id)
+            history = await db.onpage_audits.find(
+                {"site_id": site_id}, {"_id": 0, "created_at": 1, "site_score": 1,
+                                       "overall_score": 1, "pages_audited": 1},
+            ).sort("created_at", 1).to_list(50)
+            tracked = await db.keyword_tracking.find({"site_id": site_id}, {"_id": 0}).to_list(200)
+            cached = [d["link"] for d in await db.posts.find(
+                {"site_id": site_id, "link": {"$nin": [None, ""]}}, {"_id": 0, "link": 1}
+            ).to_list(limit) if d.get("link")]
 
-            scored = [p for p in pages if p.get("score") is not None]
-            site_score = round(sum(p["score"] for p in scored) / len(scored)) if scored else None
+            psi_key = ""
+            if req.measure_cwv:
+                try:
+                    settings = await get_decrypted_settings()
+                    psi_key = settings.get("pagespeed_api_key") or ""
+                except Exception:
+                    psi_key = ""
 
-            # Which factors are dragging the site down, across all pages.
-            factor_totals: dict[str, list[int]] = {}
-            for p in scored:
-                for key, value in (p.get("factor_scores") or {}).items():
-                    factor_totals.setdefault(key, []).append(value)
-            factor_summary = [
-                {"key": key, "label": label, "weight": weight,
-                 "average": round(sum(factor_totals.get(key, [0])) / max(len(factor_totals.get(key, [1])), 1))}
-                for key, label, weight in SCORING_FACTORS
-            ]
+            gsc = await _gsc_snapshot(site)
 
-            audit = {
-                "id": str(uuid.uuid4()),
-                "site_id": site_id,
-                "site_score": site_score,
-                "pages_audited": len(scored),
-                "pages_failed": failed,
-                "url_source": source,
-                "factor_summary": sorted(factor_summary, key=lambda f: f["average"]),
-                "pages": sorted(pages, key=lambda p: (p.get("score") is None, p.get("score", 0))),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
+            audit = await run_full_audit(
+                site,
+                max_pages=limit,
+                urls=req.urls or None,
+                check_links=req.check_links,
+                measure_cwv=req.measure_cwv,
+                psi_sample=req.psi_sample,
+                psi_api_key=psi_key,
+                focus_keywords={p: (d.get("keyword") or "") for p, d in keywords.items()},
+                cached_urls=cached,
+                history=history,
+                tracked_keywords=tracked,
+                gsc=gsc,
+                progress=progress,
+            )
+            audit["id"] = str(uuid.uuid4())
+            audit["site_id"] = site_id
             await db.onpage_audits.insert_one(dict(audit))
-            audit.pop("_id", None)
             await log_activity(site_id, "onpage_audit",
-                               f"On-page audit: {len(scored)} pages, site score {site_score}")
+                               f"SEO audit: {audit['pages_audited']} pages, "
+                               f"overall score {audit['overall_score']}")
+            failing = sum(1 for a in (audit["categories"][-1].get("actions") or [])
+                          if a["status"] == "fail")
             await push_event(tid, "complete", {
-                "message": f"Audited {len(scored)} pages — site score {site_score}.",
-                "site_score": site_score, "pages_audited": len(scored), "pages_failed": failed,
+                "message": f"Audited {audit['pages_audited']} pages — overall score "
+                           f"{audit['overall_score']}/100, {failing} failing checks.",
+                "site_score": audit["site_score"], "overall_score": audit["overall_score"],
+                "pages_audited": audit["pages_audited"], "pages_failed": audit["pages_failed"],
+                "audit_id": audit["id"],
             })
         except Exception as e:
-            logger.error(f"On-page audit failed for {site_id}: {e}")
+            logger.exception(f"On-page audit failed for {site_id}")
             await push_event(tid, "error", {"message": str(e)})
         finally:
             await finish_task(tid)
@@ -192,20 +221,61 @@ async def scan_onpage_seo(site_id: str, req: OnPageScanRequest, background_tasks
 
 @api_router.get("/onpage/{site_id}")
 async def get_onpage_audit(site_id: str, user=Depends(require_user)):
-    """The most recent audit for this site."""
+    """The most recent audit for this site, in full."""
     doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
     if not doc:
-        return {"site_id": site_id, "site_score": None, "pages": [], "factor_summary": [],
-                "pages_audited": 0, "message": "No audit yet — run a scan."}
+        return {"site_id": site_id, "site_score": None, "overall_score": None, "pages": [],
+                "categories": [], "factor_summary": [], "pages_audited": 0,
+                "message": "No audit yet — run a scan."}
     return doc
+
+
+@api_router.get("/onpage/{site_id}/summary")
+async def get_onpage_summary(site_id: str, user=Depends(require_user)):
+    """Scores and headline counts only — small enough to render the tab strip
+    without shipping every page row."""
+    doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
+    if not doc:
+        return {"site_id": site_id, "overall_score": None, "categories": [],
+                "message": "No audit yet — run a scan."}
+    return {
+        "site_id": site_id,
+        "created_at": doc.get("created_at"),
+        "site_score": doc.get("site_score"),
+        "overall_score": doc.get("overall_score"),
+        "pages_audited": doc.get("pages_audited"),
+        "pages_failed": doc.get("pages_failed"),
+        "url_source": doc.get("url_source"),
+        "options": doc.get("options", {}),
+        "factor_summary": doc.get("factor_summary", []),
+        "categories": [{
+            "key": c["key"], "label": c["label"], "score": c.get("score"),
+            "summary": c.get("summary", ""),
+            "failing": sum(1 for k in c.get("checks", []) if k["status"] == "fail"),
+            "warning": sum(1 for k in c.get("checks", []) if k["status"] == "warn"),
+            "passing": sum(1 for k in c.get("checks", []) if k["status"] == "pass"),
+        } for c in doc.get("categories", [])],
+    }
+
+
+@api_router.get("/onpage/{site_id}/category/{key}")
+async def get_onpage_category(site_id: str, key: str, user=Depends(require_user)):
+    """One category in full, so the UI fetches detail only for the open tab."""
+    doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="No audit yet — run a scan first.")
+    for cat in doc.get("categories", []):
+        if cat["key"] == key:
+            return {**cat, "created_at": doc.get("created_at")}
+    raise HTTPException(status_code=404, detail=f"No category '{key}' in the latest audit.")
 
 
 @api_router.get("/onpage/{site_id}/pages")
 async def list_onpage_pages(site_id: str, user=Depends(require_user)):
-    """Every page known for this site, with its latest score and any SEO
-    metadata override currently in force. This is the browse-and-fix view:
-    pages come from the last audit (or the sitemap if none has run yet), and
-    overrides come from the site's own bridge."""
+    """Every page known for this site, with its latest score, its focus
+    keyword and any SEO metadata override currently in force. This is the
+    browse-and-fix view: pages come from the last audit (or the sitemap if
+    none has run yet), and overrides come from the site's own bridge."""
     site = await get_site_any(site_id)
     platform = site.get("platform", "wordpress")
 
@@ -224,19 +294,27 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
             by_url[u] = {"url": u, "score": None, "issues": [], "ok": None, "audited": False}
 
     overrides: dict = {}
+    capabilities: dict = {}
     meta_supported = platform != "wordpress"
     meta_error = None
     if meta_supported:
         try:
             bridge_site = await get_bridge_credentials(site_id)
             overrides = await bridge_list_meta(bridge_site)
+            try:
+                capabilities = await bridge_meta_capabilities(bridge_site)
+            except Exception as e:
+                logger.warning(f"Could not read bridge metadata capabilities for {site_id}: {e}")
         except HTTPException as e:
             meta_supported, meta_error = False, e.detail
+
+    keywords = await _focus_keywords(site_id)
 
     pages = []
     for url, page in by_url.items():
         route = _route_path(url)
         signals = page.get("signals") or {}
+        kw = keywords.get(route) or {}
         pages.append({
             "url": url,
             "path": route,
@@ -253,6 +331,10 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
             "live_title": signals.get("title", ""),
             "live_description": signals.get("description", ""),
             "override": overrides.get(route),
+            "focus_keyword": kw.get("keyword", ""),
+            "secondary_keywords": kw.get("secondary", []),
+            "search_intent": kw.get("intent", ""),
+            "keyword_analysis": page.get("keyword_analysis"),
         })
     pages.sort(key=lambda p: (p["score"] is None, p["score"] if p["score"] is not None else 0))
 
@@ -261,12 +343,27 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
         "platform": platform,
         "pages": pages,
         "meta_editing_supported": meta_supported,
+        "meta_capabilities": capabilities,
         "meta_editing_note": meta_error or (
+            capabilities.get("note") if capabilities else None
+        ) or (
             None if meta_supported else
             "Editing metadata here is for non-WordPress sites. For WordPress, use the SEO page's apply-meta action."
         ),
         "audited_at": (audit or {}).get("created_at"),
     }
+
+
+@api_router.get("/onpage/{site_id}/meta-capabilities")
+async def get_meta_capabilities(site_id: str, user=Depends(require_user)):
+    """Which metadata fields this site's bridge can actually store. Asked
+    before offering an input, so the UI never accepts an edit that would be
+    silently dropped."""
+    if await get_platform(site_id) == "wordpress":
+        return {"dialect": "wordpress", "supported_fields": [], "unsupported_fields": [],
+                "note": "WordPress metadata is written through the SEO page's apply-meta action."}
+    site = await get_bridge_credentials(site_id)
+    return await bridge_meta_capabilities(site)
 
 
 @api_router.put("/onpage/{site_id}/meta")
@@ -297,8 +394,10 @@ async def set_onpage_meta(site_id: str, body: MetaUpdate, user=Depends(require_e
 
     site = await get_bridge_credentials(site_id)
     result = await bridge_set_meta(site, route, fields)
+    unsupported = result.get("unsupported_fields") or []
     await log_activity(site_id, "onpage_meta_updated",
-                       f"Updated SEO metadata for {route}: {', '.join(sorted(fields))}")
+                       f"Updated SEO metadata for {route}: {', '.join(sorted(fields))}"
+                       + (f" (not stored: {', '.join(unsupported)})" if unsupported else ""))
 
     # Re-score the live page so the caller sees the effect of the edit rather
     # than having to re-run a whole audit. The bridge revalidates on write, but
@@ -322,7 +421,7 @@ async def set_onpage_meta(site_id: str, body: MetaUpdate, user=Depends(require_e
                 pages = audit.get("pages", [])
                 for idx, existing in enumerate(pages):
                     if existing.get("url") == page_url:
-                        pages[idx] = fresh
+                        pages[idx] = {**existing, **fresh, "path": route}
                         break
                 scored = [p["score"] for p in pages if p.get("score") is not None]
                 await db.onpage_audits.update_one(
@@ -350,19 +449,426 @@ async def clear_onpage_meta(site_id: str, path: str, user=Depends(require_editor
     return result
 
 
+# --- Focus keywords ---------------------------------------------------------
+# Stored here rather than on the site, because a keyword is a decision about
+# intent that no crawl can read off the page. Without it the analysis falls
+# back to a keyword inferred from the H1, and says so.
+
+@api_router.get("/onpage/{site_id}/keywords")
+async def list_focus_keywords(site_id: str, user=Depends(require_user)):
+    await get_site_any(site_id)
+    docs = await db.onpage_keywords.find({"site_id": site_id}, {"_id": 0}).to_list(1000)
+    return {"site_id": site_id, "keywords": docs}
+
+
+@api_router.put("/onpage/{site_id}/keyword")
+async def set_focus_keyword(site_id: str, body: FocusKeyword, user=Depends(require_editor)):
+    """Assign the focus keyword (and optional secondary keywords / intent) for
+    one page. Re-scores that page's keyword placement immediately."""
+    await get_site_any(site_id)
+    raw = body.path.strip() or body.url.strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Supply either `path` or `url`.")
+    route = _route_path(raw) if "://" in raw else _route_path(
+        "http://x" + (raw if raw.startswith("/") else "/" + raw))
+    keyword = body.keyword.strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="`keyword` cannot be empty — use DELETE to clear it.")
+
+    doc = {"site_id": site_id, "path": route, "keyword": keyword,
+           "secondary": [s.strip() for s in body.secondary if s.strip()],
+           "intent": body.intent.strip(),
+           "updated_at": datetime.now(timezone.utc).isoformat()}
+    await db.onpage_keywords.update_one({"site_id": site_id, "path": route},
+                                        {"$set": doc}, upsert=True)
+    await log_activity(site_id, "onpage_keyword_set", f"Focus keyword for {route}: {keyword}")
+
+    # Re-analyse the live page against the new keyword so the answer is about
+    # the page as it stands, not as it was at the last crawl.
+    analysis = None
+    site = await get_site_any(site_id)
+    page_url = f"{(site.get('url') or '').rstrip('/')}{route}"
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+                                     headers=BROWSER_HEADERS) as client:
+            fetched = await fetch_document(client, page_url)
+        if fetched.get("ok"):
+            sig = extract_page_signals(fetched["html"], page_url, fetched.get("headers"))
+            analysis = seo_audit.analyse_keyword(sig, keyword, inferred=False)
+    except Exception as e:
+        logger.warning(f"Could not re-analyse {page_url} for keyword '{keyword}': {e}")
+
+    return {**doc, "keyword_analysis": analysis}
+
+
+@api_router.delete("/onpage/{site_id}/keyword")
+async def clear_focus_keyword(site_id: str, path: str, user=Depends(require_editor)):
+    await get_site_any(site_id)
+    route = _route_path(path) if "://" in path else _route_path(
+        "http://x" + (path if path.startswith("/") else "/" + path))
+    result = await db.onpage_keywords.delete_one({"site_id": site_id, "path": route})
+    if not result.deleted_count:
+        raise HTTPException(status_code=404, detail=f"No focus keyword set for {route}.")
+    await log_activity(site_id, "onpage_keyword_cleared", f"Cleared focus keyword for {route}")
+    return {"cleared": route}
+
+
 @api_router.get("/onpage/{site_id}/history")
 async def get_onpage_history(site_id: str, user=Depends(require_user)):
     """Score over time, so improvements are visible rather than asserted."""
     docs = await db.onpage_audits.find(
-        {"site_id": site_id}, {"_id": 0, "created_at": 1, "site_score": 1, "pages_audited": 1},
+        {"site_id": site_id},
+        {"_id": 0, "created_at": 1, "site_score": 1, "overall_score": 1, "pages_audited": 1},
     ).sort("created_at", -1).to_list(50)
     return list(reversed(docs))
 
 
 @api_router.post("/onpage/{site_id}/page")
 async def audit_single_page(site_id: str, req: OnPageScanRequest, user=Depends(require_editor)):
-    """Audit one URL immediately, without a background task."""
-    await get_site_any(site_id)
+    """Audit one URL immediately, without a background task. Returns the full
+    signal set as well as the ten-factor score, so a single page can be
+    inspected after an edit without re-crawling the site."""
+    site = await get_site_any(site_id)
     if not req.urls:
         raise HTTPException(status_code=400, detail="Supply a URL in `urls`.")
-    return await audit_url(req.urls[0])
+    url = req.urls[0]
+    if not url.startswith("http"):
+        url = f"{(site.get('url') or '').rstrip('/')}{url if url.startswith('/') else '/' + url}"
+
+    async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        doc = await fetch_document(client, url)
+    if not doc.get("ok"):
+        return {"url": url, "ok": False, "status_code": doc.get("status_code"),
+                "error": doc.get("error"), "score": None, "issues": [], "factor_scores": {}}
+
+    signals = extract_page_signals(doc["html"], url, doc.get("headers"))
+    scored = score_page(signals)
+    keywords = await _focus_keywords(site_id)
+    stored = (keywords.get(route_path(url)) or {}).get("keyword", "")
+    keyword = stored or seo_audit.infer_focus_keyword(signals)
+    return {
+        "url": url, "path": route_path(url), "ok": True,
+        "status_code": doc.get("status_code"), "final_url": doc.get("final_url"),
+        "redirect_chain": doc.get("redirect_chain"), "elapsed_ms": doc.get("elapsed_ms"),
+        "bytes": doc.get("bytes"), "error": None,
+        "signals": {k: v for k, v in signals.items() if k not in ("text", "schema_objects")},
+        **scored,
+        "keyword_analysis": seo_audit.analyse_keyword(signals, keyword, inferred=not stored),
+        "terms": seo_audit.content_terms(signals),
+    }
+
+
+@api_router.get("/onpage/{site_id}/export")
+async def export_onpage_audit(site_id: str, kind: str = Query("actions", pattern="^(actions|pages|checks)$"),
+                              user=Depends(require_user)):
+    """The audit as CSV — the prioritised fix list, the per-page scores, or
+    every check. Reporting people can hand to someone who does not have a
+    login is the point of an audit."""
+    doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
+    if not doc:
+        raise HTTPException(status_code=404, detail="No audit yet — run a scan first.")
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    if kind == "actions":
+        writer.writerow(["Priority", "Status", "Severity", "Category", "Finding", "Pages affected", "Detail"])
+        actions = (doc["categories"][-1].get("actions") if doc.get("categories") else []) or []
+        for idx, a in enumerate(actions, start=1):
+            writer.writerow([idx, a["status"], a["severity"], a["category"], a["label"],
+                             a["affected"], a["detail"]])
+    elif kind == "pages":
+        writer.writerow(["URL", "Path", "Score", "Status", "Title", "Title length",
+                         "Description", "Description length", "H1", "H1 count", "Words",
+                         "Images", "Images missing alt", "Canonical", "Noindex", "Issues"])
+        for p in doc.get("pages", []):
+            s = p.get("signals") or {}
+            writer.writerow([p["url"], p.get("path", ""), p.get("score"),
+                             p.get("status_code") or p.get("error") or "",
+                             s.get("title", ""), s.get("title_length", ""),
+                             s.get("description", ""), s.get("description_length", ""),
+                             s.get("h1", ""), s.get("h1_count", ""), s.get("word_count", ""),
+                             s.get("image_count", ""), s.get("images_missing_alt", ""),
+                             s.get("canonical", ""), s.get("noindex", ""),
+                             len(p.get("issues") or [])])
+    else:
+        writer.writerow(["Category", "Category score", "Check", "Status", "Severity", "Detail", "Value"])
+        for cat in doc.get("categories", []):
+            for chk in cat.get("checks", []):
+                writer.writerow([cat["label"], cat.get("score"), chk["label"], chk["status"],
+                                 chk["severity"], chk["detail"], chk.get("value")])
+
+    stamp = (doc.get("created_at") or "")[:10]
+    filename = f"seo-audit-{kind}-{stamp or 'latest'}.csv"
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# --- Code-owned fixes -------------------------------------------------------
+# Some SEO surfaces genuinely cannot be edited from outside a Next.js repo:
+# robots.txt and the sitemap are generated by app/robots.ts and app/sitemap.ts,
+# redirects live in next.config, and canonical/noindex live in the page's own
+# generateMetadata(). Rather than pretend those are editable here — or leave
+# the audit pointing at problems with no route to a fix — the findings are
+# turned into the exact code to paste, pre-filled with this site's own values.
+
+def _robots_snippet(site_url: str, robots: dict, disallow: list[str]) -> str:
+    rules = "\n".join(f'        "{d}",' for d in disallow) or '        "/api/",'
+    return f'''// app/robots.ts — replaces a static public/robots.txt
+import type {{ MetadataRoute }} from "next";
+
+export default function robots(): MetadataRoute.Robots {{
+  return {{
+    rules: {{
+      userAgent: "*",
+      allow: "/",
+      disallow: [
+{rules}
+      ],
+    }},
+    sitemap: "{site_url}/sitemap.xml",
+    host: "{site_url}",
+  }};
+}}'''
+
+
+def _sitemap_snippet(site_url: str) -> str:
+    return f'''// app/sitemap.ts — a lastmod on every entry, which the audit checks for
+import type {{ MetadataRoute }} from "next";
+import {{ getAllPages, getAllPosts }} from "@/lib/content";   // your own loaders
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {{
+  const base = "{site_url}";
+  const pages = await getAllPages();
+  const posts = await getAllPosts();
+
+  return [
+    {{ url: `${{base}}/`, lastModified: new Date(), changeFrequency: "weekly", priority: 1 }},
+    ...pages.map((p) => ({{
+      url: `${{base}}/${{p.slug}}/`,
+      // A real timestamp, not new Date() — an always-now lastmod teaches
+      // crawlers to ignore the field entirely.
+      lastModified: new Date(p.updatedAt ?? p.publishedAt),
+      changeFrequency: "monthly" as const,
+      priority: 0.8,
+    }})),
+    ...posts.map((p) => ({{
+      url: `${{base}}/blog/${{p.slug}}/`,
+      lastModified: new Date(p.updatedAt ?? p.date),
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    }})),
+  ];
+}}'''
+
+
+def _redirects_snippet(pairs: list[tuple[str, str]]) -> str:
+    if not pairs:
+        return ("// No 404s or redirect chains were found in this crawl, so there is nothing to add.\n"
+                "// When a URL does change, add it here rather than leaving the old one dead:\n"
+                "//   { source: \"/old-path\", destination: \"/new-path\", permanent: true }")
+    entries = "\n".join(
+        f'      {{ source: "{src}", destination: "{dst}", permanent: true }},' for src, dst in pairs)
+    return f'''// next.config.mjs — permanent: true emits a 301, which moves ranking signals.
+// A 302 (permanent: false) tells Google to keep the OLD url indexed.
+const nextConfig = {{
+  async redirects() {{
+    return [
+{entries}
+    ];
+  }},
+}};
+
+export default nextConfig;'''
+
+
+def _metadata_snippet(site_url: str, examples: list[dict]) -> str:
+    ex = examples[0] if examples else {"path": "/about", "title": "About Us | Your Brand",
+                                       "description": "A 150–160 character summary of this page."}
+    return f'''// app/{ex["path"].strip("/") or "(home)"}/page.tsx
+// Canonical, noindex and the OG title/description live here — the SEO Bridge
+// stores the title, description and OG image, but these fields are code.
+import type {{ Metadata }} from "next";
+
+const PATH = "{ex["path"]}";
+
+export const metadata: Metadata = {{
+  title: {ex.get("title", "")!r},
+  description: {ex.get("description", "")!r},
+  alternates: {{
+    // Self-referencing, absolute, and matching the URL you actually serve
+    // (mind the trailing slash — a mismatch creates the duplicate the
+    // canonical was meant to prevent).
+    canonical: `{site_url}${{PATH}}/`,
+  }},
+  openGraph: {{
+    title: {ex.get("title", "")!r},
+    description: {ex.get("description", "")!r},
+    url: `{site_url}${{PATH}}/`,
+    siteName: "Your Brand",
+    images: [{{ url: "{site_url}/og/default.png", width: 1200, height: 630 }}],
+    type: "website",
+  }},
+  twitter: {{ card: "summary_large_image" }},
+  // Only for pages that must stay out of the index — thank-you pages,
+  // internal search results, utility pages.
+  // robots: {{ index: false, follow: true }},
+}};'''
+
+
+def _schema_snippet(site_url: str, missing_types: list[str]) -> str:
+    wants_local = "LocalBusiness" in missing_types or "Organization" in missing_types
+    body = f'''// app/layout.tsx — one JSON-LD block per real entity on the page.
+// Never mark up something the page does not actually contain: mismatched
+// structured data is a manual-action risk, not a free rich result.
+const organization = {{
+  "@context": "https://schema.org",
+  "@type": "{'LocalBusiness' if wants_local else 'Organization'}",
+  name: "Your Brand",
+  url: "{site_url}",
+  logo: "{site_url}/logo.png",
+  sameAs: ["https://www.linkedin.com/company/your-brand"],'''
+    if wants_local:
+        body += '''
+  telephone: "+971-4-000-0000",
+  address: {
+    "@type": "PostalAddress",
+    streetAddress: "Office 000, Building",
+    addressLocality: "Dubai",
+    addressCountry: "AE",
+  },
+  geo: { "@type": "GeoCoordinates", latitude: 25.2048, longitude: 55.2708 },
+  openingHoursSpecification: [{
+    "@type": "OpeningHoursSpecification",
+    dayOfWeek: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    opens: "09:00", closes: "18:00",
+  }],'''
+    body += '''
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(organization) }}
+        />
+        {children}
+      </body>
+    </html>
+  );
+}'''
+    return body
+
+
+def _security_headers_snippet(missing: list[str]) -> str:
+    known = {
+        "strict-transport-security": ("Strict-Transport-Security",
+                                      "max-age=63072000; includeSubDomains; preload"),
+        "content-security-policy": ("Content-Security-Policy",
+                                    "default-src 'self'; img-src 'self' data: https:; "
+                                    "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"),
+        "x-content-type-options": ("X-Content-Type-Options", "nosniff"),
+        "x-frame-options": ("X-Frame-Options", "SAMEORIGIN"),
+        "referrer-policy": ("Referrer-Policy", "strict-origin-when-cross-origin"),
+        "permissions-policy": ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    }
+    rows = "\n".join(f'          {{ key: "{known[m][0]}", value: "{known[m][1]}" }},'
+                     for m in missing if m in known)
+    if not rows:
+        return "// Every security header this audit checks is already set."
+    return f'''// next.config.mjs — headers() applies to every route.
+// Roll CSP out in report-only mode first; a strict policy will break inline
+// scripts and third-party embeds until they are allow-listed.
+const nextConfig = {{
+  async headers() {{
+    return [
+      {{
+        source: "/(.*)",
+        headers: [
+{rows}
+        ],
+      }},
+    ];
+  }},
+}};
+
+export default nextConfig;'''
+
+
+@api_router.get("/onpage/{site_id}/snippets")
+async def get_nextjs_snippets(site_id: str, user=Depends(require_user)):
+    """Ready-to-paste Next.js code for the SEO surfaces that live in the repo
+    rather than in the bridge, pre-filled from this site's latest audit."""
+    site = await get_site_any(site_id)
+    platform = site.get("platform", "wordpress")
+    base = (site.get("url") or "").rstrip("/")
+    doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
+    cats = {c["key"]: c for c in (doc or {}).get("categories", [])}
+
+    if platform == "wordpress":
+        return {"platform": platform, "snippets": [],
+                "note": "These snippets are for a Next.js codebase. On WordPress the same surfaces are "
+                        "managed by Rank Math / Yoast / AIOSEO and the Redirection plugin."}
+
+    robots = cats.get("robots") or {}
+    existing_disallow: list[str] = []
+    for row in robots.get("items", []):
+        existing_disallow += [d for d in (row.get("disallow") or []) if d]
+
+    # Every 404 the crawl hit is a redirect that should exist. The destination
+    # is left as "/" rather than guessed — a wrong 301 is worse than none.
+    redirect_pairs: list[tuple[str, str]] = []
+    for row in (cats.get("redirects") or {}).get("items", []):
+        if row.get("status") == 404:
+            redirect_pairs.append((row.get("path") or "/", "/"))
+        elif (row.get("hops") or 0) > 1 and row.get("final_url"):
+            redirect_pairs.append((row.get("path") or "/", route_path(row["final_url"])))
+
+    missing_headers = [c["id"].replace("hdr_", "").replace("_", "-")
+                       for c in (cats.get("security") or {}).get("checks", [])
+                       if c["id"].startswith("hdr_") and c["status"] != "pass"]
+
+    schema_types_present = {t["type"] for t in (cats.get("schema") or {}).get("type_counts", [])}
+    missing_schema = [t for t in ("Organization", "LocalBusiness", "BreadcrumbList")
+                      if t not in schema_types_present]
+
+    weak_meta = [{"path": p.get("path", "/"),
+                  "title": (p.get("signals") or {}).get("title", ""),
+                  "description": (p.get("signals") or {}).get("description", "")}
+                 for p in (doc or {}).get("pages", [])
+                 if (p.get("signals") or {}).get("canonical", "") == ""][:3]
+
+    snippets = [
+        {"key": "robots", "title": "app/robots.ts", "language": "typescript",
+         "why": "robots.txt on a Next.js site is generated by app/robots.ts. This version advertises "
+                "your sitemap, which is the first place a crawler looks.",
+         "code": _robots_snippet(base, robots, existing_disallow)},
+        {"key": "sitemap", "title": "app/sitemap.ts", "language": "typescript",
+         "why": "Adds a real lastModified to every entry — "
+                f"{(cats.get('sitemap') or {}).get('summary', 'your sitemap')} currently reports "
+                "dates on only some of them.",
+         "code": _sitemap_snippet(base)},
+        {"key": "redirects", "title": "next.config.mjs — redirects()", "language": "javascript",
+         "why": ("Turns the 404s and redirect chains this audit found into 301s. Set each destination "
+                 "to the closest live page — the placeholder \"/\" is deliberately not a guess."
+                 if redirect_pairs else
+                 "Where to add a 301 the next time a URL changes."),
+         "code": _redirects_snippet(redirect_pairs[:25])},
+        {"key": "metadata", "title": "generateMetadata / export const metadata", "language": "typescript",
+         "why": "Canonical, noindex and the OG title/description are code, not bridge data — this is "
+                "where they belong.",
+         "code": _metadata_snippet(base, weak_meta)},
+        {"key": "schema", "title": "JSON-LD structured data", "language": "typescript",
+         "why": ("Missing site-wide types: " + ", ".join(missing_schema)) if missing_schema
+                else "Your structured data already covers the site-wide types; use this as the pattern "
+                     "for page-level types (Service, Article, FAQPage).",
+         "code": _schema_snippet(base, missing_schema)},
+        {"key": "security", "title": "next.config.mjs — headers()", "language": "javascript",
+         "why": ("Missing on the live response: " + ", ".join(missing_headers)) if missing_headers
+                else "All checked security headers are present.",
+         "code": _security_headers_snippet(missing_headers)},
+    ]
+    return {"platform": platform, "site_url": base, "audited_at": (doc or {}).get("created_at"),
+            "snippets": snippets}

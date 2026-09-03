@@ -1392,6 +1392,30 @@
     ]
   ],
   [
+    "/api/nextjs/{site_id}/pages",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/pages/content",
+    [
+      "DELETE"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/pages/content",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/pages/content",
+    [
+      "PUT"
+    ]
+  ],
+  [
     "/api/nextjs/{site_id}/posts",
     [
       "GET"
@@ -1407,6 +1431,12 @@
     "/api/nextjs/{site_id}/posts/{slug}",
     [
       "DELETE"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/posts/{slug}",
+    [
+      "GET"
     ]
   ],
   [
@@ -1470,7 +1500,37 @@
     ]
   ],
   [
+    "/api/onpage/{site_id}/category/{key}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/export",
+    [
+      "GET"
+    ]
+  ],
+  [
     "/api/onpage/{site_id}/history",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/keyword",
+    [
+      "DELETE"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/keyword",
+    [
+      "PUT"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/keywords",
     [
       "GET"
     ]
@@ -1485,6 +1545,12 @@
     "/api/onpage/{site_id}/meta",
     [
       "PUT"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/meta-capabilities",
+    [
+      "GET"
     ]
   ],
   [
@@ -1503,6 +1569,18 @@
     "/api/onpage/{site_id}/scan",
     [
       "POST"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/snippets",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/summary",
+    [
+      "GET"
     ]
   ],
   [

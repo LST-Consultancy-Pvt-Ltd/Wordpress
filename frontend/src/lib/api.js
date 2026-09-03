@@ -421,12 +421,35 @@ export const auditSinglePage         = (siteId, url)             => api.post(`/o
 export const listOnPagePages         = (siteId)                  => api.get(`/onpage/${siteId}/pages`);
 export const setPageMeta             = (siteId, data)            => api.put(`/onpage/${siteId}/meta`, data);
 export const clearPageMeta           = (siteId, path)            => api.delete(`/onpage/${siteId}/meta`, { params: { path } });
+export const getOnPageSummary        = (siteId)                  => api.get(`/onpage/${siteId}/summary`);
+export const getOnPageCategory       = (siteId, key)             => api.get(`/onpage/${siteId}/category/${key}`);
+export const getMetaCapabilities     = (siteId)                  => api.get(`/onpage/${siteId}/meta-capabilities`);
+export const listFocusKeywords       = (siteId)                  => api.get(`/onpage/${siteId}/keywords`);
+export const setFocusKeyword         = (siteId, data)            => api.put(`/onpage/${siteId}/keyword`, data);
+export const clearFocusKeyword       = (siteId, path)            => api.delete(`/onpage/${siteId}/keyword`, { params: { path } });
+export const getNextjsSnippets       = (siteId)                  => api.get(`/onpage/${siteId}/snippets`);
+export const exportOnPageAudit       = (siteId, kind = "actions") =>
+  api.get(`/onpage/${siteId}/export`, { params: { kind }, responseType: "blob" });
 
 // Next.js sites: content publishing via the SEO Bridge endpoint in their app
 export const nextjsBridgeHealth      = (siteId)                  => api.get(`/nextjs/${siteId}/health`);
 export const nextjsListPosts         = (siteId)                  => api.get(`/nextjs/${siteId}/posts`);
+export const nextjsGetPost           = (siteId, slug)             => api.get(`/nextjs/${siteId}/posts/${slug}`);
 export const nextjsPublishPost       = (siteId, data)            => api.post(`/nextjs/${siteId}/posts`, data);
 export const nextjsDeletePost        = (siteId, slug)            => api.delete(`/nextjs/${siteId}/posts/${slug}`);
+
+// Next.js sites: editable body-copy blocks on static pages (not blog posts)
+export const nextjsListPageContent   = (siteId)                  => api.get(`/nextjs/${siteId}/pages`);
+export const nextjsGetPageContent    = (siteId, path)             => api.get(`/nextjs/${siteId}/pages/content`, { params: { path } });
+export const nextjsSetPageContent    = (siteId, path, key, value) => api.put(`/nextjs/${siteId}/pages/content`, { path, key, value });
+export const nextjsClearPageContent  = (siteId, path, key)        => api.delete(`/nextjs/${siteId}/pages/content`, { params: key ? { path, key } : { path } });
+
+// Next.js sites: editable image alt text on static pages
+export const nextjsListImages        = (siteId)                  => api.get(`/nextjs/${siteId}/images`);
+export const nextjsGetPageImages     = (siteId, path)             => api.get(`/nextjs/${siteId}/images/content`, { params: { path } });
+export const nextjsSetImageAlt       = (siteId, path, key, alt)   => api.put(`/nextjs/${siteId}/images/content`, { path, key, alt });
+export const nextjsClearImageAlt     = (siteId, path, key)        => api.delete(`/nextjs/${siteId}/images/content`, { params: key ? { path, key } : { path } });
+export const nextjsGenerateImageAlt  = (siteId, path, key, src)   => api.post(`/nextjs/${siteId}/images/generate-alt`, { path, key, src });
 
 // Direct-posting directories (sign in & get listed — no outreach email)
 export const getDirectories             = (siteId)                  => api.get(`/directories/${siteId}`);

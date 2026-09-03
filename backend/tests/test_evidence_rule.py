@@ -1473,19 +1473,31 @@ def test_onpage_scan_falls_back_to_synced_posts_when_there_is_no_sitemap():
             ])
             site = {"id": site_id, "url": "https://next.example"}
 
+            import datetime as _dt
+
             class _Resp:
+                """Everything the crawler reads off a response, so a mock that
+                is missing one does not look like a discovery bug."""
                 status_code = 404
                 text = ""
+                content = b""
+                headers = {}
+                history = ()
+                url = "https://next.example/"
+                elapsed = _dt.timedelta(seconds=0.01)
 
             class _Client:
                 async def __aenter__(self): return self
                 async def __aexit__(self, *a): return False
                 async def get(self, *a, **k): return _Resp()
+                async def head(self, *a, **k): return _Resp()
 
             with patch.object(onpage_router.httpx, "AsyncClient", lambda *a, **k: _Client()):
                 urls, source = await onpage_router._discover_urls(site, 50)
 
-            assert source == "synced posts"
+            # No sitemap and an unreachable homepage (so no links to follow)
+            # leaves the synced content cache as the only page list.
+            assert source == "synced content"
             assert urls == ["https://next.example/blog/a", "https://next.example/blog/b"]
         finally:
             await db.posts.delete_many({"site_id": site_id})
@@ -1729,6 +1741,8 @@ def test_meta_write_preserves_fields_it_was_not_asked_to_change():
     sent = {}
 
     async def fake_request(site, method, path="", data=None):
+        if method == "GET" and path == "meta":
+            return {"pages": [{"slug": "azure-data-migration"}]}    # slug-keyed bridge
         if method == "GET":
             return {"slug": "azure-data-migration", "title": "Page",
                     "seo": {"title": "Old title", "description": "Old desc",
@@ -1758,6 +1772,8 @@ def test_meta_write_falls_back_to_the_flat_dialect():
     attempts = []
 
     async def fake_request(site, method, path="", data=None):
+        if method == "GET" and path == "meta":
+            return {"pages": [{"slug": "about"}]}      # slug-keyed bridge
         if method == "GET":
             return {"seo": {"title": "Old"}}
         attempts.append(data)
@@ -1777,14 +1793,54 @@ def test_meta_write_falls_back_to_the_flat_dialect():
 
 
 
-def test_meta_write_refuses_the_home_page_slug_clearly():
+def test_meta_write_finds_the_home_page_under_its_conventional_slug():
+    """The home page has no slug of its own, but a slug-keyed bridge files it
+    under a conventional name — the live one uses "home". Refusing outright
+    (as this used to) made the site's most important page the one page whose
+    title could not be edited."""
     import providers.nextjs as nx
 
+    seen = []
+
+    async def fake_request(site, method, path="", data=None):
+        if method == "GET" and path == "meta":
+            return {"pages": [{"slug": "", "seoTitle": "Old"}]}     # slug-keyed bridge
+        if method == "GET" and path == "pages/home":
+            return {"slug": "home", "seo": {"title": "Old title"}}
+        if method == "GET":
+            raise HTTPException(status_code=400, detail="Page not found")
+        seen.append(path)
+        return {"slug": "home", "seo": dict(data or {})}
+
     async def go():
-        with pytest.raises(HTTPException) as exc:
-            await nx.bridge_set_meta({"url": "https://x.example"}, "/", {"title": "x"})
-        assert exc.value.status_code == 400
-        assert "empty slug" in exc.value.detail
+        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
+            res = await nx.bridge_set_meta({"url": "https://x.example"}, "/", {"title": "New"})
+        assert seen == ["pages/home/"], seen
+        assert res["slug"] == "home"
+
+    _run(go())
+
+
+def test_meta_write_says_which_fields_the_bridge_cannot_store():
+    """A slug-keyed bridge has slots for title/description/ogImage only and
+    silently drops the rest. Reporting those as saved is the failure mode this
+    guards: the user sees a green tick and the live page never changes."""
+    import providers.nextjs as nx
+
+    async def fake_request(site, method, path="", data=None):
+        if method == "GET" and path == "meta":
+            return {"pages": [{"slug": "about"}]}
+        if method == "GET":
+            return {"slug": "about", "seo": {"title": "Old"}}
+        return {"slug": "about", "seo": {k: v for k, v in (data or {}).items() if v is not None}}
+
+    async def go():
+        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
+            res = await nx.bridge_set_meta({"url": "https://x.example"}, "/about",
+                                           {"title": "New", "canonical": "https://x/about",
+                                            "noindex": True})
+        assert res["applied_fields"] == ["title"]
+        assert set(res["unsupported_fields"]) == {"canonical", "noindex"}
 
     _run(go())
 
@@ -1803,6 +1859,8 @@ def test_bridge_set_meta_rejects_a_silent_no_op_and_finds_the_working_dialect():
         sent = []
 
         async def fake_put(site, method, path, body=None):
+            if method == "GET" and path == "meta":
+                return {"pages": [{"slug": "p"}]}      # slug-keyed bridge
             if method == "GET":
                 return {"seo": dict(stored)}
             sent.append(body)
@@ -1833,6 +1891,8 @@ def test_bridge_set_meta_raises_when_every_dialect_is_silently_ignored():
         stored = {"title": "Old title", "description": "Old description"}
 
         async def never_writes(site, method, path, body=None):
+            if method == "GET" and path == "meta":
+                return {"pages": [{"slug": "p"}]}      # slug-keyed bridge
             return {"seo": dict(stored)}
 
         with patch.object(nx, "bridge_request", new=never_writes):

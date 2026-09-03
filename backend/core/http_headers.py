@@ -16,5 +16,13 @@ BROWSER_HEADERS = {
 }
 
 # Statuses that commonly mean "blocked by anti-bot protection", not "genuinely
-# unavailable" — worth a retry (e.g. HEAD -> GET) before concluding failure.
-INCONCLUSIVE_STATUSES = {403, 405, 429}
+# unavailable" — worth a retry (e.g. HEAD -> GET) before concluding failure,
+# and worth reporting as "blocked" rather than "broken" if the retry also
+# fails. A genuinely dead page answers 404 or 410; when a plain public URL
+# answers one of these, it is nearly always the host refusing the client.
+#
+# 400 is here because Facebook answers 400 to requests from datacenter IPs
+# regardless of method — HEAD and GET alike, with a short error body — so a
+# live page like facebook.com/<company> would otherwise be reported as a
+# broken outbound link on every scan.
+INCONCLUSIVE_STATUSES = {400, 403, 405, 429}
