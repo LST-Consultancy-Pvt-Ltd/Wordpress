@@ -87,3 +87,6 @@ frontend/node_modules/.cache/default-development/0.pack
 # Environment files
 *.env
 *.env.*
+
+# Database backups (encrypted archives); keep off-repo
+backups/

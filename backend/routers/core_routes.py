@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from core.activity import log_activity
 from core.crypto import _SENSITIVE_SETTINGS_FIELDS, decrypt_field, encrypt_field
+from core.automation_policy import automatic_writes_frozen
 from core.db import db, mongo_client
 from core.router import api_router
 from core.scheduled_jobs import _schedule_job
@@ -54,6 +55,7 @@ async def health_check():
         healthy = False
 
     checks["scheduler"] = "running" if scheduler.running else "stopped"
+    checks["automatic_site_writes"] = "frozen" if automatic_writes_frozen() else "enabled"
 
     try:
         from providers.dataforseo import _dfs_available

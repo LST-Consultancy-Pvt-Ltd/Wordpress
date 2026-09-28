@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, nextjs-migration]
+  pull_request:
+
+jobs:
+  legacy-cms-reference-gate:
+    # Ratchet: fails if any file gains a reference to the removed CMS stack
+    # (see scripts/legacy_reference_scan.py for the patterns) beyond
+    # migration/legacy-scan-baseline.json. The baseline only ever shrinks; at
+    # the end of the migration it is empty.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest==9.0.2
+      - run: python scripts/legacy_reference_scan.py check --verbose
+      - run: python -m pytest -q scripts/tests
+
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports: ["27017:27017"]
+    env:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: ci_test
+      JWT_SECRET_KEY: ci-only-not-a-secret
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.runtime.txt
+      - run: pip install -r requirements.runtime.txt
+      - run: python -m pytest -q tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: yarn install --frozen-lockfile
+      - run: CI=false yarn build

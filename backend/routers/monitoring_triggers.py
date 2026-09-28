@@ -14,6 +14,7 @@ import httpx
 from core.db import db
 from core.security import get_current_user, require_editor
 from core.activity import log_activity
+from core.automation_policy import skip_if_frozen
 from providers.wordpress import get_wp_credentials
 from routers.autopilot import _autopilot_run_pipeline_bg
 from core.router import api_router
@@ -58,9 +59,11 @@ async def _check_rank_drop_triggers():
             worst = max(dropped, key=lambda d: d["drop"])
             await log_activity(site_id, "rank_drop_trigger", f"Keyword '{worst['keyword']}' dropped from #{worst['from']} to #{worst['to']}")
             job_id = str(uuid.uuid4())
-            await db.autopilot_jobs.insert_one({"id": job_id, "site_id": site_id, "status": "queued",
+            frozen = skip_if_frozen(f"autopilot pipeline queued by trigger for site {site_id}")
+            await db.autopilot_jobs.insert_one({"id": job_id, "site_id": site_id, "status": "skipped: automatic writes frozen" if frozen else "queued",
                 "trigger": "rank_drop", "trigger_data": dropped, "created_at": datetime.now(timezone.utc).isoformat()})
-            asyncio.create_task(_autopilot_run_pipeline_bg(site_id, job_id))
+            if not frozen:
+                asyncio.create_task(_autopilot_run_pipeline_bg(site_id, job_id))
 
 async def _check_new_keyword_triggers():
     """Check for newly added keywords → auto-queue pipeline run."""
@@ -72,10 +75,12 @@ async def _check_new_keyword_triggers():
         if new_kws:
             await log_activity(site_id, "new_keyword_trigger", f"{len(new_kws)} new keywords — queuing pipeline")
             job_id = str(uuid.uuid4())
-            await db.autopilot_jobs.insert_one({"id": job_id, "site_id": site_id, "status": "queued",
+            frozen = skip_if_frozen(f"autopilot pipeline queued by trigger for site {site_id}")
+            await db.autopilot_jobs.insert_one({"id": job_id, "site_id": site_id, "status": "skipped: automatic writes frozen" if frozen else "queued",
                 "trigger": "new_keyword", "trigger_data": [k.get("keyword", "") for k in new_kws],
                 "created_at": datetime.now(timezone.utc).isoformat()})
-            asyncio.create_task(_autopilot_run_pipeline_bg(site_id, job_id))
+            if not frozen:
+                asyncio.create_task(_autopilot_run_pipeline_bg(site_id, job_id))
 
 
 # ========================

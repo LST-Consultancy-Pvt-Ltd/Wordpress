@@ -11,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from core.activity import log_activity
+from core.automation_policy import skip_if_frozen
 from core.db import db
 from core.scheduler import scheduler
 from providers.wordpress import get_wp_credentials, wp_api_request
@@ -64,6 +65,12 @@ async def run_seo_health_check(job_id: str, site_id: str, user_id: str):
 
 async def run_scheduled_publish(job_id: str, site_id: str, user_id: str, post_id: str):
     """Publish a scheduled post/page."""
+    if skip_if_frozen(f"scheduled publish job {job_id}"):
+        await db.scheduled_jobs.update_one(
+            {"id": job_id},
+            {"$set": {"last_run": datetime.now(timezone.utc).isoformat(), "last_run_status": "skipped: automatic writes frozen"}}
+        )
+        return
     try:
         site = await get_wp_credentials(site_id)
         response = await wp_api_request(site, "PUT", f"posts/{post_id}", {"status": "publish"})
@@ -120,6 +127,8 @@ def _schedule_job(job: dict):
             misfire_grace_time=3600,
         )
     elif job_type == "scheduled_publish":
+        if skip_if_frozen(f"registering scheduled publish job {job_id}"):
+            return
         cron = job.get("cron_expression")
         post_id = job.get("publish_post_id", "")
         if cron:

@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.activity import log_activity
+from core.automation_policy import skip_if_frozen
 from core.ai import get_ai_response
 from core.crypto import decrypt_field
 from core.db import db
@@ -271,6 +272,8 @@ def _schedule_autopilot_job(site_id: str, frequency: str):
         scheduler.remove_job(job_id)
     except Exception:
         pass
+    if skip_if_frozen(f"registering autopilot schedule for site {site_id}"):
+        return
     if frequency == "daily":
         trigger = CronTrigger(hour=8, minute=0, timezone="UTC")
     elif frequency == "3x_week":
@@ -278,13 +281,20 @@ def _schedule_autopilot_job(site_id: str, frequency: str):
     else:  # weekly
         trigger = CronTrigger(day_of_week="mon", hour=8, minute=0, timezone="UTC")
     scheduler.add_job(
-        _autopilot_run_pipeline_bg,
+        _scheduled_autopilot_run,
         trigger=trigger,
         id=job_id,
         args=[site_id],
         replace_existing=True,
         misfire_grace_time=3600,
     )
+
+
+async def _scheduled_autopilot_run(site_id: str):
+    """Cron entry point: unattended runs publish, so they honour the freeze."""
+    if skip_if_frozen(f"scheduled autopilot run for site {site_id}"):
+        return
+    await _autopilot_run_pipeline_bg(site_id)
 
 
 async def _restore_autopilot_schedules():

@@ -1,0 +1,7 @@
+# Paths the zero-WordPress-reference scan skips entirely.
+# Keep this limited to historical migration notes that are NOT shipped
+# (excluded from every Docker image via .dockerignore), plus the scanner itself.
+# Glob syntax (fnmatch); a trailing /** covers a whole directory.
+migration/**
+scripts/legacy_reference_scan.py
+scripts/tests/test_legacy_reference_scan.py

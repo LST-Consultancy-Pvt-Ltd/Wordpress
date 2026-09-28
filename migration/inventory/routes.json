@@ -1,0 +1,3888 @@
+{
+ "note": "direct_legacy_refs only covers the handler body; helpers it calls are classified in backend-modules.md",
+ "count": 384,
+ "routes": [
+  {
+   "path": "/api/admin/migrate-encrypt",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "migrate_encrypt",
+   "direct_legacy_refs": [
+    "app_password"
+   ]
+  },
+  {
+   "path": "/api/brief/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "get_content_briefs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/brief/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "generate_content_brief",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/brief/{site_id}/{brief_id}/generate-post",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "generate_post_from_brief_endpoint",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/images/{site_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "get_image_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/images/{site_id}/audit",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "audit_site_images",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/images/{site_id}/generate-all-alts",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "generate_all_alt_texts",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/images/{site_id}/generate-alt/{media_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "generate_alt_text_for_image",
+   "direct_legacy_refs": [
+    "WordPress",
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/plugins/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "get_plugin_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/plugins/{site_id}/audit",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "audit_site_plugins",
+   "direct_legacy_refs": [
+    "WP",
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/rank-tracker/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "get_rank_tracker_data",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/rank-tracker/{site_id}/track",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "save_tracked_keywords",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/rank-tracker/{site_id}/tracked",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "get_tracked_keywords_for_site",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/readability/{site_id}/{wp_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "analyze_readability",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/writing-styles",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "list_writing_styles",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/writing-styles",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "create_writing_style",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/writing-styles/{style_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "update_writing_style",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/writing-styles/{style_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.admin_migration",
+   "handler": "delete_writing_style",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/activity",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_misc",
+   "handler": "get_all_activity_logs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/activity/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_misc",
+   "handler": "get_activity_logs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/dashboard/stats",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_misc",
+   "handler": "get_dashboard_stats",
+   "direct_legacy_refs": [
+    "app_password"
+   ]
+  },
+  {
+   "path": "/api/users",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.admin_misc",
+   "handler": "list_users",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/users/{user_id}/role",
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.admin_misc",
+   "handler": "update_user_role",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/bid-suggestions",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_bid_suggestions",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/campaign/{campaign_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_delete_campaign",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/campaign/{campaign_id}/pause",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_pause",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/campaign/{campaign_id}/resume",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_resume",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/campaigns",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_campaigns",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/connect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_connect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/create-campaign",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_create",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/generate-campaign",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_generate",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/negative-keyword",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_negative_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/oauth-url",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_oauth_url",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/google/search-terms",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ads",
+   "handler": "google_ads_search_terms",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/autopilot-settings",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_autopilot_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/campaign/{campaign_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_delete_campaign",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/campaign/{campaign_id}/pause",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_pause",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/campaign/{campaign_id}/resume",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_resume",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/campaigns",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_campaigns",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/connect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_connect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/create-campaign",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_create",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/disconnect",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_disconnect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/meta/generate-campaign",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ads",
+   "handler": "meta_ads_generate",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/agent/session/{session_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "get_agent_session",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/agent/session/{session_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "delete_agent_session",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/agent/sessions",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "create_agent_session",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/agent/sessions/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "get_agent_sessions",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/agent/turn",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "agent_turn",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai/command",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "execute_ai_command",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ai/commands/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.ai_agent",
+   "handler": "get_ai_commands",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/analyze",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "analyze_ai_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/bulk-scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "bulk_scan_ai_content",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/fact-check",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "fact_check_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/full-score",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "ai_content_full_score",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/helpful-content-score",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "helpful_content_score",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/humanize",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "humanize_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/section-score",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.ai_content_detector",
+   "handler": "ai_section_by_section_score",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/auto-blog-generation/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_blog_generation",
+   "handler": "generate_auto_blogs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/seo/apply-bulk/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "apply_bulk_seo",
+   "direct_legacy_refs": [
+    "RankMath",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/seo/apply-meta/{site_id}/{wp_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "apply_meta_tags",
+   "direct_legacy_refs": [
+    "RankMath",
+    "WP",
+    "WordPress",
+    "XML-RPC",
+    "Yoast",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "xmlrpc",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/seo/apply-og/{site_id}/{wp_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "apply_og_tags",
+   "direct_legacy_refs": [
+    "RankMath",
+    "WP",
+    "WordPress",
+    "XML-RPC",
+    "Yoast",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "xmlrpc",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/seo/apply-schema/{site_id}/{wp_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "apply_schema_markup",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/seo/auto-scan/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "auto_seo_scan",
+   "direct_legacy_refs": [
+    "WP",
+    "WordPress",
+    "Yoast",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/seo/auto-scan/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.auto_seo",
+   "handler": "get_auto_seo_suggestions",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_history",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/interlink/{job_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_interlink_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/jobs",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_jobs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/optimize-seo/{job_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_optimize_seo_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/pick-keyword",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_pick_keyword_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/publish/{job_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_publish_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/run-pipeline",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_run_pipeline",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/settings",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_get_settings_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/settings",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_save_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/stream",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_stream",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/update-schedule",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_update_schedule",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/write-post/{job_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "autopilot_write_post_ep",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/crawl/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "trigger_crawl",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/crawl/{site_id}/fix/{issue_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.autopilot",
+   "handler": "fix_crawl_issue",
+   "direct_legacy_refs": [
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/crawl/{site_id}/latest",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.autopilot",
+   "handler": "get_latest_crawl",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backups/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "list_backups",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backups/{site_id}/create",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "create_backup",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backups/{site_id}/restore/{backup_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "restore_backup",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backups/{site_id}/schedule",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "schedule_backup",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backups/{site_id}/{backup_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "delete_backup",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/redirects/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "list_redirects",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/redirects/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "create_redirect",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/redirects/{site_id}/ai-suggest",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "ai_suggest_redirects",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/redirects/{site_id}/bulk-create",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "bulk_create_redirects",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/redirects/{site_id}/{redirect_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.backup_redirects",
+   "handler": "delete_redirect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/posts/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blog_generation",
+   "handler": "generate_blog_post",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/posts/translate/{site_id}/{wp_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.blog_generation",
+   "handler": "translate_post",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/broken-links/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.bulk_links",
+   "handler": "get_broken_links",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/broken-links/{site_id}/scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.bulk_links",
+   "handler": "scan_broken_links",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/broken-links/{site_id}/{link_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.bulk_links",
+   "handler": "dismiss_broken_link",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/bulk/publish",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.bulk_links",
+   "handler": "bulk_publish",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/calendar/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.calendar_competitor",
+   "handler": "get_calendar_events",
+   "direct_legacy_refs": [
+    "WP",
+    "WordPress",
+    "wordpress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/calendar/{site_id}/schedule",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.calendar_competitor",
+   "handler": "schedule_calendar_post",
+   "direct_legacy_refs": [
+    "WP",
+    "WordPress",
+    "wordpress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/competitor/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.calendar_competitor",
+   "handler": "get_competitor_analyses",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/competitor/{site_id}/analyze",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.calendar_competitor",
+   "handler": "analyze_competitor",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/company-profile/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.company_profile",
+   "handler": "get_company_profile",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/company-profile/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.company_profile",
+   "handler": "update_company_profile",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/company-profile/{site_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.company_profile",
+   "handler": "delete_company_profile",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/pages",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_crud",
+   "handler": "create_page",
+   "direct_legacy_refs": [
+    "WordPress",
+    "XML-RPC",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/pages/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_crud",
+   "handler": "get_pages",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/pages/{site_id}/{wp_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.content_crud",
+   "handler": "update_page",
+   "direct_legacy_refs": [
+    "XML-RPC",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/pages/{site_id}/{wp_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.content_crud",
+   "handler": "delete_page",
+   "direct_legacy_refs": [
+    "XML-RPC",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/posts",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_crud",
+   "handler": "create_post",
+   "direct_legacy_refs": [
+    "WordPress",
+    "XML-RPC",
+    "wordpress",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/posts/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_crud",
+   "handler": "get_posts",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/posts/{site_id}/{wp_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.content_crud",
+   "handler": "update_post",
+   "direct_legacy_refs": [
+    "XML-RPC",
+    "wordpress",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/posts/{site_id}/{wp_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.content_crud",
+   "handler": "delete_post",
+   "direct_legacy_refs": [
+    "XML-RPC",
+    "wordpress",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/duplicate-content/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_quality",
+   "handler": "get_duplicate_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/duplicate-content/{site_id}/fix/{item_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_quality",
+   "handler": "fix_duplicate_content",
+   "direct_legacy_refs": [
+    "WordPress",
+    "XML-RPC",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/duplicate-content/{site_id}/scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_quality",
+   "handler": "scan_duplicate_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/internal-links/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_quality",
+   "handler": "get_internal_link_suggestions",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/internal-links/{site_id}/apply/{suggestion_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_quality",
+   "handler": "apply_internal_link",
+   "direct_legacy_refs": [
+    "WordPress",
+    "XML-RPC",
+    "wp",
+    "xmlrpc"
+   ]
+  },
+  {
+   "path": "/api/internal-links/{site_id}/suggest",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_quality",
+   "handler": "suggest_internal_links",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ab-testing/{site_id}/title-test",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "create_ab_title_test",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ab-testing/{site_id}/title-test/{test_id}/conclude",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "conclude_title_test",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ab-testing/{site_id}/title-tests",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "list_title_tests",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ai-content-detector/{site_id}/compare-competitor",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "compare_competitor_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/link-builder/{site_id}/anchor-distribution",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "anchor_text_distribution",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/link-builder/{site_id}/social-signals",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "social_signal_mapping",
+   "direct_legacy_refs": [
+    "WP",
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/rank-tracker/{site_id}/predictions",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.content_seo_analytics",
+   "handler": "predict_keyword_rankings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "root",
+   "direct_legacy_refs": [
+    "WordPress"
+   ]
+  },
+  {
+   "path": "/api/auth/login",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.core_routes",
+   "handler": "login",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/auth/me",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "get_me",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/auth/register",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.core_routes",
+   "handler": "register",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/health",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "health_check",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/jobs",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.core_routes",
+   "handler": "create_job",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/jobs/{job_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.core_routes",
+   "handler": "update_job",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/jobs/{job_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.core_routes",
+   "handler": "delete_job",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/jobs/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "get_jobs",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/settings",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "get_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/settings",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.core_routes",
+   "handler": "update_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/stream/{task_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "stream_task",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/tasks/{task_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.core_routes",
+   "handler": "get_task_status",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/directories/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.directories",
+   "handler": "list_directories",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/directories/{site_id}/prepare/{directory_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.directories",
+   "handler": "prepare_directory_listing",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/directories/{site_id}/submission/{directory_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.directories",
+   "handler": "update_directory_submission",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/directories/{site_id}/verify-all",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.directories",
+   "handler": "verify_all_directory_listings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/directories/{site_id}/verify/{directory_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.directories",
+   "handler": "verify_directory_listing",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/forms/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_forms",
+   "direct_legacy_refs": [
+    "WP",
+    "app_password",
+    "contact-form-7",
+    "wp",
+    "wp-json",
+    "wpforms"
+   ]
+  },
+  {
+   "path": "/api/forms/{site_id}/ai-analyze/{form_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "analyze_form_entries",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/forms/{site_id}/create-faq-post/{form_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "create_faq_post_from_form",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/forms/{site_id}/{form_id}/entries",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_form_entries",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/woo/{site_id}/bulk-ai-descriptions",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "woo_bulk_ai_descriptions",
+   "direct_legacy_refs": [
+    "woo"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/customers",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_woo_customers",
+   "direct_legacy_refs": [
+    "WooCommerce",
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/low-stock-alert",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "woo_low_stock_alert",
+   "direct_legacy_refs": [
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/orders",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_woo_orders",
+   "direct_legacy_refs": [
+    "WooCommerce",
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/products",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_woo_products",
+   "direct_legacy_refs": [
+    "WooCommerce",
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/products/{prod_id}/ai-description",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "woo_ai_description",
+   "direct_legacy_refs": [
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/woo/{site_id}/stats",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.forms_woo",
+   "handler": "get_woo_stats",
+   "direct_legacy_refs": [
+    "woo",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/seo/full-page-audit/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.full_page_optimizer",
+   "handler": "full_page_seo_audit",
+   "direct_legacy_refs": [
+    "WordPress",
+    "Yoast",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/images/{site_id}/clean-exif",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.image_seo_extra",
+   "handler": "clean_exif_metadata",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/images/{site_id}/convert-webp",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.image_seo_extra",
+   "handler": "convert_images_to_webp",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/sitemap/{site_id}/regenerate-with-images",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.image_seo_extra",
+   "handler": "regenerate_sitemap_with_images",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/indexing/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.indexing_revenue",
+   "handler": "get_indexing_report",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/indexing/{site_id}/check",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.indexing_revenue",
+   "handler": "check_indexing_status",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/indexing/{site_id}/submit-sitemap",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.indexing_revenue",
+   "handler": "submit_sitemap_to_gsc",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keyword-analysis/{site_id}/analyze",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_intelligence",
+   "handler": "analyze_keyword_density",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keyword-research/{site_id}/analyze",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_intelligence",
+   "handler": "research_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/cannibalization",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.keyword_intelligence",
+   "handler": "detect_keyword_cannibalization",
+   "direct_legacy_refs": [
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/keywords/{site_id}/roi",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.keyword_intelligence",
+   "handler": "keyword_roi_attribution",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/trends",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_intelligence",
+   "handler": "get_keyword_trends",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "get_tracked_keywords",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "add_tracked_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/refresh",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "refresh_keyword_rankings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/suggest",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "suggest_keywords",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/{keyword_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "delete_tracked_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/links/internal/insert/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "link_builder_insert",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/links/outreach/generate/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keyword_link_builder",
+   "handler": "generate_outreach_angles",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/integrations/dataforseo/test",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "test_dataforseo_connection",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/competitor-gap",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "get_competitor_gap",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/ideas",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "get_keyword_ideas",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/metrics",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "get_keyword_metrics",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/serp",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "get_serp_analysis",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/link-builder/{site_id}/backlinks-live",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "get_live_backlinks",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/rank-tracker/{site_id}/check-live",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.keywords_intel",
+   "handler": "check_live_rankings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/editor/ai-assist",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.live_editor",
+   "handler": "editor_ai_assist",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/editor/{site_id}/post/{wp_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.live_editor",
+   "handler": "editor_get_post",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/editor/{site_id}/post/{wp_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.live_editor",
+   "handler": "editor_save_post",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/editor/{site_id}/posts",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.live_editor",
+   "handler": "editor_list_posts",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.media_comments",
+   "handler": "get_comments",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/ai-reply/{comment_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "ai_reply_comment",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/approve/{comment_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "approve_comment",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/auto-moderate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "auto_moderate_comments",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/bulk-action",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "bulk_comment_action",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/post-reply/{comment_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "post_comment_reply",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/spam/{comment_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "spam_comment",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/comments/{site_id}/{comment_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.media_comments",
+   "handler": "delete_comment",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/media/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.media_comments",
+   "handler": "get_media",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/media/{site_id}/bulk-compress",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "bulk_compress_media",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media/{site_id}/compress/{media_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "compress_media",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/media/{site_id}/rename/{media_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "rename_media",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/media/{site_id}/upload",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_comments",
+   "handler": "upload_media",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/media/{site_id}/{media_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.media_comments",
+   "handler": "delete_media",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ads/linkedin/connect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "linkedin_connect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/linkedin/disconnect",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.media_plan",
+   "handler": "linkedin_disconnect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/youtube/connect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "youtube_connect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ads/youtube/disconnect",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.media_plan",
+   "handler": "youtube_disconnect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/activate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_activate",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/parse",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_parse",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/pause/{plan_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_pause",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/performance/{plan_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_performance",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/platform-connections",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_platform_connections",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/resume/{plan_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_resume",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/tasks/{plan_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_get_tasks",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/tasks/{task_id}/execute",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_execute_task",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/media-plan/tasks/{task_id}/status",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.media_plan",
+   "handler": "media_plan_update_task_status",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/bulk/meta-update",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.meta_pagespeed",
+   "handler": "bulk_meta_update",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/bulk/taxonomy-update",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.meta_pagespeed",
+   "handler": "bulk_taxonomy_update",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/pagespeed/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.meta_pagespeed",
+   "handler": "get_pagespeed_results",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/pagespeed/{site_id}/analyze",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.meta_pagespeed",
+   "handler": "analyze_pagespeed",
+   "direct_legacy_refs": [
+    "WordPress"
+   ]
+  },
+  {
+   "path": "/api/taxonomies/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.meta_pagespeed",
+   "handler": "get_taxonomies",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/auth/session",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "auth_session",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/pipeline-logs",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_pipeline_logs",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/autopilot/{site_id}/pipeline-stats",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_pipeline_stats",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/image-seo/{site_id}/audit",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "image_seo_full_audit",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/image-seo/{site_id}/audit",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_image_seo_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/image-seo/{site_id}/bulk-generate-alt",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "bulk_generate_alt_text",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/notifications",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_notifications_global",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/notifications/stream",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "notifications_stream",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/notifications/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_notifications",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/notifications/{site_id}/mark-all-read",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "mark_all_notifications_read",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/notifications/{site_id}/mark-read/{notification_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "mark_notification_read",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/search/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "global_search",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/uptime/{site_id}/deep-check",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.misc_global",
+   "handler": "uptime_deep_check",
+   "direct_legacy_refs": [
+    "WordPress"
+   ]
+  },
+  {
+   "path": "/api/uptime/{site_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_uptime_history",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/uptime/{site_id}/summary",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.misc_global",
+   "handler": "get_uptime_summary",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/trigger-settings",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.monitoring_triggers",
+   "handler": "get_trigger_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/autopilot/{site_id}/trigger-settings",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.monitoring_triggers",
+   "handler": "save_trigger_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/uptime/{site_id}/multi-region",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.monitoring_triggers",
+   "handler": "multi_region_uptime_check",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/content-refresh/bulk",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "bulk_content_refresh",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/content-refresh/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "get_content_refresh_items",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/content-refresh/{site_id}/refresh/{item_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "refresh_content",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/content-refresh/{site_id}/scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "scan_for_refresh",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/navigation/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "get_navigation",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/navigation/{site_id}/sync",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nav_refresh",
+   "handler": "sync_navigation",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/health/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "get_health_data",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/health/{site_id}/check",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "run_health_check",
+   "direct_legacy_refs": [
+    "WP",
+    "wordpress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/health/{site_id}/fix/{issue_key}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "get_health_fix",
+   "direct_legacy_refs": [
+    ".php",
+    "WP",
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/health/{site_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "get_health_history",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/health/{site_id}/schedule-monitor",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "schedule_health_monitor",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/newsletter/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "generate_newsletter",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/newsletter/{site_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "get_newsletter_history",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/newsletter/{site_id}/lists",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "get_newsletter_lists",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/newsletter/{site_id}/send",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "send_newsletter",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/newsletter/{site_id}/subscribe",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.newsletter_health",
+   "handler": "subscribe_to_newsletter",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/health",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_bridge_health",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/images",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_list_images",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/images/content",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_get_page_images",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/images/content",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_set_image_alt",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/images/content",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_clear_image_alt",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/images/generate-alt",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_generate_image_alt",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/pages",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_list_page_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/pages/content",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_get_page_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/pages/content",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_set_page_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/pages/content",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_clear_page_content",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/posts",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_list_posts",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/posts",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_publish_post",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/posts/{slug}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_get_post",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/nextjs/{site_id}/posts/{slug}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.nextjs_content",
+   "handler": "nextjs_delete_post",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/sites/scrape-meta",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.onboarding_visibility",
+   "handler": "scrape_site_meta",
+   "direct_legacy_refs": [
+    "WP"
+   ]
+  },
+  {
+   "path": "/api/sites/suggest-topics",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.onboarding_visibility",
+   "handler": "suggest_content_topics",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/sites/{site_id}/onboarding",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.onboarding_visibility",
+   "handler": "save_site_onboarding",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_onpage_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/category/{key}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_onpage_category",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/export",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "export_onpage_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/history",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_onpage_history",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/keyword",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "set_focus_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/keyword",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "clear_focus_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/keywords",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "list_focus_keywords",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/meta",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "set_onpage_meta",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/meta",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "clear_onpage_meta",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/meta-capabilities",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_meta_capabilities",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/move-page",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "move_page",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/page",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "audit_single_page",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/pages",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "list_onpage_pages",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "scan_onpage_seo",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/onpage/{site_id}/snippets",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_nextjs_snippets",
+   "direct_legacy_refs": [
+    "Rank Math",
+    "WordPress",
+    "Yoast",
+    "wordpress"
+   ]
+  },
+  {
+   "path": "/api/onpage/{site_id}/summary",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.onpage_seo",
+   "handler": "get_onpage_summary",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/disavow",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "get_disavow",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/export-excel",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "export_backlink_outreach_excel",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/find-opportunities",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "find_backlink_opportunities",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/generate-disavow",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_disavow",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/generate-email/{opportunity_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_outreach_email",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/opportunities",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "list_backlink_opportunities",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/opportunity/{opportunity_id}/status",
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.opportunities",
+   "handler": "update_backlink_status",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/backlink-outreach/{site_id}/searches",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "list_backlink_searches",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/check-live-links",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "check_guest_post_links",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/find-sites",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "find_guest_post_sites",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/generate-article/{prospect_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_guest_article",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/generate-pitch/{prospect_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_guest_pitch",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/prospect/{prospect_id}",
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.opportunities",
+   "handler": "update_guest_prospect",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/guest-posts/{site_id}/prospects",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "list_guest_post_prospects",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/link-reclamation/{site_id}/bulk-redirect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "bulk_create_redirects",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/link-reclamation/{site_id}/generate-reclaim-email/{link_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_reclaim_email",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/link-reclamation/{site_id}/report",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "get_reclamation_report",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/link-reclamation/{site_id}/scan-inbound-404s",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "scan_inbound_404s",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local-citations/{site_id}/audit",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "audit_local_citations",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local-citations/{site_id}/citations",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "list_citations",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local-citations/{site_id}/gaps",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "citation_gaps",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local-citations/{site_id}/generate-description/{directory}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_citation_description",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local-citations/{site_id}/update-nap",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "update_canonical_nap",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/offpage-autopilot/{site_id}/digest",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "offpage_digest",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/offpage-autopilot/{site_id}/generate-strategy",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.opportunities",
+   "handler": "generate_offpage_strategy",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/offpage-autopilot/{site_id}/priority-actions",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "offpage_priority_actions",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/offpage-autopilot/{site_id}/score",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.opportunities",
+   "handler": "offpage_score",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/outreach/{collection}/{item_id}/approve",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.outreach_gate",
+   "handler": "approve_outreach",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/outreach/{collection}/{item_id}/recipient",
+   "methods": [
+    "PATCH"
+   ],
+   "module": "routers.outreach_gate",
+   "handler": "set_outreach_recipient",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/outreach/{collection}/{item_id}/reject",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.outreach_gate",
+   "handler": "reject_outreach",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/outreach/{collection}/{item_id}/send",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.outreach_gate",
+   "handler": "send_outreach",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/platform/portfolio",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.platform_intelligence",
+   "handler": "get_portfolio_intelligence",
+   "direct_legacy_refs": [
+    "WP",
+    "app_password"
+   ]
+  },
+  {
+   "path": "/api/seo/bridge-plugin/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.plugin_downloads",
+   "handler": "download_bridge_plugin",
+   "direct_legacy_refs": [
+    "RankMath",
+    "WP",
+    "XML-RPC",
+    "Yoast",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/seo/meta-fixer-plugin/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.plugin_downloads",
+   "handler": "download_meta_fixer_plugin",
+   "direct_legacy_refs": [
+    ".php",
+    "RankMath",
+    "WP",
+    "WordPress",
+    "Yoast"
+   ]
+  },
+  {
+   "path": "/api/keyword-clusters/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "list_keyword_clusters",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keyword-clusters/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "generate_keyword_clusters",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keyword-clusters/{site_id}/{cluster_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "delete_keyword_cluster",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/programmatic/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "list_programmatic_pages",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/programmatic/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "generate_programmatic_pages",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/programmatic/{site_id}/push",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "push_programmatic_pages",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/programmatic/{site_id}/{page_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.programmatic_local",
+   "handler": "delete_programmatic_page",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local/recommendations/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.reports_local",
+   "handler": "get_local_recommendations",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local/track/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.reports_local",
+   "handler": "add_local_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.reports_local",
+   "handler": "get_local_tracking",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/local/{site_id}/{kw_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.reports_local",
+   "handler": "delete_local_keyword",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/reports/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.reports_local",
+   "handler": "list_reports",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/reports/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.reports_local",
+   "handler": "generate_pdf_report",
+   "direct_legacy_refs": [
+    "WP"
+   ]
+  },
+  {
+   "path": "/api/reports/{site_id}/schedule",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.reports_local",
+   "handler": "schedule_report",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/seo/analyze/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_management",
+   "handler": "analyze_seo",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/seo/bulk-audit",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_management",
+   "handler": "bulk_seo_audit",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/seo/refresh-google/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_management",
+   "handler": "refresh_seo_from_google",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/seo/self-heal/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_management",
+   "handler": "self_heal_seo",
+   "direct_legacy_refs": [
+    "WP"
+   ]
+  },
+  {
+   "path": "/api/seo/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_management",
+   "handler": "get_seo_metrics",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/canonical/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "get_canonicals",
+   "direct_legacy_refs": [
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/canonical/{site_id}/bulk-fix",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "bulk_fix_canonicals",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/canonical/{site_id}/{wp_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "update_canonical",
+   "direct_legacy_refs": [
+    "WordPress",
+    "rank_math",
+    "wp",
+    "wpseo",
+    "yoast"
+   ]
+  },
+  {
+   "path": "/api/keywords/{site_id}/by-intent",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "get_keywords_by_intent",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/keywords/{site_id}/categorize",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "categorize_keywords",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/mobile/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "get_mobile_check_results",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/mobile/{site_id}/check",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "check_mobile_usability",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/robots/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "get_robots_txt",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/robots/{site_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "update_robots_txt",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/schema/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "list_schema_records",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/schema/{site_id}/apply/{schema_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "apply_schema_markup",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/schema/{site_id}/generate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "generate_schema_markup",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/sitemap/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "get_sitemap",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/sitemap/{site_id}/regenerate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.seo_technical_utils",
+   "handler": "regenerate_sitemap",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/sites",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.sites",
+   "handler": "get_sites",
+   "direct_legacy_refs": [
+    "WordPress",
+    "app_password"
+   ]
+  },
+  {
+   "path": "/api/sites",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sites",
+   "handler": "create_site",
+   "direct_legacy_refs": [
+    "Application Password",
+    "WP",
+    "WordPress",
+    "app_password",
+    "wordpress",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/sites/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.sites",
+   "handler": "get_site",
+   "direct_legacy_refs": [
+    "WordPress",
+    "app_password"
+   ]
+  },
+  {
+   "path": "/api/sites/{site_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.sites",
+   "handler": "delete_site",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/sites/{site_id}/credentials",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.sites",
+   "handler": "update_site_credentials",
+   "direct_legacy_refs": [
+    "Application Password",
+    "WordPress",
+    "app_password",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/sites/{site_id}/sync",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sites",
+   "handler": "_sync_bridge_site",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/sites/{site_id}/test-connection",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sites",
+   "handler": "test_site_connection",
+   "direct_legacy_refs": [
+    "Application Password",
+    "Application Passwords",
+    "WP",
+    "WordPress",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/sites/{site_id}/test-write",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.sites",
+   "handler": "test_site_write",
+   "direct_legacy_refs": [
+    "Application Password",
+    "WP",
+    "WordPress",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/ab/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.testing_social",
+   "handler": "list_ab_tests",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ab/{site_id}/ai-generate-variants/{post_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "generate_ab_variants",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ab/{site_id}/conclude/{test_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "conclude_ab_test",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ab/{site_id}/create",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "create_ab_test",
+   "direct_legacy_refs": [
+    "WordPress",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/ab/{site_id}/record-click/{test_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "record_click",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ab/{site_id}/record-impression/{test_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "record_impression",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/ab/{site_id}/switch-variant/{test_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "switch_ab_variant",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/social/{site_id}/accounts",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.testing_social",
+   "handler": "get_social_accounts",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/social/{site_id}/accounts/{account_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.testing_social",
+   "handler": "disconnect_social_account",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/social/{site_id}/auto-post-settings",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "save_auto_post_settings",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/social/{site_id}/connect",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "connect_social_account",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/social/{site_id}/generate-post",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "generate_social_post_topic",
+   "direct_legacy_refs": [
+    "WP"
+   ]
+  },
+  {
+   "path": "/api/social/{site_id}/generate-post/{wp_post_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "generate_social_post",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/social/{site_id}/process-queue",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "process_social_queue",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/social/{site_id}/publish/{wp_post_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.testing_social",
+   "handler": "publish_social_post",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/social/{site_id}/queue",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.testing_social",
+   "handler": "get_social_queue",
+   "direct_legacy_refs": []
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/plugins",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "get_plugins",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/activate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "activate_plugin",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/deactivate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "deactivate_plugin",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/update",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "update_plugin",
+   "direct_legacy_refs": [
+    "WP"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/security-scan",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "plugin_security_scan",
+   "direct_legacy_refs": [
+    "WordPress",
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/themes",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "get_themes",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/plugins-themes/{site_id}/themes/{stylesheet}/activate",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "activate_theme",
+   "direct_legacy_refs": [
+    "app_password",
+    "wp",
+    "wp-json"
+   ]
+  },
+  {
+   "path": "/api/wp-users/{site_id}",
+   "methods": [
+    "GET"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "get_wp_users",
+   "direct_legacy_refs": [
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/wp-users/{site_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "create_wp_user",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/wp-users/{site_id}/reset-password/{user_id}",
+   "methods": [
+    "POST"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "reset_wp_user_password",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/wp-users/{site_id}/{user_id}",
+   "methods": [
+    "PUT"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "update_wp_user",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  },
+  {
+   "path": "/api/wp-users/{site_id}/{user_id}",
+   "methods": [
+    "DELETE"
+   ],
+   "module": "routers.wp_admin",
+   "handler": "delete_wp_user",
+   "direct_legacy_refs": [
+    "WP",
+    "wp"
+   ]
+  }
+ ]
+}
