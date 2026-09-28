@@ -1392,6 +1392,36 @@
     ]
   ],
   [
+    "/api/nextjs/{site_id}/images",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/images/content",
+    [
+      "DELETE"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/images/content",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/images/content",
+    [
+      "PUT"
+    ]
+  ],
+  [
+    "/api/nextjs/{site_id}/images/generate-alt",
+    [
+      "POST"
+    ]
+  ],
+  [
     "/api/nextjs/{site_id}/pages",
     [
       "GET"
@@ -1551,6 +1581,12 @@
     "/api/onpage/{site_id}/meta-capabilities",
     [
       "GET"
+    ]
+  ],
+  [
+    "/api/onpage/{site_id}/move-page",
+    [
+      "POST"
     ]
   ],
   [

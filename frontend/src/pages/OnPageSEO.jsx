@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import {
   getSites, scanOnPageSEO, getOnPageSummary, getOnPageCategory, getOnPageHistory,
   listOnPagePages, setPageMeta, clearPageMeta, setFocusKeyword, clearFocusKeyword,
-  getNextjsSnippets, exportOnPageAudit, subscribeToTask,
+  getNextjsSnippets, exportOnPageAudit, subscribeToTask, nextjsBridgeHealth,
 } from "../lib/api";
 import { toast } from "sonner";
 import { cn } from "../lib/utils";
@@ -68,6 +68,7 @@ export default function OnPageSEO() {
   const [maxPages, setMaxPages] = useState("25");
   const [checkLinks, setCheckLinks] = useState(true);
   const [measureCwv, setMeasureCwv] = useState(false);
+  const [bridgeStatus, setBridgeStatus] = useState(null); // { loading, ok, canWrite, error }
 
   useEffect(() => {
     getSites()
@@ -76,6 +77,23 @@ export default function OnPageSEO() {
   }, []);
 
   const site = useMemo(() => sites.find((s) => s.id === selectedSite), [sites, selectedSite]);
+
+  // Whether the bridge itself is reachable is not something an audit score
+  // can tell you — a 401/timeout there looks identical to "nothing to edit
+  // yet" everywhere else in the UI, so it gets its own explicit check.
+  useEffect(() => {
+    if (!selectedSite || site?.platform !== "nextjs") { setBridgeStatus(null); return; }
+    let cancelled = false;
+    setBridgeStatus({ loading: true });
+    nextjsBridgeHealth(selectedSite)
+      .then((r) => { if (!cancelled) setBridgeStatus({ loading: false, ok: true, ...r.data }); })
+      .catch((e) => {
+        if (!cancelled) {
+          setBridgeStatus({ loading: false, ok: false, error: e.response?.data?.detail || "Bridge unreachable" });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [selectedSite, site?.platform]);
 
   const loadAll = useCallback(async () => {
     if (!selectedSite) return;
@@ -245,6 +263,24 @@ export default function OnPageSEO() {
             Next.js, WordPress or any other stack.
             {site && <span className="ml-1 font-mono text-xs">{site.url}</span>}
           </p>
+          {site?.platform === "nextjs" && bridgeStatus && (
+            <p className="text-xs mt-1 flex items-center gap-1.5">
+              {bridgeStatus.loading ? (
+                <span className="text-muted-foreground flex items-center gap-1">
+                  <Loader2 size={11} className="animate-spin" />Checking SEO Bridge connection…
+                </span>
+              ) : bridgeStatus.ok ? (
+                <span className={cn(bridgeStatus.canWrite === false ? "text-yellow-500" : "text-emerald-500")}>
+                  ● Bridge connected
+                  {bridgeStatus.canWrite === false && " — content directory is not writable"}
+                  {typeof bridgeStatus.postCount === "number" && bridgeStatus.canWrite !== false &&
+                    ` · ${bridgeStatus.postCount} post(s)`}
+                </span>
+              ) : (
+                <span className="text-red-400">● Bridge not reachable — {bridgeStatus.error}</span>
+              )}
+            </p>
+          )}
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
           <SelectTrigger className="w-56"><SelectValue placeholder="Select site" /></SelectTrigger>

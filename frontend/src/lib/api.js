@@ -421,6 +421,8 @@ export const auditSinglePage         = (siteId, url)             => api.post(`/o
 export const listOnPagePages         = (siteId)                  => api.get(`/onpage/${siteId}/pages`);
 export const setPageMeta             = (siteId, data)            => api.put(`/onpage/${siteId}/meta`, data);
 export const clearPageMeta           = (siteId, path)            => api.delete(`/onpage/${siteId}/meta`, { params: { path } });
+export const movePage                = (siteId, fromPath, toPath) =>
+  api.post(`/onpage/${siteId}/move-page`, { from_path: fromPath, to_path: toPath });
 export const getOnPageSummary        = (siteId)                  => api.get(`/onpage/${siteId}/summary`);
 export const getOnPageCategory       = (siteId, key)             => api.get(`/onpage/${siteId}/category/${key}`);
 export const getMetaCapabilities     = (siteId)                  => api.get(`/onpage/${siteId}/meta-capabilities`);

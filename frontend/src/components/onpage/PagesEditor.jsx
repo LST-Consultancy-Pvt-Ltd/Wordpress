@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import {
   Loader2, Save, Undo2, ExternalLink, ChevronDown, Search, Target, Image as ImageIcon, RefreshCw,
-  Sparkles, FileText,
+  Sparkles, FileText, Link as LinkIcon, ArrowRight, Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Button } from "../ui/button";
@@ -14,7 +14,7 @@ import { cn } from "../../lib/utils";
 import { toast } from "sonner";
 import {
   editorAIAssist, nextjsGetPageContent, nextjsGetPageImages,
-  nextjsSetPageContent, nextjsSetImageAlt, nextjsGenerateImageAlt,
+  nextjsSetPageContent, nextjsSetImageAlt, nextjsGenerateImageAlt, movePage,
 } from "../../lib/api";
 
 const INTENTS = ["", "informational", "commercial", "transactional", "navigational"];
@@ -74,6 +74,14 @@ export default function PagesEditor({
   const [imageDrafts, setImageDrafts] = useState({});      // path -> { key: alt }
   const [savingImage, setSavingImage] = useState(null);    // "path:key"
   const [generatingImage, setGeneratingImage] = useState(null); // "path:key"
+
+  // Moving a page's stored SEO data to a new route path. The route itself is
+  // a folder name compiled into the Next.js build, so this can only carry the
+  // bridge-stored data over and hand back the code change that makes the new
+  // URL live — see the note in PUT .../move-page.
+  const [moveDrafts, setMoveDrafts] = useState({});   // path -> new path
+  const [moving, setMoving] = useState("");
+  const [moveResults, setMoveResults] = useState({}); // path -> API response
 
   const isNextjs = platform === "nextjs";
 
@@ -187,6 +195,7 @@ export default function PagesEditor({
     return {
       title: ov.title ?? p.live_title ?? p.signals?.title ?? "",
       description: ov.description ?? p.live_description ?? p.signals?.description ?? "",
+      canonical: ov.canonical ?? p.signals?.canonical ?? "",
       ogImage: ov.ogImage ?? p.signals?.og_image ?? "",
     };
   };
@@ -223,6 +232,7 @@ export default function PagesEditor({
       const body = { path: p.path };
       if (d.title !== base.title) body.title = d.title;
       if (d.description !== base.description) body.description = d.description;
+      if (supports("canonical") && d.canonical !== base.canonical) body.canonical = d.canonical;
       if (supports("ogImage") && d.ogImage !== base.ogImage) body.ogImage = d.ogImage;
       if (Object.keys(body).length === 1) {
         setErrors((er) => ({ ...er, [p.path]: "Nothing changed yet." }));
@@ -235,6 +245,24 @@ export default function PagesEditor({
       // is the worst outcome, and a toast is easy to miss.
       setErrors((er) => ({ ...er, [p.path]: e.response?.data?.detail || "Could not save" }));
     } finally { setBusy(""); }
+  };
+
+  const handleMove = async (p) => {
+    const to = (moveDrafts[p.path] || "").trim();
+    if (!to) return;
+    setMoving(p.path);
+    try {
+      const r = await movePage(siteId, p.path, to);
+      setMoveResults((m) => ({ ...m, [p.path]: r.data }));
+      toast.success(`Data moved to ${r.data.to_path} — deploy the code change to make the URL live`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Move failed");
+    } finally { setMoving(""); }
+  };
+
+  const copySnippet = (text) => {
+    navigator.clipboard.writeText(text);
+    toast.success("Copied");
   };
 
   const handleSaveKeyword = async (p) => {
@@ -469,6 +497,20 @@ export default function PagesEditor({
                                         ...d, [p.path]: { ...draftFor(p), description: e.target.value } }))} />
                                     <LengthMeter length={draftFor(p).description.length} min={150} max={160} />
                                   </div>
+                                  {supports("canonical") && (
+                                    <div>
+                                      <div className="flex items-center gap-1.5 mb-1">
+                                        <LinkIcon size={11} className="text-muted-foreground" />
+                                        <span className="text-[11px] text-muted-foreground">
+                                          Canonical URL
+                                        </span>
+                                      </div>
+                                      <Input className="h-7 text-xs" placeholder={`${siteUrl || ""}${p.path}`}
+                                        value={draftFor(p).canonical}
+                                        onChange={(e) => setDrafts((d) => ({
+                                          ...d, [p.path]: { ...draftFor(p), canonical: e.target.value } }))} />
+                                    </div>
+                                  )}
                                   {supports("ogImage") && (
                                     <div>
                                       <div className="flex items-center gap-1.5 mb-1">
@@ -501,6 +543,57 @@ export default function PagesEditor({
                                     <p className="text-[11px] text-red-400 border-l-2 border-red-400/50 pl-2">
                                       Save failed — {errors[p.path]}
                                     </p>
+                                  )}
+                                </div>
+                              )}
+
+                              {isNextjs && (
+                                <div className="border-t pt-2.5 space-y-2">
+                                  <p className="text-xs font-medium flex items-center gap-1.5">
+                                    <LinkIcon size={11} />Move / rename this page
+                                  </p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    Carries the SEO title/description/canonical, body-copy blocks, image
+                                    alt text and focus keyword stored for this page over to a new path.
+                                    The route itself is a folder name compiled into your build, so the
+                                    URL doesn't change until you make the code change this generates.
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <Input className="h-7 text-xs" placeholder="/new-path"
+                                      value={moveDrafts[p.path] ?? ""}
+                                      onChange={(e) => setMoveDrafts((d) => ({ ...d, [p.path]: e.target.value }))} />
+                                    <Button size="sm" className="h-7 text-xs shrink-0"
+                                      disabled={moving === p.path || !(moveDrafts[p.path] || "").trim()}
+                                      onClick={() => handleMove(p)}>
+                                      {moving === p.path
+                                        ? <Loader2 size={11} className="mr-1 animate-spin" />
+                                        : <ArrowRight size={11} className="mr-1" />}
+                                      Move
+                                    </Button>
+                                  </div>
+                                  {moveResults[p.path] && (
+                                    <div className="rounded-md border border-border/40 p-2 space-y-1.5">
+                                      {moveResults[p.path].moved?.length > 0 && (
+                                        <p className="text-[11px] text-emerald-500">
+                                          Moved: {moveResults[p.path].moved.join(", ")}
+                                        </p>
+                                      )}
+                                      {moveResults[p.path].errors?.length > 0 && (
+                                        <p className="text-[11px] text-yellow-500">
+                                          {moveResults[p.path].errors.join(" · ")}
+                                        </p>
+                                      )}
+                                      <ol className="text-[11px] text-muted-foreground list-decimal list-inside space-y-0.5">
+                                        {moveResults[p.path].instructions?.map((ins, i) => <li key={i}>{ins}</li>)}
+                                      </ol>
+                                      <pre className="text-[10px] bg-muted/30 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                                        {moveResults[p.path].redirect_snippet}
+                                      </pre>
+                                      <Button variant="outline" size="sm" className="h-6 text-[10px]"
+                                        onClick={() => copySnippet(moveResults[p.path].redirect_snippet)}>
+                                        <Copy size={10} className="mr-1" />Copy snippet
+                                      </Button>
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -566,6 +659,24 @@ export default function PagesEditor({
                                   <p className="text-xs font-medium flex items-center gap-1.5">
                                     <ImageIcon size={11} />Image alt text
                                   </p>
+                                  {(() => {
+                                    // The crawl counts every real <img> on the rendered page — compare
+                                    // that against what the bridge actually registered so a page with
+                                    // some, but not all, of its images wrapped in <EditableImg> says so
+                                    // instead of just looking like it only has two images.
+                                    const registered = Object.keys(imagesCache[p.path]?.images || {}).length;
+                                    const total = p.signals?.image_count;
+                                    if (imagesCache[p.path]?.loading || imagesCache[p.path]?.error) return null;
+                                    if (typeof total !== "number" || total <= registered || registered === 0) return null;
+                                    return (
+                                      <p className="text-[11px] text-yellow-500 border-l-2 border-yellow-500/50 pl-2">
+                                        This page has {total} images, but only {registered} {registered === 1 ? "is" : "are"}{" "}
+                                        editable here — the other {total - registered} {total - registered === 1 ? "is" : "are"}{" "}
+                                        still plain <code>&lt;img&gt;</code> tags in the Next.js code. Wrap them in{" "}
+                                        <code>&lt;EditableImg&gt;</code> too (see nextjs-bridge/README.md) to bring them in.
+                                      </p>
+                                    );
+                                  })()}
                                   {imagesCache[p.path]?.loading ? (
                                     <Loader2 size={14} className="animate-spin text-muted-foreground" />
                                   ) : imagesCache[p.path]?.error ? (
@@ -576,6 +687,8 @@ export default function PagesEditor({
                                     <p className="text-[11px] text-muted-foreground">
                                       No editable images found yet — wrap this page's images in{" "}
                                       <code>&lt;EditableImg&gt;</code> (see nextjs-bridge/README.md).
+                                      {typeof p.signals?.image_count === "number" && p.signals.image_count > 0 &&
+                                        ` This page has ${p.signals.image_count} image(s) that could be.`}
                                     </p>
                                   ) : (
                                   Object.entries(imagesCache[p.path].images).map(([key, img]) => (

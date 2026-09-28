@@ -36,8 +36,10 @@ from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.content import get_platform, get_site_any
 from providers.nextjs import (
-    bridge_clear_meta, bridge_list_meta, bridge_meta_capabilities, bridge_set_meta,
-    get_bridge_credentials,
+    META_FIELDS_FULL,
+    bridge_clear_content_block, bridge_clear_image_alt, bridge_clear_meta, bridge_get_meta,
+    bridge_get_page_content, bridge_get_page_images, bridge_list_meta, bridge_meta_capabilities,
+    bridge_set_content_block, bridge_set_image_alt, bridge_set_meta, get_bridge_credentials,
 )
 from providers.onpage import SCORING_FACTORS, audit_url  # noqa: F401  (audit_url re-exported)
 from providers import seo_audit
@@ -68,6 +70,12 @@ class MetaUpdate(BaseModel):
     ogDescription: Optional[str] = None
     ogImage: Optional[str] = None
     noindex: Optional[bool] = None
+
+
+class MovePage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    from_path: str = ""
+    to_path: str = ""
 
 
 class FocusKeyword(BaseModel):
@@ -447,6 +455,87 @@ async def clear_onpage_meta(site_id: str, path: str, user=Depends(require_editor
     result = await bridge_clear_meta(site, path)
     await log_activity(site_id, "onpage_meta_cleared", f"Cleared SEO metadata override for {path}")
     return result
+
+
+@api_router.post("/onpage/{site_id}/move-page")
+async def move_page(site_id: str, body: MovePage, user=Depends(require_editor)):
+    """Move everything this platform stores for a page from one route to
+    another — the SEO override, body-copy blocks, image alt text and focus
+    keyword — and hand back the one thing it CANNOT do live: the route itself
+    is a folder name compiled into the Next.js build, so renaming it takes a
+    code change and a redeploy. Doing the data migration here means that
+    change doesn't also reset every SEO edit made through this app back to
+    nothing, and the returned redirect is what carries the old URL's ranking
+    signal over to the new one instead of losing it to a dead link.
+    """
+    if await get_platform(site_id) == "wordpress":
+        raise HTTPException(
+            status_code=400,
+            detail="On WordPress, editing a post or page's slug already takes effect immediately — "
+                   "there is no separate code deploy step, so this endpoint doesn't apply.",
+        )
+    old_raw, new_raw = body.from_path.strip(), body.to_path.strip()
+    if not old_raw or not new_raw:
+        raise HTTPException(status_code=400, detail="Supply both `from_path` and `to_path`, e.g. "
+                             "\"/about\" and \"/company/about\".")
+    old = _route_path(old_raw) if "://" in old_raw else _route_path("http://x" + (old_raw if old_raw.startswith("/") else "/" + old_raw))
+    new = _route_path(new_raw) if "://" in new_raw else _route_path("http://x" + (new_raw if new_raw.startswith("/") else "/" + new_raw))
+    if old == new:
+        raise HTTPException(status_code=400, detail="from_path and to_path are the same route.")
+
+    site = await get_bridge_credentials(site_id)
+    moved: list[str] = []
+    errors: list[str] = []
+
+    try:
+        existing = await bridge_get_meta(site, old)
+        fields = {k: v for k, v in (existing or {}).items() if k in META_FIELDS_FULL and v not in (None, "")}
+        if fields:
+            await bridge_set_meta(site, new, fields)
+            await bridge_clear_meta(site, old)
+            moved.append("SEO title/description/canonical/OG overrides")
+    except HTTPException as e:
+        errors.append(f"SEO overrides: {e.detail}")
+
+    try:
+        blocks = (await bridge_get_page_content(site, old)).get("blocks") or {}
+        for key, value in blocks.items():
+            await bridge_set_content_block(site, new, key, value)
+        if blocks:
+            await bridge_clear_content_block(site, old)
+            moved.append(f"{len(blocks)} body-copy block(s)")
+    except HTTPException as e:
+        errors.append(f"page content: {e.detail}")
+
+    try:
+        images = (await bridge_get_page_images(site, old)).get("images") or {}
+        for key, img in images.items():
+            await bridge_set_image_alt(site, new, key, (img or {}).get("alt") or "")
+        if images:
+            await bridge_clear_image_alt(site, old)
+            moved.append(f"{len(images)} image alt text entr{'y' if len(images) == 1 else 'ies'}")
+    except HTTPException as e:
+        errors.append(f"image alt text: {e.detail}")
+
+    kw = await db.onpage_keywords.find_one({"site_id": site_id, "path": old})
+    if kw:
+        await db.onpage_keywords.delete_many({"site_id": site_id, "path": new})
+        await db.onpage_keywords.update_one({"_id": kw["_id"]}, {"$set": {"path": new}})
+        moved.append("focus keyword")
+
+    await log_activity(site_id, "onpage_page_moved",
+                       f"Moved SEO data for {old} to {new}" + (f" ({', '.join(moved)})" if moved else " (nothing was stored yet)"))
+
+    return {
+        "from_path": old, "to_path": new, "moved": moved, "errors": errors,
+        "instructions": [
+            f"Rename the route folder in your Next.js repo so {old} becomes {new} "
+            f"(e.g. git mv app{old.rstrip('/') or '/(home)'} app{new.rstrip('/')}), then deploy.",
+            "Add the redirect below to next.config.mjs in the same deploy — this is what carries the "
+            "old URL's ranking signal over instead of losing it to a dead link.",
+        ],
+        "redirect_snippet": _redirects_snippet([(old, new)]),
+    }
 
 
 # --- Focus keywords ---------------------------------------------------------
