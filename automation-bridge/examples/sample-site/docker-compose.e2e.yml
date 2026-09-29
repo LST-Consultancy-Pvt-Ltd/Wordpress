@@ -1,0 +1,7 @@
+# Test-only override used by `npm run test:docker`: publishes the bridge on
+# loopback so the host can drive it. Never use this in production.
+services:
+  bridge:
+    networks: [private, edge]
+    ports:
+      - "127.0.0.1:${BRIDGE_PORT:-18787}:8787"

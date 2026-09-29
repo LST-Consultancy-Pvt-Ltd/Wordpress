@@ -1,0 +1,61 @@
+# Sample site + Automation Bridge sidecar.
+#
+#   cp env.example .env    # then fill in the three secrets
+#   docker compose up -d --build
+#
+# The bridge is only on the internal `private` network: its port is NOT
+# published. The control plane reaches it through a private network / VPN /
+# authenticated reverse proxy (see the bridge README).
+name: sample-site
+
+services:
+  site:
+    build:
+      context: ../..
+      dockerfile: examples/sample-site/Dockerfile
+    environment:
+      BRIDGE_REVALIDATE_SECRET: ${BRIDGE_REVALIDATE_SECRET:?set BRIDGE_REVALIDATE_SECRET}
+    volumes:
+      - content:/data/content:ro
+      - overrides:/data/overrides:ro
+    networks: [private, edge]
+    ports:
+      - "127.0.0.1:${SITE_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  bridge:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    depends_on:
+      site:
+        condition: service_started
+    environment:
+      BRIDGE_BOOTSTRAP_KEY_ID: ${BRIDGE_BOOTSTRAP_KEY_ID:?set BRIDGE_BOOTSTRAP_KEY_ID}
+      BRIDGE_BOOTSTRAP_SECRET: ${BRIDGE_BOOTSTRAP_SECRET:?set BRIDGE_BOOTSTRAP_SECRET}
+      BRIDGE_REVALIDATE_SECRET: ${BRIDGE_REVALIDATE_SECRET:?set BRIDGE_REVALIDATE_SECRET}
+      BRIDGE_SERVICE: bridge
+    volumes:
+      # The site repository, read-only: route inventory, manifest, assets.
+      - ./:/repo:ro
+      - ./automation-bridge.config.json:/etc/automation-bridge/automation-bridge.config.json:ro
+      # Writable roots, shared with the site (which mounts them read-only).
+      - content:/data/content
+      - overrides:/data/overrides
+      - bridge-state:/var/lib/automation-bridge
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [private]
+    restart: unless-stopped
+
+networks:
+  private:
+    internal: true
+  edge: {}
+
+volumes:
+  content: {}
+  overrides: {}
+  bridge-state: {}

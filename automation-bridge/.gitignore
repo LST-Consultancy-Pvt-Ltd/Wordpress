@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.state/
+.bridge-state/
+*.secret

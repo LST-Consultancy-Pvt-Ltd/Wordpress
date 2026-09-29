@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+test
+**/.next
+**/node_modules
+*.secret
+.env*
