@@ -61,6 +61,41 @@ export function sanitizeRichText(html: string): string {
   return sanitizeHtml(once, OPTIONS);
 }
 
+/**
+ * Broader allow-list for whole article bodies (`frontmatter.content_format:
+ * "html"`, e.g. AI-generated posts): rich-text tags plus headings, images,
+ * figures, tables, pre and hr. Styles, classes, scripts, event handlers,
+ * iframes and forms are always dropped; img src must be http(s) or relative.
+ */
+const ARTICLE_OPTIONS: sanitizeHtml.IOptions = {
+  ...OPTIONS,
+  allowedTags: [
+    ...RICH_TEXT_TAGS,
+    "h1", "h5", "h6", "img", "figure", "figcaption", "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+    "caption", "pre", "hr", "span", "div", "sup", "sub", "s", "del", "ins", "mark", "small", "dl", "dt", "dd",
+  ],
+  allowedAttributes: { a: ["href", "title", "rel"], img: ["src", "alt", "title", "width", "height", "loading"], th: ["colspan", "rowspan", "scope"], td: ["colspan", "rowspan"] },
+  allowedSchemesByTag: { img: ["http", "https"] },
+  allowedSchemesAppliedToAttributes: ["href", "src"],
+  transformTags: {
+    ...OPTIONS.transformTags,
+    img: (tagName, attribs) => {
+      const out: Record<string, string> = {};
+      const src = attribs.src?.trim();
+      if (src && isSafeHref(src) && !/^mailto:/i.test(src)) out.src = src;
+      for (const k of ["alt", "title"]) if (attribs[k] !== undefined) out[k] = attribs[k]!.slice(0, 500);
+      for (const k of ["width", "height"]) if (attribs[k] && /^\d{1,5}$/.test(attribs[k]!)) out[k] = attribs[k]!;
+      if (attribs.loading === "lazy" || attribs.loading === "eager") out.loading = attribs.loading;
+      return { tagName, attribs: out };
+    },
+  },
+};
+
+export function sanitizeArticleHtml(html: string): string {
+  if (typeof html !== "string" || html === "") return "";
+  return sanitizeHtml(sanitizeHtml(html, ARTICLE_OPTIONS), ARTICLE_OPTIONS);
+}
+
 /** Plain text never contains markup; used for `format: "text"` blocks. */
 export function normalizePlainText(s: string): string {
   // eslint-disable-next-line no-control-regex
