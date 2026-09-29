@@ -158,3 +158,23 @@ async def db_set_connected(site_id):
     fixture cannot provide, so mark it explicitly for the test."""
     from core.db import db
     await db.sites.update_one({"id": site_id}, {"$set": {"connection.status": "connected"}})
+
+
+def test_file_reads_are_confined_by_the_real_bridge(sidecar):
+    async def go():
+        h = Harness(site_id="real-bridge-site")
+        set_transport_override(None)
+        h.key_id, h.secret = sidecar["key_id"], sidecar["secret"]
+        try:
+            async with h.client() as c:
+                site = await h.create_site(c, bridge_url=sidecar["url"])
+                viewer = await h.user("viewer")
+                ok = await c.get(f"/api/sites/{site['id']}/files/code", params={"path": "app/about/page.tsx"},
+                                 headers=viewer)
+                assert ok.status_code == 200 and "withAutomationMetadata" in ok.json()["content"]
+                for bad in ("../../etc/passwd", "/etc/passwd", "app/../../secret", "automation.manifest.json"):
+                    r = await c.get(f"/api/sites/{site['id']}/files/code", params={"path": bad}, headers=viewer)
+                    assert r.status_code in (400, 404), (bad, r.status_code, r.text)
+        finally:
+            await h.cleanup()
+    _run(go())

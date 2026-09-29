@@ -69,6 +69,18 @@ async def content_item(site_id: str, collection: str, slug: str, _: dict = Depen
     return await _get(site_id, f"/content/{collection}/items/{slug}", "content.read")
 
 
+ROOT_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+
+
+@api_router.get("/sites/{site_id}/files/{root}")
+async def read_file(site_id: str, root: str, path: str = Query(min_length=1, max_length=240),
+                    _: dict = Depends(require_user)):
+    """One allow-listed text file from a code/assets root. Path safety
+    (traversal, symlinks, allow/deny globs) is enforced by the bridge."""
+    _check(ROOT_RE, root, "root")
+    return await _get(site_id, f"/files/{root}", "files.read", {"path": path})
+
+
 @api_router.get("/sites/{site_id}/revisions")
 async def revisions(site_id: str, cursor: Optional[str] = None, limit: int = Query(50, ge=1, le=200),
                     _: dict = Depends(require_user)):

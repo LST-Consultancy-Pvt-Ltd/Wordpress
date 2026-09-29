@@ -1602,6 +1602,12 @@
     ]
   ],
   [
+    "/api/sites/{site_id}/files/{root}",
+    [
+      "GET"
+    ]
+  ],
+  [
     "/api/sites/{site_id}/handshake",
     [
       "POST"
