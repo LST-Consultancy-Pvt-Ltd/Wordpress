@@ -141,7 +141,9 @@ function matcher(globs: string[]): (p: string) => boolean {
   const key = globs.join("\u0000");
   let m = matcherCache.get(key);
   if (!m) {
-    m = globs.length ? picomatch(globs, { dot: true }) : () => false;
+    // Case-insensitive: `.ENV`, `.GIT/…`, `DOCKERFILE` must not slip past the deny list
+    // on case-insensitive filesystems (macOS, Windows, some mounts).
+    m = globs.length ? picomatch(globs, { dot: true, nocase: true }) : () => false;
     matcherCache.set(key, m);
   }
   return m;
@@ -160,6 +162,48 @@ export function checkFileOpPath(root: ResolvedRoot, rel: string): string {
   const clean = validateRelPath(rel);
   if (isDenied(root, clean)) throw new BridgeError("OPERATION_NOT_ALLOWED", "path matches a deny rule");
   if (!isAllowed(root, clean)) throw new BridgeError("OPERATION_NOT_ALLOWED", "path is not in the root's allow-list");
+  return clean;
+}
+
+/**
+ * The path as the filesystem sees it: realpath of the deepest existing
+ * ancestor plus the non-existing tail, relative to the root's realpath.
+ * Returns null if it resolves outside the root.
+ */
+export async function realRelPath(root: ResolvedRoot, rel: string): Promise<string | null> {
+  const rootReal = await fsp.realpath(root.abs);
+  let probe = path.resolve(root.abs, ...rel.split("/"));
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = await fsp.realpath(probe);
+      const full = path.join(real, ...tail.reverse());
+      const r = path.relative(rootReal, full);
+      if (r.startsWith("..") || path.isAbsolute(r)) return null;
+      return r.split(path.sep).join("/");
+    } catch {
+      tail.push(path.basename(probe));
+      const parent = path.dirname(probe);
+      if (parent === probe) return null;
+      probe = parent;
+    }
+  }
+}
+
+/**
+ * `checkFileOpPath` plus the same allow/deny evaluation on the resolved
+ * path, so a symlink inside the root (e.g. `components/g -> ../.git`) cannot
+ * reach a denied target.
+ */
+export async function checkFileOpPathReal(root: ResolvedRoot, rel: string): Promise<string> {
+  const clean = checkFileOpPath(root, rel);
+  await resolveInRoot(root, clean);
+  const real = await realRelPath(root, clean);
+  if (real === null) throw new BridgeError("PATH_SYMLINK_ESCAPE", "a symbolic link in the path points outside its root");
+  if (real !== clean) {
+    if (isDenied(root, real)) throw new BridgeError("OPERATION_NOT_ALLOWED", "path resolves to a location that matches a deny rule");
+    if (!isAllowed(root, real)) throw new BridgeError("OPERATION_NOT_ALLOWED", "path resolves to a location outside the root's allow-list");
+  }
   return clean;
 }
 

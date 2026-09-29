@@ -56,6 +56,7 @@ export function createRevalidator(opts: {
         } catch {
           throw new BridgeError("UPSTREAM_FAILED", "site revalidation request failed");
         }
+        await res.body?.cancel().catch(() => {}); // status only; never buffer the body
         if (!res.ok) throw new BridgeError("UPSTREAM_FAILED", `site revalidation responded ${res.status}`);
       },
     };

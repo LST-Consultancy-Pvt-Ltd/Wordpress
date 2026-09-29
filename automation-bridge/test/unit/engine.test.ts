@@ -273,3 +273,14 @@ describe("change sets", () => {
     expect(Array.isArray(r.json.error.details.issues)).toBe(true);
   });
 });
+
+describe("binary diffs", () => {
+  it("the rendered diff (and so the plan hash) changes when binary content changes", async () => {
+    const { unifiedDiff } = await import("../../src/core/diff.js");
+    const before = Buffer.from([0, 1, 2, 3]);
+    const a = unifiedDiff({ root: "assets", path: "x.png", before, after: Buffer.from([0, 9, 9, 9]) });
+    const b = unifiedDiff({ root: "assets", path: "x.png", before, after: Buffer.from([0, 8, 8, 8]) });
+    expect(a).toContain("Binary files");
+    expect(a).not.toEqual(b);
+  });
+});

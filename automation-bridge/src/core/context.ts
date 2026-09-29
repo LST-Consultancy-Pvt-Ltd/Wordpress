@@ -7,7 +7,7 @@ import path from "node:path";
 import { AuditLog } from "./audit.js";
 import { Authenticator } from "./auth/authenticate.js";
 import { KeyStore } from "./auth/keystore.js";
-import { RateLimiter } from "./auth/limits.js";
+import { NonceCache, RateLimiter } from "./auth/limits.js";
 import { BackupStore } from "./backups.js";
 import { rootById, type ResolvedConfig, type ResolvedRoot } from "./config.js";
 import { FileContentAdapter } from "./content/file-adapter.js";
@@ -86,13 +86,13 @@ export class BridgeContext {
       onError: (m) => this.logger.error(m),
     });
     this.keys.init();
-    this.auth = new Authenticator(this.keys, { now: this.now });
+    this.auth = new Authenticator(this.keys, { now: this.now, nonces: new NonceCache(600, 200_000, path.join(cfg.state_dir, "nonces")) });
     this.idem = new IdempotencyStore(path.join(cfg.state_dir, "idempotency"), cfg.retention.idempotency_hours);
     this.lock = new SiteLock({ dir: path.join(cfg.state_dir, "locks"), waitMs: cfg.limits.lock_wait_ms });
     this.audit = new AuditLog({ dir: path.join(cfg.state_dir, "audit") });
     this.revisions = new RevisionStore(cfg.state_dir);
     this.jobs = new JobRegistry(cfg.state_dir);
-    this.validation = new ValidationRunner({ cfg, jobs: this.jobs, logger: this.logger, codeRoot: this.codeRoot() });
+    this.validation = new ValidationRunner({ cfg, jobs: this.jobs, logger: this.logger, redactor: this.redactor, codeRoot: this.codeRoot() });
     this.docker = cfg.docker ? new DockerOps({ cfg, executor: opts.dockerExecutor, logger: this.logger, redactor: this.redactor, fetch: this.fetchFn, pollMs: opts.dockerPollMs }) : null;
     this.backups = new BackupStore(cfg);
     this.revalidator = createRevalidator({

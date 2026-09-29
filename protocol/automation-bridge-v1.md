@@ -364,3 +364,13 @@ Additive and binding for v1; both implementations follow them.
 11. **Deployment strategies.** `build-and-swap` may be declared unsupported.
     `POST /deployments/{id}/rollback` returns `202 {deployment_id, job_id}`.
 12. **Scopes.** Scopes do not imply one another; for example, `admin` does not include `read`.
+13. **Validation and preview need `write` scope** (§10). They build and run repository
+    code on proposed content, so a read-only key must not start them. The bridge also
+    refuses to run jobs as its own user unless `allow_same_user` is configured, keeps
+    scratch trees outside `state_dir`, and redacts secrets from job output.
+14. **Executable MDX.** `content.upsert` of MDX containing import, export or `{…}`
+    returns `OPERATION_NOT_ALLOWED` unless the collection sets `allow_executable_mdx`.
+15. **Diff lines for binary files** include `(sha256 <before>..<after>)`, so the plan
+    hash changes whenever the content does.
+16. **Deny and allow globs** match case-insensitively. They are also evaluated against
+    each path's realpath relative to its root, so a symlink cannot reach a denied target.

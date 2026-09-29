@@ -11,7 +11,7 @@ import { combinedDiff, planFiles, type FileChange } from "./diff.js";
 import { BridgeError, ERROR_STATUS, type ErrorCode } from "./errors.js";
 import { atomicWrite, durableDelete, pathExists } from "./fsutil.js";
 import { findPageForRoute } from "./inventory.js";
-import { checkFileOpPath, isSymlink, resolveInRoot } from "./paths.js";
+import { checkFileOpPathReal, isSymlink, resolveInRoot } from "./paths.js";
 import type { RevisionKind } from "./revisions.js";
 import { isDynamicPattern } from "./route.js";
 import { normalizePlainText, sanitizeRichText } from "./sanitize.js";
@@ -173,7 +173,7 @@ export async function planChangeSet(ctx: BridgeContext, req: PlanRequestT): Prom
         if (!root) throw new BridgeError("NOT_FOUND", `unknown root "${op.root}"`);
         if (root.kind !== "code" && root.kind !== "assets") throw new BridgeError("OPERATION_NOT_ALLOWED", `file operations are not allowed on ${root.kind} roots`);
         if (!root.writable) throw new BridgeError("OPERATION_NOT_ALLOWED", `root "${root.id}" is not writable`);
-        const rel = checkFileOpPath(root, op.path);
+        const rel = await checkFileOpPathReal(root, op.path);
         const cur = await vfs.read(root.id, rel);
         if (op.op === "file.write") {
           if (Buffer.byteLength(op.content, "utf8") > ctx.cfg.limits.max_file_bytes) {

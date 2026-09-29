@@ -276,6 +276,7 @@ export class DockerOps {
       try {
         const res = await this.fetchFn(new URL(p, base).toString(), { redirect: "manual", signal: AbortSignal.timeout(15_000) });
         status = res.status;
+        await res.body?.cancel().catch(() => {}); // status only; never buffer the body
       } catch {
         status = 0;
       }

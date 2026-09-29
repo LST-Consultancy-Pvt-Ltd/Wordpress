@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ResolvedRoot } from "../../src/core/config.js";
 import { BridgeError } from "../../src/core/errors.js";
-import { checkFileOpPath, resolveInRoot, validateRelPath } from "../../src/core/paths.js";
+import { checkFileOpPath, checkFileOpPathReal, resolveInRoot, validateRelPath } from "../../src/core/paths.js";
 import { makeBridge, tmpDir } from "../helpers.js";
 
 function root(abs: string, extra: Partial<ResolvedRoot> = {}): ResolvedRoot {
@@ -142,5 +142,29 @@ describe("file operations through the API", () => {
     const { client } = await makeBridge();
     const r = await client.post("/changesets/plan", { change_id: "cs_p", operations: [{ op: "file.write", root: "overrides", path: "metadata.json", content: "{}", base_sha256: null }] }, null);
     expect(r.json.errors[0].code).toBe("OPERATION_NOT_ALLOWED");
+  });
+});
+
+describe("security review regressions", () => {
+  const r = root("/nonexistent");
+  it.each([[".ENV"], [".Env.Local"], [".GIT/config"], [".git/HOOKS/post-checkout"], ["DOCKERFILE"],
+    ["Docker-Compose.yml"], ["Node_Modules/x/index.js"], ["APP/SECRET/x.ts"], ["Package-Lock.json"]])(
+    "deny list is case-insensitive: %j", (p) => {
+      expect(code(() => checkFileOpPath(r, p))).toBe("OPERATION_NOT_ALLOWED");
+    });
+
+  it("a symlink inside the root cannot reach a denied or non-allow-listed target", async () => {
+    const dir = tmpDir();
+    fs.mkdirSync(path.join(dir, "app", "secret"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "components"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "app", "secret", "keys.ts"), "x");
+    fs.writeFileSync(path.join(dir, "server.ts"), "x");
+    fs.symlinkSync(path.join(dir, "app", "secret"), path.join(dir, "components", "g"));
+    fs.symlinkSync(path.join(dir, "server.ts"), path.join(dir, "components", "srv.ts"));
+    const rr = root(dir);
+    expect(checkFileOpPath(rr, "components/g/keys.ts")).toBe("components/g/keys.ts"); // lexically fine…
+    expect(await acode(checkFileOpPathReal(rr, "components/g/keys.ts"))).toBe("OPERATION_NOT_ALLOWED"); // …but not really
+    expect(await acode(checkFileOpPathReal(rr, "components/srv.ts"))).toBe("OPERATION_NOT_ALLOWED");
+    expect(await acode(checkFileOpPathReal(rr, "components/new.tsx"))).toBeNull();
   });
 });
