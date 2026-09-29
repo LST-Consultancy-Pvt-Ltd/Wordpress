@@ -42,6 +42,8 @@ export const CollectionConfig = z
     index_routes: z.array(z.string().startsWith("/")).default([]),
     frontmatter_schema: JsonSchemaLike.nullable().default(null),
     title_field: z.string().default("title"),
+    /** Allow MDX bodies containing import/export/{expressions} (code that runs at build/render). Default false. */
+    allow_executable_mdx: z.boolean().default(false),
     /** For kind=custom: name of an adapter registered programmatically. */
     adapter: z.string().optional(),
   })
@@ -51,8 +53,26 @@ const StepName = z.enum(["format", "lint", "typecheck", "build", "test"]);
 export type StepName = z.infer<typeof StepName>;
 export const STEP_NAMES = StepName.options;
 
+/**
+ * Isolation settings shared by validation and preview jobs. Job commands run
+ * repository code on proposed file contents, so by default they must run as a
+ * different user than the bridge (`run_as`), which cannot read `state_dir`
+ * (mode 0700). `allow_same_user: true` opts out explicitly.
+ */
+const sandboxShape = {
+  /** uid/gid for job commands. Requires the bridge to run as root (or with CAP_SETUID/CAP_SETGID). */
+  run_as: z.object({ uid: z.number().int().min(0).max(2 ** 31), gid: z.number().int().min(0).max(2 ** 31) }).strict().nullable().default(null),
+  /** Accept running job commands as the bridge user, which can read the key store. Default false. */
+  allow_same_user: z.boolean().default(false),
+  /** How the repository's node_modules is made available: a private copy (default) or a symlink (faster; a job can modify the original). */
+  node_modules: z.enum(["copy", "symlink"]).default("copy"),
+  /** Parent directory for scratch trees; must not be inside state_dir or any root. Default: <os tmp>/automation-bridge-scratch. */
+  scratch_dir: z.string().min(1).nullable().default(null),
+};
+
 export const ValidationConfig = z
   .object({
+    ...sandboxShape,
     steps: z
       .object({
         format: cmd.optional(),
@@ -78,6 +98,7 @@ export const PreviewConfig = z
     /** URL reported to the control plane once the command succeeds. */
     url: z.string().url(),
     timeout_s: z.number().int().min(1).max(3600).default(900),
+    ...sandboxShape,
   })
   .strict();
 

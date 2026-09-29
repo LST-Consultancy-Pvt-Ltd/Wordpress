@@ -61,6 +61,35 @@ export function paginate<T>(all: T[], cursor: string | undefined, limit: number)
   return { items, next_cursor: next };
 }
 
+/** Read an upstream response body up to `max` bytes; larger bodies throw (the stream is cancelled). */
+export async function readCapped(res: Response, max: number): Promise<Buffer> {
+  const declared = Number(res.headers.get("content-length") ?? "0");
+  if (declared > max) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error("upstream response too large");
+  }
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error("upstream response too large");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Release an upstream response without reading it. */
+export async function discardBody(res: Response): Promise<void> {
+  await res.body?.cancel().catch(() => {});
+}
+
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }

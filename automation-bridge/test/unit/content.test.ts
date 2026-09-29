@@ -84,9 +84,23 @@ describe("mdx adapter", () => {
     expect(fs.readFileSync(path.join(f.content, "posts/ai-post.mdx"), "utf8")).toContain("content_format: html");
   });
 
-  it("flags MDX bodies that execute code", async () => {
+  const execOp = { op: "content.upsert", collection: "posts", slug: "x", status: "draft", frontmatter: { title: "x" }, body: "import X from 'y'\n\n<X />", base_sha256: null };
+
+  it("rejects MDX bodies that execute code unless the collection opts in", async () => {
     const { client } = await makeBridge();
-    const r = await client.post("/changesets/plan", { change_id: "c", operations: [{ op: "content.upsert", collection: "posts", slug: "x", status: "draft", frontmatter: { title: "x" }, body: "import X from 'y'\n\n<X />", base_sha256: null }] }, null);
+    const r = await client.post("/changesets/plan", { change_id: "c", operations: [execOp] }, null);
+    expect(r.json.valid).toBe(false);
+    expect(r.json.errors[0].code).toBe("OPERATION_NOT_ALLOWED");
+    // HTML bodies are rendered through the sanitiser, never executed.
+    const html = await client.post("/changesets/plan", { change_id: "c", operations: [{ ...execOp, frontmatter: { title: "x", content_format: "html" }, body: "<p>{not code}</p>" }] }, null);
+    expect(html.json.valid).toBe(true);
+  });
+
+  it("flags executable MDX as a code change when the collection allows it", async () => {
+    const { client } = await makeBridge({
+      content: { collections: [{ id: "posts", kind: "mdx", root: "content", dir: "posts", route_pattern: "/blog/[slug]", allow_executable_mdx: true }] },
+    });
+    const r = await client.post("/changesets/plan", { change_id: "c", operations: [execOp] }, null);
     expect(r.json.warnings[0].code).toBe("MDX_EXECUTABLE_CONTENT");
     expect(r.json.risk).toEqual({ level: "high", flags: ["code-change"] });
   });

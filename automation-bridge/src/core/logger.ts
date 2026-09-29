@@ -13,6 +13,10 @@ const SECRET_KEY_RE = /(secret|signature|password|passwd|token|authorization|coo
 
 const PATTERNS: [RegExp, string][] = [
   [/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, "$1[REDACTED]"],
+  // HMAC signatures (X-Bridge-Signature, X-Revalidate-Signature, "signature": "…").
+  [/((?:signature|hmac)["']?\s*[:=]\s*["']?)[0-9a-fA-F]{32,}/gi, "$1[REDACTED]"],
+  // Key-store entries ("secret": "<43-char base64url>").
+  [/("secret"\s*:\s*")[A-Za-z0-9_-]{20,}(")/g, "$1[REDACTED]$2"],
   [/((?:secret|password|passwd|token|api[-_]?key)\s*[=:]\s*)("?)[^\s"',;]{4,}/gi, "$1$2[REDACTED]"],
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED PRIVATE KEY]"],
 ];

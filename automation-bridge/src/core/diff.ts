@@ -21,7 +21,10 @@ export function unifiedDiff(c: FileChange): string {
   const a = c.before === null ? "/dev/null" : `a/${label}`;
   const b = c.after === null ? "/dev/null" : `b/${label}`;
   if ((c.before && !isProbablyText(c.before)) || (c.after && !isProbablyText(c.after))) {
-    return `diff --bridge ${a} ${b}\nBinary files ${a} and ${b} differ\n`;
+    // Include both hashes so the plan hash (expected_plan_sha256) changes with the content.
+    const hb = c.before === null ? "absent" : sha256Hex(c.before);
+    const ha = c.after === null ? "absent" : sha256Hex(c.after);
+    return `diff --bridge ${a} ${b}\nBinary files ${a} and ${b} differ (sha256 ${hb}..${ha})\n`;
   }
   const patch = createTwoFilesPatch(a, b, c.before?.toString("utf8") ?? "", c.after?.toString("utf8") ?? "", "", "", { context: 3 });
   // Drop the "Index/====" preamble some versions emit; keep ---/+++ onwards.

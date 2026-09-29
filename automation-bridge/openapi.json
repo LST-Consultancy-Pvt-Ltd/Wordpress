@@ -5363,7 +5363,7 @@
     "/api/automation-bridge/v1/validations": {
       "post": {
         "summary": "Validate proposed operations in a scratch worktree",
-        "x-bridge-scope": "read",
+        "x-bridge-scope": "write",
         "parameters": [],
         "responses": {
           "202": {
@@ -5934,7 +5934,7 @@
     "/api/automation-bridge/v1/previews": {
       "post": {
         "summary": "Build a preview of proposed operations",
-        "x-bridge-scope": "read",
+        "x-bridge-scope": "write",
         "parameters": [],
         "responses": {
           "202": {

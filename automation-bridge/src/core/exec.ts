@@ -21,6 +21,9 @@ export interface ExecOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs: number;
+  /** Run the child as this uid/gid (needs root or CAP_SETUID/CAP_SETGID unless equal to the current ids). */
+  uid?: number;
+  gid?: number;
   /** Bytes of combined output kept (tail). */
   capBytes?: number;
   onOutput?: (chunk: string) => void;
@@ -47,6 +50,8 @@ export function runCommand(cmd: string, args: string[], opts: ExecOptions): Prom
       args,
       {
         cwd: opts.cwd,
+        ...(opts.uid !== undefined ? { uid: opts.uid } : {}),
+        ...(opts.gid !== undefined ? { gid: opts.gid } : {}),
         env: opts.env ?? { PATH: process.env.PATH ?? "/usr/bin:/bin" },
         timeout: opts.timeoutMs,
         killSignal: "SIGKILL",

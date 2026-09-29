@@ -161,12 +161,19 @@ export class FileContentAdapter implements ContentAdapter {
     if (op.base_sha256 !== null && (!cur || sha256Hex(cur.buf) !== op.base_sha256)) {
       throw new BridgeError("CONFLICT_REVISION", `item "${op.slug}" changed since base_sha256`);
     }
+    const executable = this.cfg.kind === "mdx" && op.frontmatter.content_format !== "html" && MDX_EXEC_RE.test(op.body);
+    if (executable && !this.cfg.allow_executable_mdx) {
+      throw new BridgeError(
+        "OPERATION_NOT_ALLOWED",
+        `MDX body contains import/export or {expressions}, which run as code; collection "${this.cfg.id}" does not set allow_executable_mdx`,
+      );
+    }
     const content = this.serialize(op.frontmatter, op.body);
     if (cur && cur.status !== op.status) await vfs.write(this.root.id, this.relPath(op.slug, cur.status), null);
     await vfs.write(this.root.id, this.relPath(op.slug, op.status), content);
     const warnings: { code: string; message: string }[] = [];
     const riskFlags: ("code-change" | "deletes-content")[] = [];
-    if (this.cfg.kind === "mdx" && op.frontmatter.content_format !== "html" && MDX_EXEC_RE.test(op.body)) {
+    if (executable) {
       warnings.push({ code: "MDX_EXECUTABLE_CONTENT", message: "MDX body contains import/export or {expressions}, which run as code when the site builds or renders it" });
       riskFlags.push("code-change");
     }

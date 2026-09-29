@@ -14,7 +14,7 @@ import { walkFiles } from "./fsutil.js";
 import { unsupportedFeatures } from "./inventory.js";
 import { applyChangeSet, executeChanges, planChangeSet, rollbackRevision } from "./engine.js";
 import { combinedDiff, planFiles } from "./diff.js";
-import { checkFileOpPath, isDenied, resolveInRoot } from "./paths.js";
+import { checkFileOpPathReal, isDenied, resolveInRoot } from "./paths.js";
 import { containerId, gitInfo, nextjsInfo, packageManager } from "./repo.js";
 import * as S from "./schemas.js";
 import { paginate, sha256Hex } from "./util.js";
@@ -377,7 +377,7 @@ export const ROUTES: RouteDef[] = [
       await requireCap(ctx, "files.read");
       const root = rootById(ctx.cfg, seg(params.root, S.ROOT_ID_RE, "root"));
       if (!root || (root.kind !== "code" && root.kind !== "assets")) throw new BridgeError("NOT_FOUND", "root not found");
-      const rel = checkFileOpPath(root, query.get("path") ?? "");
+      const rel = await checkFileOpPathReal(root, query.get("path") ?? "");
       const abs = await resolveInRoot(root, rel);
       let buf: Buffer;
       try {
@@ -471,7 +471,7 @@ export const ROUTES: RouteDef[] = [
   {
     method: "POST",
     path: "/validations",
-    scope: "read",
+    scope: "write",
     mutating: false,
     summary: "Validate proposed operations in a scratch worktree",
     request: S.ValidationRequest,
@@ -498,7 +498,7 @@ export const ROUTES: RouteDef[] = [
   {
     method: "POST",
     path: "/previews",
-    scope: "read",
+    scope: "write",
     mutating: false,
     summary: "Build a preview of proposed operations",
     request: S.PreviewRequest,

@@ -139,7 +139,7 @@ Pages using overrides must be eligible for revalidation, so do not use `force-st
 | `manifest` | `{root, path="automation.manifest.json"}` \| `{inline: {...}}` \| null | block registry |
 | `content.collections[]` | `{id, kind: mdx\|markdown\|json\|custom, root?, dir="", route_pattern=null, index_routes=[], frontmatter_schema=null, title_field="title", adapter?}` | `frontmatter_schema` is a JSON-Schema subset (type, required, properties, additionalProperties, enum, min/maxLength, minimum/maximum, items, maxItems, format date/date-time/uri) |
 | `revalidate` | `{mode: none\|in-app\|sidecar = none, endpoint_path="/api/automation-revalidate", timeout_ms=5000}` | |
-| `validation` | `{steps: {format?, lint?, typecheck?, build?, test?: string[]}, timeout_s=600, node_env="production", use_git_worktree=true, max_concurrent=1}` \| null | command **arrays**, run without a shell |
+| `validation` | `{steps: {format?, lint?, typecheck?, build?, test?: string[]}, timeout_s=600, node_env="production", use_git_worktree=true, max_concurrent=1, run_as={uid,gid}\|null, allow_same_user=false, node_modules="copy"\|"symlink", scratch_dir=null}` \| null | command **arrays**, run without a shell. **Jobs refuse to run** unless `run_as` names a separate unprivileged user (bridge must run as root or with CAP_SETUID/SETGID; `state_dir` must be mode 0700) or `allow_same_user: true` is set explicitly. `preview` takes the same sandbox keys |
 | `preview` | `{command: string[], url, timeout_s=900}` \| null | |
 | `docker` | `{compose_file, project, profiles: {name: {services[], strategy="compose-recreate", health_timeout_s=120, smoke_paths=["/"]}}, log_services?, docker_binary="docker", command_timeout_s=900}` \| null | |
 | `limits` | `max_body_bytes=1MiB (≤2MiB), max_file_bytes=512KiB, rate_per_minute=120, mutations_per_minute=20, max_operations=200, lock_wait_ms=10000` | |
@@ -178,15 +178,19 @@ TODO for each target site: fill in real repository paths, the compose file and p
 | Double-apply | `Idempotency-Key` required on every mutation. Stored 24 h. Fingerprint = method + path + body hash |
 | Path traversal | NFC, no `..`/absolute/backslash/NUL/control chars/percent-encoded dots or slashes, ≤ 240 bytes, realpath containment, symlink escape detection (including dangling links), final-component symlinks never written, re-check before rename, allow + deny globs |
 | XSS through content | rich text sanitised on write and on render (allow-list per protocol §8). Article HTML sanitised on render. JSON-LD escaped |
-| Arbitrary code/commands | no shell anywhere (`execFile` only). Validation/preview run only config-defined arrays with a clean env (`PATH, HOME, NODE_ENV, CI`), timeouts and 1 MiB output cap. Docker commands use fixed templates with config values only. MDX bodies containing `import`/`export`/`{…}` are flagged `code-change` |
+| Arbitrary code/commands | no shell anywhere (`execFile` only). Validation/preview run only config-defined arrays with a clean env (`PATH, HOME, NODE_ENV, CI`), timeouts and 1 MiB output cap. Docker commands use fixed templates with config values only. MDX bodies containing `import`/`export`/`{…}` are rejected unless the collection sets `allow_executable_mdx: true` (then flagged `code-change`). `/validations` and `/previews` need `write` scope |
 | Partial writes | temp file → fsync → rename → dir fsync. Before-snapshots. Hash verification. Automatic restore on failure. `IN_PROGRESS` markers are recovered on startup |
 | Concurrent edits | per-site lock (mutex + lock file, 10 s → `LOCKED`). `base_sha256`, `base_revision` and `expected_plan_sha256` conflict detection |
 | Secret leakage | responses never contain absolute paths or env values. Logs redact registered secrets, secret-like keys, bearer tokens and absolute root paths. The audit log stores paths without query strings |
 
 Out of scope / residual risks: anyone with write access to the state dir or the
-key store controls the bridge. `node_modules` in validation worktrees is a
-symlink to the repository's copy, so a malicious build step could modify it.
-Validation runs code from the repository, so only enable it for trusted repositories.
+key store controls the bridge. Validation and preview run repository code on
+*proposed* file contents: run them as a separate user (`run_as`), keep
+scratch trees outside `state_dir` (the default), keep `node_modules: "copy"`,
+and only enable them for trusted repositories. `allow_same_user: true` means a
+malicious proposal can read the key store. The control plane restricts
+validation to deployers for this reason. Nonces are persisted under
+`state_dir/nonces`, so replays are caught across restarts and workers.
 
 ## Capability matrix
 

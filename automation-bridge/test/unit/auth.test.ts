@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { signedHeaders } from "../../src/core/auth/signing.js";
@@ -179,5 +180,20 @@ describe("idempotency", () => {
     expect(c.json.error.code).toBe("IDEMPOTENCY_MISMATCH");
     const revs = await client.get("/revisions");
     expect(revs.json.items.length).toBe(1);
+  });
+});
+
+describe("persistent nonce cache", () => {
+  it("detects a replay across processes / restarts sharing the state dir", async () => {
+    const { NonceCache } = await import("../../src/core/auth/limits.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nonces-"));
+    const first = new NonceCache(600, 1000, dir);
+    expect(first.checkAndRemember("k1", "n-abcdefghijklmnop")).toBe(true);
+    const afterRestart = new NonceCache(600, 1000, dir);          // fresh memory, same directory
+    expect(afterRestart.checkAndRemember("k1", "n-abcdefghijklmnop")).toBe(false);
+    expect(afterRestart.checkAndRemember("k2", "n-abcdefghijklmnop")).toBe(true); // per key
+    const later = Date.now() + 601_000;
+    expect(new NonceCache(600, 1000, dir).checkAndRemember("k1", "n-abcdefghijklmnop", later)).toBe(true);
+    expect(fs.readdirSync(dir).every((f) => /^[0-9a-f]{64}$/.test(f))).toBe(true); // no raw nonces/key ids on disk
   });
 });
