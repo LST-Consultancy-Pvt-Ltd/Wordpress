@@ -51,8 +51,8 @@ export async function withAutomationMetadata<T extends object>(route: string, de
   if (o.openGraph || o.title !== undefined || o.description !== undefined) {
     meta.openGraph = {
       ...og,
-      title: o.openGraph?.title ?? o.title ?? og.title,
-      description: o.openGraph?.description ?? o.description ?? og.description,
+      title: o.openGraph?.title ?? o.title ?? og.title ?? (typeof meta.title === "string" ? meta.title : undefined),
+      description: o.openGraph?.description ?? o.description ?? og.description ?? (typeof meta.description === "string" ? meta.description : undefined),
       ...(o.openGraph?.image ? { images: [o.openGraph.image] } : {}),
     };
   }

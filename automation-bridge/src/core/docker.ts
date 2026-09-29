@@ -292,8 +292,8 @@ export class DockerOps {
     const fail = async (status: DeploymentT["status"]) => {
       d.status = status;
       d.finished_at = nowIso();
-      await this.save(d);
       if (jobs && jobId) jobs.update(jobId, (j) => ((j.status = "failed"), (j.error = `deployment ${status} at step ${d.failed_step}`), (j.result = { deployment_id: d.deployment_id, status })), "status");
+      await this.save(d);
       return d;
     };
     try {
@@ -344,8 +344,8 @@ export class DockerOps {
       d.new_image_id = firstId ? ((await this.inspect(firstId))?.Image ?? null) : null;
       d.status = "succeeded";
       d.finished_at = nowIso();
-      await this.save(d);
       if (jobs && jobId) jobs.update(jobId, (j) => ((j.status = "succeeded"), (j.result = { deployment_id: d.deployment_id, status: d.status })), "status");
+      await this.save(d);
       return d;
     } catch (e) {
       this.logger.warn("deployment failed", { deployment_id: d.deployment_id, step: d.failed_step, err: e });

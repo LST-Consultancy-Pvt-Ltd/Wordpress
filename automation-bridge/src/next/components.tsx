@@ -27,7 +27,6 @@ type EditableImageProps = { id: string; src: string; alt: string } & Omit<ImgHTM
 
 export async function EditableImage({ id, src, alt, ...rest }: EditableImageProps): Promise<ReactElement> {
   const resolved = await getImageAlt(id, alt);
-  // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={resolved} {...rest} />;
 }
 

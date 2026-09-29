@@ -188,34 +188,30 @@ export class ValidationRunner {
     const jobs = this.deps.jobs;
     const release = await this.sem.acquire();
     let scratch: { dir: string; cleanup: () => Promise<void> } | null = null;
+    let outcome: { ok: boolean; result: Record<string, unknown> | null; error: string | null };
     try {
       jobs.update(jobId, (j) => (j.status = "running"), "status");
       scratch = await materialize({ cfg: this.deps.cfg, codeRoot: this.deps.codeRoot!, logger: this.deps.logger }, jobId, changes, (s) => jobs.log(jobId, "setup", s));
       const home = path.join(scratch.dir, ".bridge-home");
       await fsp.mkdir(home, { recursive: true });
       const { ok, result } = await body(scratch.dir, home);
-      jobs.update(
-        jobId,
-        (j) => {
-          j.status = ok ? "succeeded" : "failed";
-          j.result = result;
-          j.error = ok ? null : "one or more steps failed";
-        },
-        "status",
-      );
+      outcome = { ok, result, error: ok ? null : "one or more steps failed" };
     } catch (e) {
       this.deps.logger.error("job failed", { job_id: jobId, err: e });
-      jobs.update(
-        jobId,
-        (j) => {
-          j.status = "failed";
-          j.error = "job could not run (see bridge log)";
-        },
-        "status",
-      );
+      outcome = { ok: false, result: null, error: "job could not run (see bridge log)" };
     } finally {
+      // Clean up before reporting a terminal status so observers never see a stale scratch tree.
       await scratch?.cleanup().catch(() => {});
       release();
     }
+    jobs.update(
+      jobId,
+      (j) => {
+        j.status = outcome.ok ? "succeeded" : "failed";
+        j.result = outcome.result;
+        j.error = outcome.error;
+      },
+      "status",
+    );
   }
 }
