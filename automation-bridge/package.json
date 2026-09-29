@@ -1,0 +1,87 @@
+{
+  "name": "@lst/automation-bridge",
+  "version": "1.0.0",
+  "description": "Automation Bridge v1 agent for managed Next.js sites (sidecar and in-app modes).",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "default": "./dist/next/index.js"
+    },
+    "./next/server": {
+      "types": "./dist/next/route-handlers.d.ts",
+      "default": "./dist/next/route-handlers.js"
+    },
+    "./sidecar": {
+      "types": "./dist/sidecar/server.d.ts",
+      "default": "./dist/sidecar/server.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "automation-bridge": "./dist/sidecar/main.js"
+  },
+  "files": [
+    "dist",
+    "openapi.json",
+    "scripts/sign-request.mjs",
+    "automation-bridge.config.example.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:docker": "node scripts/test-docker.mjs",
+    "openapi": "tsx scripts/generate-openapi.ts",
+    "start": "node dist/sidecar/main.js"
+  },
+  "peerDependencies": {
+    "next": ">=15.0.0",
+    "react": ">=18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "picomatch": "^4.0.7",
+    "sanitize-html": "^2.17.7",
+    "tar": "^7.5.22",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^20.19.43",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sanitize-html": "^2.16.2",
+    "eslint": "^9.39.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^4.1.11"
+  }
+}
