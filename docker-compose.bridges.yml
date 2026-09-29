@@ -1,0 +1,16 @@
+# Optional: attach the control plane to a private network shared with site
+# bridges, so bridge URLs can be http://<bridge-service>:8787/api/automation-bridge/v1
+# (register the site with "allow private-network HTTP"). Create the network once:
+#   docker network create automation
+# and add it to each site's bridge service. Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.bridges.yml up -d
+services:
+  backend:
+    networks:
+      - default
+      - automation
+
+networks:
+  automation:
+    external: true
+    name: ${AUTOMATION_NETWORK:-automation}

@@ -1,12 +1,16 @@
+# Site Autopilot control plane (Next.js automation platform).
+# Bridges run beside each managed Next.js site (see automation-bridge/README.md);
+# to reach them over a private Docker network instead of HTTPS, also load
+# docker-compose.bridges.yml.
 services:
   mongo:
     image: mongo:7
     restart: unless-stopped
     volumes:
-      - wp_mongo_data:/data/db
+      - sa_mongo_data:/data/db
 
   backend:
-    image: lstconsultancy/wordpress-manager-backend:latest
+    image: lstconsultancy/site-autopilot-backend:latest
     restart: unless-stopped
     depends_on:
       - mongo
@@ -14,9 +18,13 @@ services:
       - "8002:8000"
     environment:
       - MONGO_URL=mongodb://mongo:27017
-      - DB_NAME=${DB_NAME}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DB_NAME=${DB_NAME:?set DB_NAME}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY}
+      # Fernet key; bridge credentials cannot be stored or used without it.
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+      # Unattended writes (scheduled autopilot runs, auto-apply policies) stay
+      # off unless explicitly set to 0.
+      - AUTOMATION_WRITES_FROZEN=${AUTOMATION_WRITES_FROZEN:-1}
       - CORS_ORIGINS=${CORS_ORIGINS}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
@@ -32,7 +40,7 @@ services:
       - PAGESPEED_API_KEY=${PAGESPEED_API_KEY}
 
   frontend:
-    image: lstconsultancy/wordpress-manager-frontend:latest
+    image: lstconsultancy/site-autopilot-frontend:latest
     restart: unless-stopped
     depends_on:
       - backend
@@ -40,4 +48,4 @@ services:
       - "3007:80"
 
 volumes:
-  wp_mongo_data:
+  sa_mongo_data:

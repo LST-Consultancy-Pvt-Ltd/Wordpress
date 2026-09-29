@@ -1,5 +1,4 @@
 {
- "docker-compose.yml": 4,
  "frontend/public/index.html": 3,
  "frontend/src/App.js": 9,
  "frontend/src/components/Layout.jsx": 10,
