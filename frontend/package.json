@@ -63,7 +63,9 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "test:ci": "craco test --watchAll=false",
+    "e2e": "playwright test"
   },
   "browserslist": {
     "production": [

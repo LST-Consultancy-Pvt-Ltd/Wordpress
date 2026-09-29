@@ -23,3 +23,9 @@ yarn-debug.log*
 yarn-error.log*
 
 .env
+
+# playwright
+/test-results
+/playwright-report
+/blob-report
+/playwright/.cache

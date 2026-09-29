@@ -49,7 +49,7 @@ import {
   canValidate,
   describeOperation,
   formatDate,
-  isEditable,
+  canReplan,
 } from "../../lib/changesets";
 import { hasCapability, missingCapabilityReason, OP_CAPABILITY } from "../../lib/capabilities";
 
@@ -235,7 +235,7 @@ export default function ChangeSetPanel({ changesetId, onChange, compact = false 
           {cs.description && <p className="text-sm text-muted-foreground max-w-2xl">{cs.description}</p>}
         </div>
         <div className="flex flex-wrap gap-2" aria-label="Change set actions">
-          {isEditable(cs) && (
+          {canReplan(cs) && (
             <GatedButton minRole="editor" variant="outline" size="sm" onClick={() => safe(act("plan", () => planChangeSet(cs.id), { success: "Re-planned against the current revision" }))} disabled={!!busy} data-testid="replan-btn">
               <RefreshCw size={14} aria-hidden="true" /> Re-plan
             </GatedButton>

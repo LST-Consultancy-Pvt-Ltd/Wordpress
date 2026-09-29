@@ -48,6 +48,8 @@ const EDITABLE = ["draft", "planned", "plan_failed", "validation_failed", "rejec
 const PRE_APPLY = ["draft", "planned", "plan_failed", "validating", "validated", "validation_failed", "pending_approval", "approved", "rejected"];
 
 export const isEditable = (cs) => EDITABLE.includes(cs?.status);
+/** Re-planning is also how an approved or failed change set recovers from a revision conflict. */
+export const canReplan = (cs) => isEditable(cs) || ["validated", "approved", "apply_failed"].includes(cs?.status);
 export const canSubmit = (cs) => ["planned", "validated"].includes(cs?.status) && cs?.plan?.valid !== false;
 export const canDecide = (cs) => cs?.status === "pending_approval";
 export const canApply = (cs) => cs?.status === "approved";

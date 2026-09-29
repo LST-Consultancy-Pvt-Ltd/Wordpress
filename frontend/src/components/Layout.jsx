@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Outlet, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useOutlet, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
@@ -270,6 +270,10 @@ export default function Layout() {
   const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
   const location = useLocation();
+  // Capture the routed element so the exiting page keeps rendering its own
+  // route during the transition (an <Outlet/> there would render the new
+  // route too, mounting the next page twice).
+  const outlet = useOutlet();
   const { can } = useRole();
 
   useEffect(() => {
@@ -354,7 +358,7 @@ export default function Layout() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <Outlet />
+              {outlet}
             </motion.div>
           </AnimatePresence>
         </div>
