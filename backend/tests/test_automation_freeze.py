@@ -138,3 +138,19 @@ def test_trigger_watchers_record_but_do_not_queue_runs_while_frozen(frozen, kind
     pipeline.assert_not_called()
     doc = fake.autopilot_jobs.insert_one.call_args.args[0]
     assert doc["status"].startswith("skipped") and doc["trigger"] == kind
+
+
+def test_autopilot_run_is_skipped_when_the_site_ai_budget_is_spent():
+    from models.sites import SitePolicy
+    fake_db = MagicMock()
+    fake_db.autopilot_jobs.update_one = AsyncMock()
+    with patch.object(autopilot, "db", fake_db), \
+         patch.object(autopilot.changesets, "get_policy", AsyncMock(return_value=SitePolicy(limits={"ai_daily_budget_usd": 1}))), \
+         patch.object(autopilot, "_site_ai_spend_last_24h", AsyncMock(return_value=1.5)), \
+         patch.object(autopilot, "log_activity", AsyncMock()) as log, \
+         patch.object(autopilot, "_autopilot_emit", AsyncMock()), \
+         patch.object(autopilot, "_autopilot_pick_keyword", AsyncMock()) as first_stage:
+        _run(autopilot._autopilot_run_pipeline_bg("s1", "job-1"))
+    first_stage.assert_not_called()
+    assert log.call_args.args[1] == "autopilot_budget_exceeded"
+    assert fake_db.autopilot_jobs.update_one.call_args.args[1]["$set"]["status"] == "skipped"

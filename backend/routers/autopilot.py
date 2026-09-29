@@ -505,8 +505,25 @@ async def _autopilot_propose(site_id: str, job_id: str) -> dict:
 
 # ---------- Pipeline orchestrator ----------
 
+async def _site_ai_spend_last_24h(site_id: str) -> float:
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    jobs = await db.autopilot_jobs.find({"site_id": site_id, "created_at": {"$gte": since}},
+                                        {"_id": 0, "token_usage": 1}).to_list(500)
+    return sum(float((j.get("token_usage") or {}).get("estimated_cost_usd") or 0) for j in jobs)
+
+
 async def _autopilot_run_pipeline_bg(site_id: str, job_id: str = None):
     """Full 4-stage pipeline. Runs as background task."""
+    policy = await changesets.get_policy(site_id)
+    spent = await _site_ai_spend_last_24h(site_id)
+    if spent >= policy.limits.ai_daily_budget_usd:
+        message = (f"Skipped: this site's AI budget is used up (${spent:.2f} of "
+                   f"${policy.limits.ai_daily_budget_usd:.2f} in the last 24 hours).")
+        if job_id:
+            await db.autopilot_jobs.update_one({"id": job_id}, {"$set": {"status": "skipped", "error": message}})
+        await log_activity(site_id, "autopilot_budget_exceeded", message, "warning")
+        await _autopilot_emit(site_id, "pipeline_complete", "skipped", {"reason": message})
+        return
     # Create a fresh job if not provided
     if not job_id:
         job_id = str(uuid.uuid4())
