@@ -1,0 +1,25 @@
+{
+  "name": "automation-sample-site",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lst/automation-bridge": "file:../..",
+    "marked": "^15.0.0",
+    "next": "15.5.26",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "~5.9.0"
+  }
+}

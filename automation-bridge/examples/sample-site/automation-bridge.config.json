@@ -1,0 +1,46 @@
+{
+  "mode": "sidecar",
+  "site": {
+    "site_id": "sample-site",
+    "environment": "development",
+    "public_base_url": "https://sample.example.com",
+    "internal_url": "http://site:3000"
+  },
+  "state_dir": "/var/lib/automation-bridge",
+  "roots": [
+    { "id": "code", "kind": "code", "path": "/repo", "writable": false, "allow": ["app/**/*.{ts,tsx,css}", "lib/**/*.ts"], "deny": [] },
+    { "id": "content", "kind": "content", "path": "/data/content", "writable": true },
+    { "id": "overrides", "kind": "overrides", "path": "/data/overrides", "writable": true },
+    { "id": "assets", "kind": "assets", "path": "/repo/public", "writable": false, "allow": ["**/*.{png,jpg,jpeg,webp,svg}"] }
+  ],
+  "overrides_root": "overrides",
+  "code_root": "code",
+  "manifest": { "root": "code", "path": "automation.manifest.json" },
+  "content": {
+    "collections": [
+      {
+        "id": "posts",
+        "kind": "mdx",
+        "root": "content",
+        "dir": "posts",
+        "route_pattern": "/blog/[slug]",
+        "index_routes": ["/blog"],
+        "frontmatter_schema": {
+          "type": "object",
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "maxLength": 200 },
+            "date": { "type": "string", "format": "date" },
+            "description": { "type": "string" },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "categories": { "type": "array", "items": { "type": "string" } },
+            "keywords": { "type": ["string", "array"] },
+            "jsonLd": { "type": "object" },
+            "content_format": { "type": "string", "enum": ["mdx", "markdown", "html"] }
+          }
+        }
+      }
+    ]
+  },
+  "revalidate": { "mode": "sidecar" }
+}

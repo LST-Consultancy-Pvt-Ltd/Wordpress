@@ -1,0 +1,54 @@
+{
+  "mode": "sidecar",
+  "site": {
+    "site_id": "marketing-site",
+    "environment": "production",
+    "public_base_url": "https://example.com",
+    "internal_url": "http://site:3000"
+  },
+  "state_dir": "/var/lib/automation-bridge",
+  "roots": [
+    { "id": "code", "kind": "code", "path": "/repo", "writable": false, "allow": ["app/**/*.{ts,tsx,css,mdx}", "components/**", "styles/**"], "deny": [] },
+    { "id": "content", "kind": "content", "path": "/data/content", "writable": true },
+    { "id": "overrides", "kind": "overrides", "path": "/data/overrides", "writable": true },
+    { "id": "assets", "kind": "assets", "path": "/repo/public", "writable": false, "allow": ["**/*.{png,jpg,jpeg,webp,svg,gif,avif}"] }
+  ],
+  "overrides_root": "overrides",
+  "code_root": "code",
+  "manifest": { "root": "code", "path": "automation.manifest.json" },
+  "content": {
+    "collections": [
+      {
+        "id": "posts",
+        "kind": "mdx",
+        "root": "content",
+        "dir": "posts",
+        "route_pattern": "/blog/[slug]",
+        "index_routes": ["/blog"],
+        "frontmatter_schema": {
+          "type": "object",
+          "required": ["title"],
+          "properties": {
+            "title": { "type": "string", "maxLength": 200 },
+            "date": { "type": "string", "format": "date" },
+            "description": { "type": "string", "maxLength": 1000 },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "categories": { "type": "array", "items": { "type": "string" } },
+            "keywords": { "type": ["string", "array"] },
+            "image": { "type": "string" },
+            "jsonLd": { "type": "object" },
+            "content_format": { "type": "string", "enum": ["mdx", "markdown", "html"] }
+          }
+        }
+      }
+    ]
+  },
+  "revalidate": { "mode": "sidecar", "endpoint_path": "/api/automation-revalidate", "timeout_ms": 5000 },
+  "validation": null,
+  "preview": null,
+  "docker": null,
+  "limits": { "max_body_bytes": 1048576, "max_file_bytes": 524288, "rate_per_minute": 120, "mutations_per_minute": 20, "max_operations": 200, "lock_wait_ms": 10000 },
+  "retention": { "backups": 30, "revision_days": 90, "idempotency_hours": 24 },
+  "logging": { "level": "info" },
+  "server": { "host": "0.0.0.0", "port": 8787 }
+}

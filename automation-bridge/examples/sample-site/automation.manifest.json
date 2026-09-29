@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "blocks": [
+    { "id": "home.hero.title", "route": "/", "kind": "text", "default": "Build faster with less" },
+    { "id": "home.hero.subtitle", "route": "/", "kind": "text", "default": "Everything here can be edited through the bridge." },
+    { "id": "home.hero.image", "route": "/", "kind": "image", "src": "/hero.svg", "alt": "Abstract hero illustration" },
+    { "id": "about.body", "route": "/about", "kind": "rich-text", "default": "<p>We build small, fast websites.</p>" }
+  ]
+}
