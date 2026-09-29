@@ -52,3 +52,25 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         window.append(now)
         return await call_next(request)
+
+
+MAX_BODY_BYTES = 4 * 1024 * 1024
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject oversized request bodies before any handler parses them. Change
+    sets are capped at 200 operations by schema, but nothing bounded their
+    byte size; the bridge's own limit is 2 MiB per change set."""
+
+    async def dispatch(self, request, call_next):
+        length = request.headers.get("content-length")
+        if length is not None:
+            try:
+                too_big = int(length) > MAX_BODY_BYTES
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            if too_big:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        elif request.method in ("POST", "PUT", "PATCH") and "chunked" in request.headers.get("transfer-encoding", ""):
+            return JSONResponse(status_code=411, content={"detail": "Content-Length required"})
+        return await call_next(request)

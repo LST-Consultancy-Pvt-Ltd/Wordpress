@@ -68,10 +68,15 @@ def _split(url: str, what: str):
     return parts
 
 
-def validate_base_url(url: str) -> str:
+def validate_base_url(url: str, *, resolve: bool = True) -> str:
+    """The public URL is fetched server-side by audits and crawls, so it must be
+    a public https host — never an internal address reachable only from here."""
     parts = _split(url, "Public base URL")
     if parts.scheme != "https":
         raise UrlPolicyError("Public base URL must use https://")
+    host = parts.hostname.lower()
+    if is_private_host(host) or (resolve and not resolves_public_only(host)):
+        raise UrlPolicyError("Public base URL must be a public host (it is fetched by audits)")
     return f"https://{parts.netloc.lower()}{parts.path.rstrip('/')}"
 
 

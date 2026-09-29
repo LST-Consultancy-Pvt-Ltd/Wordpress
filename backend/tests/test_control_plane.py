@@ -78,11 +78,25 @@ def test_public_https_bridge_must_not_resolve_to_a_private_address(monkeypatch):
         url_policy.validate_bridge_url("https://evil.example.com/api/automation-bridge/v1", allow_private_http=False)
 
 
-def test_base_url_must_be_https():
+def test_base_url_must_be_public_https(monkeypatch):
+    from core import url_policy
     from core.url_policy import UrlPolicyError, validate_base_url
-    assert validate_base_url("https://Example.com/") == "https://example.com"
+    assert validate_base_url("https://Example.com/", resolve=False) == "https://example.com"
+    for bad in ("http://example.com", "https://localhost", "https://10.1.2.3", "https://intranet"):
+        with pytest.raises(UrlPolicyError):
+            validate_base_url(bad, resolve=False)
+    monkeypatch.setattr(url_policy, "resolves_public_only", lambda host: False)
     with pytest.raises(UrlPolicyError):
-        validate_base_url("http://example.com")
+        validate_base_url("https://rebinding.example.com")
+
+
+def test_oversized_request_bodies_are_rejected():
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cp") as c:
+            r = await c.post("/api/auth/login", content=b"x" * (4 * 1024 * 1024 + 1),
+                             headers={"Content-Type": "application/json"})
+            assert r.status_code == 413
+    _run(go())
 
 
 def test_redaction_masks_secrets_in_nested_structures_and_text():

@@ -168,8 +168,9 @@ app.include_router(api_router)
 # wraps in reverse add-order) — a 429 from the rate limiter still gets CORS
 # headers applied on its way back out, instead of the browser seeing an
 # opaque failed-fetch with no CORS headers.
-from core.rate_limit import RateLimitMiddleware  # noqa: E402
+from core.rate_limit import BodySizeLimitMiddleware, RateLimitMiddleware  # noqa: E402
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
