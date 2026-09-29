@@ -97,6 +97,24 @@ describe("sidecar over HTTP", () => {
     expect(res.status).toBe(413);
   });
 
+  it("the operator CLI signs requests with a secret read from a file", async () => {
+    const { execFile } = await import("node:child_process");
+    const secretFile = path.join(f.dir, "bridge.secret");
+    fs.writeFileSync(secretFile, SECRET + "\n", { mode: 0o600 });
+    const script = path.resolve(__dirname, "../../scripts/sign-request.mjs");
+    const run = (args: string[]) =>
+      new Promise<{ code: number | null; out: string }>((resolve) => {
+        execFile(process.execPath, [script, ...args], (err, stdout) => resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: stdout }));
+      });
+    const ok = await run(["--key-id", KEY_ID, "--secret-file", secretFile, `${s.url}${BASE_PATH}/capabilities`]);
+    expect(ok.code).toBe(0);
+    expect(JSON.parse(ok.out).protocol_version).toBe("1");
+    const planFile = path.join(f.dir, "plan.json");
+    fs.writeFileSync(planFile, JSON.stringify({ change_id: "cs_cli", operations: [{ op: "metadata.clear", route: "/" }] }));
+    const plan = await run(["-X", "POST", "--data-file", planFile, "--key-id", KEY_ID, "--secret-file", secretFile, `${s.url}${BASE_PATH}/changesets/plan`]);
+    expect(JSON.parse(plan.out).valid).toBe(true);
+  });
+
   it("never logs secrets or absolute paths", () => {
     const all = logs.join("\n");
     expect(all.length).toBeGreaterThan(0);

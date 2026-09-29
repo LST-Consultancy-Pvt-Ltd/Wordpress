@@ -84,6 +84,12 @@ describe("config", () => {
 });
 
 describe("openapi", () => {
+  it("committed openapi.json matches the schemas (run `npm run openapi` after schema changes)", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const committed = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../openapi.json"), "utf8"));
+    expect(committed).toEqual(JSON.parse(JSON.stringify(buildOpenApi())));
+  });
   it("is OpenAPI 3.1 and covers the endpoints", () => {
     const doc = buildOpenApi() as { openapi: string; paths: Record<string, unknown> };
     expect(doc.openapi).toBe("3.1.0");

@@ -63,6 +63,35 @@ describe("site runtime helpers", () => {
   });
 });
 
+describe("in-app route handlers", () => {
+  it("serves the protocol through a Web Request/Response and calls revalidatePath for impacted routes only", async () => {
+    const { makeFixture, fixtureConfig, KEY_ID, SECRET } = await import("../helpers.js");
+    const { signedHeaders } = await import("../../src/core/auth/signing.js");
+    const { createRouteHandlers } = await import("../../src/next/route-handlers.js");
+    const { sha256Hex } = await import("../../src/core/util.js");
+    const f = makeFixture();
+    const cfg = fixtureConfig(f, { mode: "in-app", revalidate: { mode: "in-app" } });
+    const revalidated: string[] = [];
+    (globalThis as Record<symbol, unknown>)[Symbol.for("lst.automation-bridge.instance")] = undefined;
+    const { GET, POST } = createRouteHandlers({ config: cfg, revalidatePath: (p) => void revalidated.push(p), logSink: () => {} });
+    const base = "http://site.example/api/automation-bridge/v1";
+    const req = (method: string, rel: string, body?: unknown, extra: Record<string, string> = {}) => {
+      const b = body === undefined ? "" : JSON.stringify(body);
+      const h = signedHeaders({ keyId: KEY_ID, secret: SECRET, method, pathWithQuery: `/api/automation-bridge/v1${rel}`, body: b });
+      return new Request(base + rel, { method, headers: { ...h, ...extra }, body: b || undefined });
+    };
+    const caps = await (await GET(req("GET", "/capabilities"))).json();
+    expect(caps.mode).toBe("in-app");
+    expect(caps.capabilities.revalidate).toBe(true);
+    const ops = [{ op: "metadata.set", route: "/about", fields: { title: "In-app" } }];
+    const plan = await (await POST(req("POST", "/changesets/plan", { change_id: "cs_in", operations: ops }))).json();
+    const res = await POST(req("POST", "/changesets/apply", { change_id: "cs_in", operations: ops, expected_plan_sha256: sha256Hex(plan.diff) }, { "idempotency-key": "in-app-key-1" }));
+    expect(res.status).toBe(200);
+    expect(revalidated).toEqual(["/about"]);
+    (globalThis as Record<symbol, unknown>)[Symbol.for("lst.automation-bridge.instance")] = undefined;
+  });
+});
+
 describe("revalidate route handler (sidecar mode)", () => {
   const secret = "revalidate-secret-value";
   const call = (paths: unknown, sig?: string, ts = Math.floor(Date.now() / 1000)) => {
