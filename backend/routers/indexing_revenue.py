@@ -15,6 +15,7 @@ from core.crypto import get_decrypted_settings
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.google_analytics import fetch_gsc_metrics, get_google_credentials
@@ -54,7 +55,7 @@ async def _check_indexing(task_id: str, site_id: str):
 
         urls = []
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
+            async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
                 resp = await hc.get(sitemap_url)
                 if resp.status_code == 200:
                     soup = BeautifulSoup(resp.text, "xml")

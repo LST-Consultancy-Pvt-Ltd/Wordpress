@@ -385,46 +385,6 @@ def test_reject_requires_a_comment_and_cancel_is_editor_only():
 
 
 @scenario
-async def _code_changes_require_passing_validation(h, c):
-    site = await h.create_site(c)
-    editor = await h.user("editor")
-    op = [{"op": "file.write", "root": "code", "path": "styles/tokens.css", "content": ":root{--brand:#123}",
-           "base_sha256": None}]
-    cs = (await c.post(f"/api/sites/{site['id']}/changesets", json={"title": "tokens", "operations": op},
-                       headers=editor)).json()
-    assert cs["plan"]["risk"]["level"] == "high"
-    r = await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "POLICY_CHECKS_FAILED"
-    r = await c.post(f"/api/changesets/{cs['id']}/validate", json={"steps": ["typecheck", "build"]}, headers=editor)
-    assert r.status_code == 200
-    cs = await h.wait(c, cs["id"])
-    assert cs["status"] == "validated" and cs["validation"]["status"] == "succeeded"
-    assert (await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)).json()["status"] == "pending_approval"
-
-
-def test_code_changes_require_passing_validation():
-    _code_changes_require_passing_validation()
-
-
-@scenario
-async def _failed_validation_blocks_submission(h, c):
-    h.bridge.validation_outcome = "failed"
-    site = await h.create_site(c)
-    editor = await h.user("editor")
-    op = [{"op": "file.write", "root": "code", "path": "app/page.tsx", "content": "x", "base_sha256": None}]
-    cs = (await c.post(f"/api/sites/{site['id']}/changesets", json={"title": "t", "operations": op},
-                       headers=editor)).json()
-    await c.post(f"/api/changesets/{cs['id']}/validate", json={}, headers=editor)
-    cs = await h.wait(c, cs["id"])
-    assert cs["status"] == "validation_failed"
-    assert (await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)).status_code == 409
-
-
-def test_failed_validation_blocks_submission():
-    _failed_validation_blocks_submission()
-
-
-@scenario
 async def _path_traversal_is_a_plan_error_not_an_apply(h, c):
     site = await h.create_site(c)
     op = [{"op": "file.write", "root": "code", "path": "../../etc/passwd", "content": "x", "base_sha256": None}]
@@ -689,3 +649,153 @@ async def _stream_tokens_are_task_bound(h, c):
 
 def test_stream_tokens_are_task_bound():
     _stream_tokens_are_task_bound()
+
+
+# ---- security review regressions -------------------------------------------------
+
+FILE_OP = [{"op": "file.write", "root": "code", "path": "styles/tokens.css", "content": ":root{--brand:#123}",
+            "base_sha256": None}]
+
+
+@scenario
+async def _code_changes_need_deployer_validation_before_approval(h, c):
+    site = await h.create_site(c)
+    editor, deployer, admin = await h.user("editor"), await h.user("deployer"), await h.user("admin")
+    cs = (await c.post(f"/api/sites/{site['id']}/changesets", json={"title": "tokens", "operations": FILE_OP},
+                       headers=editor)).json()
+    assert cs["plan"]["risk"]["level"] == "high"
+    # Validation runs the proposed code on the site host: never an editor action.
+    assert (await c.post(f"/api/changesets/{cs['id']}/validate", json={}, headers=editor)).status_code == 403
+    assert (await c.post(f"/api/changesets/{cs['id']}/preview", headers=editor)).status_code == 403
+    assert (await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)).json()["status"] == "pending_approval"
+    r = await c.post(f"/api/changesets/{cs['id']}/approve", json={}, headers=deployer)
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "VALIDATION_REQUIRED"
+    assert (await c.post(f"/api/changesets/{cs['id']}/validate", json={"steps": ["build"]},
+                         headers=deployer)).status_code == 200
+    cs = await h.wait(c, cs["id"])
+    assert cs["status"] == "validated"
+    await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)
+    assert (await c.post(f"/api/changesets/{cs['id']}/approve", json={}, headers=admin)).json()["status"] == "approved"
+
+
+def test_code_changes_need_deployer_validation_before_approval():
+    _code_changes_need_deployer_validation_before_approval()
+
+
+@scenario
+async def _failed_validation_blocks_approval(h, c):
+    h.bridge.validation_outcome = "failed"
+    site = await h.create_site(c)
+    editor, deployer = await h.user("editor"), await h.user("deployer")
+    op = [{"op": "file.write", "root": "code", "path": "app/page.tsx", "content": "x", "base_sha256": None}]
+    cs = (await c.post(f"/api/sites/{site['id']}/changesets", json={"title": "t", "operations": op},
+                       headers=editor)).json()
+    await c.post(f"/api/changesets/{cs['id']}/validate", json={}, headers=deployer)
+    cs = await h.wait(c, cs["id"])
+    assert cs["status"] == "validation_failed"
+    assert (await c.post(f"/api/changesets/{cs['id']}/submit", headers=editor)).status_code == 409
+
+
+def test_failed_validation_blocks_approval():
+    _failed_validation_blocks_approval()
+
+
+@scenario
+async def _editing_someone_elses_changeset_makes_you_an_author(h, c):
+    site = await h.create_site(c)
+    editor, deployer = await h.user("editor"), await h.user("deployer")
+    cs = (await c.post(f"/api/sites/{site['id']}/changesets", json={"title": "t", "operations": META_OP},
+                       headers=editor)).json()
+    swapped = [{**META_OP[0], "fields": {"title": "Deployer's own title"}}]
+    cs = (await c.put(f"/api/changesets/{cs['id']}", json={"operations": swapped}, headers=deployer)).json()
+    await c.post(f"/api/changesets/{cs['id']}/submit", headers=deployer)
+    r = await c.post(f"/api/changesets/{cs['id']}/approve", json={}, headers=deployer)
+    assert r.status_code == 403 and r.json()["detail"]["code"] == "SELF_APPROVAL"
+
+
+def test_editing_someone_elses_changeset_makes_you_an_author():
+    _editing_someone_elses_changeset_makes_you_an_author()
+
+
+@scenario
+async def _clients_cannot_claim_an_internal_source(h, c):
+    site = await h.create_site(c)
+    r = await c.post(f"/api/sites/{site['id']}/changesets",
+                     json={"title": "t", "operations": META_OP, "source": "autopilot"}, headers=await h.user("editor"))
+    assert r.status_code == 201 and r.json()["source"] == "manual"
+
+
+def test_clients_cannot_claim_an_internal_source():
+    _clients_cannot_claim_an_internal_source()
+
+
+@scenario
+async def _replan_cannot_overwrite_an_apply_in_flight(h, c):
+    from core.db import db as _db
+    site = await h.create_site(c)
+    cs = await _approved(h, c, site)
+    await _db.changesets.update_one({"id": cs["id"]}, {"$set": {"status": "applying"}})
+    r = await c.post(f"/api/changesets/{cs['id']}/plan", headers=await h.user("editor"))
+    assert r.status_code == 409
+    assert (await _db.changesets.find_one({"id": cs["id"]}))["status"] == "applying"
+
+
+def test_replan_cannot_overwrite_an_apply_in_flight():
+    _replan_cannot_overwrite_an_apply_in_flight()
+
+
+def test_approval_hash_changes_when_file_content_changes_but_diff_text_does_not():
+    from core.changesets import approval_hash
+    a = {"diff": "Binary files a/x.png and b/x.png differ\n",
+         "files": [{"root": "assets", "path": "x.png", "change": "modify", "after_sha256": "aa"}]}
+    b = {**a, "files": [{**a["files"][0], "after_sha256": "bb"}]}
+    assert approval_hash(a) != approval_hash(b)
+
+
+@pytest.mark.parametrize("url", [
+    "http://169.254.169.254/latest/meta-data/", "http://100.100.100.200/", "http://127.0.0.1:27017/",
+    "http://[::ffff:127.0.0.1]/", "http://10.0.0.5/", "http://localhost/", "ftp://example.com/",
+    "https://example.com:8443/", "http://user:pw@example.com/",
+])
+def test_safe_fetch_refuses_internal_and_odd_destinations(url):
+    from core.safe_fetch import UnsafeUrlError, guard_request, safe_get
+    with pytest.raises(UnsafeUrlError):
+        _run(safe_get(url))
+    with pytest.raises(UnsafeUrlError):
+        _run(guard_request(httpx.Request("GET", url)))
+
+
+def test_guard_hook_blocks_a_redirect_to_an_internal_address():
+    from core.safe_fetch import SSRF_GUARD, UnsafeUrlError
+
+    def handler(request):
+        if request.url.host == "93.184.216.34":
+            return httpx.Response(302, headers={"location": "http://169.254.169.254/"})
+        return httpx.Response(200, text="secret")
+
+    async def go():
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, transport=httpx.MockTransport(handler),
+                                     follow_redirects=True) as client:
+            with pytest.raises(UnsafeUrlError):
+                await client.get("http://93.184.216.34/")
+    _run(go())
+
+
+def test_forwarded_for_is_ignored_unless_the_peer_is_a_trusted_proxy(monkeypatch):
+    from types import SimpleNamespace
+    from core import rate_limit
+    req = SimpleNamespace(client=SimpleNamespace(host="203.0.113.9"), headers={"x-forwarded-for": "1.2.3.4"})
+    monkeypatch.setattr(rate_limit, "TRUSTED_PROXIES", set())
+    assert rate_limit._client_key(req) == "203.0.113.9"
+    monkeypatch.setattr(rate_limit, "TRUSTED_PROXIES", {"203.0.113.9"})
+    assert rate_limit._client_key(req) == "1.2.3.4"
+
+
+def test_login_is_throttled_per_account():
+    async def go():
+        email = f"nobody-{uuid.uuid4().hex[:6]}@example.com"
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://cp") as c:
+            codes = [(await c.post("/api/auth/login", json={"email": email, "password": "wrong-password"})).status_code
+                     for _ in range(11)]
+        assert codes[:10] == [401] * 10 and codes[10] == 429
+    _run(go())

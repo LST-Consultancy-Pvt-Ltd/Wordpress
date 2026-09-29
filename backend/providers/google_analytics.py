@@ -31,7 +31,10 @@ async def fetch_ga4_metrics(settings: dict, property_id: str, site_url: str) -> 
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient
         from google.analytics.data_v1beta.types import (
-            RunReportRequest, Dimension, Metric, DateRange
+            DateRange,
+            Dimension,
+            Metric,
+            RunReportRequest,
         )
         creds = await get_google_credentials(settings)
         if not creds:

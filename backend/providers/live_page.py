@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
+from core.safe_fetch import SSRF_GUARD
 from providers.seo_audit import route_path
 
 
@@ -21,7 +22,7 @@ def normalise_route(site: dict, raw: str) -> tuple[str, str]:
 async def fetch_page(site: dict, raw: str) -> dict:
     route, url = normalise_route(site, raw)
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(url)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch {url}: {type(e).__name__}")

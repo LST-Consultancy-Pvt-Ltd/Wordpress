@@ -25,20 +25,23 @@ from fastapi import BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from core import changesets
 from core.activity import log_activity
-from core.automation_policy import skip_if_frozen
 from core.ai import get_ai_response
+from core.automation_policy import skip_if_frozen
+from core.content_proposals import propose_content
 from core.db import db
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
 from core.scheduler import scheduler
-from core.security import get_current_user, require_editor
+from core.security import get_current_user, require_editor, verify_stream_token
 from core.tasks import (
-    autopilot_sse_queues, create_task_queue, finish_task, make_task_id, push_event,
+    autopilot_sse_queues,
+    create_task_queue,
+    finish_task,
+    make_task_id,
+    push_event,
 )
-from core import changesets
-from core.content_proposals import propose_content
-from core.security import verify_stream_token
 
 logger = logging.getLogger(__name__)
 

@@ -13,11 +13,11 @@ from pydantic import BaseModel
 
 from core.activity import log_activity
 from core.ai import get_ai_response
+from core.content_proposals import propose_content
 from core.db import db
 from core.router import api_router
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from core.content_proposals import propose_content
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,11 @@ from core.router import api_router
 from core.security import get_current_user, require_editor
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.legacy import (
-    AgentSession, AgentSessionCreate, AgentTurnRequest, AICommand, AICommandCreate,
+    AgentSession,
+    AgentSessionCreate,
+    AgentTurnRequest,
+    AICommand,
+    AICommandCreate,
 )
 from providers.sites import get_site
 

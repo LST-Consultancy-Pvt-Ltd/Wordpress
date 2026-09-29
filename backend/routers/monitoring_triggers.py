@@ -4,20 +4,22 @@ Event-Based Autopilot Triggers (Module 12) and Multi-Region Uptime Checks (Modul
 `_check_rank_drop_triggers` and `_check_new_keyword_triggers` are imported back into
 server.py's lifespan() startup function, where they are scheduled as cron jobs.
 """
-from fastapi import Depends
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
 import asyncio
 import uuid
-import httpx
+from datetime import datetime, timedelta, timezone
 
-from core.db import db
-from core.security import get_current_user, require_editor
+import httpx
+from fastapi import Depends
+from pydantic import BaseModel
+
 from core.activity import log_activity
 from core.automation_policy import skip_if_frozen
-from routers.autopilot import _autopilot_run_pipeline_bg
+from core.db import db
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
+from core.security import get_current_user, require_editor
 from providers.sites import get_site
+from routers.autopilot import _autopilot_run_pipeline_bg
 
 # FEATURE: Event-Based Autopilot Triggers (Module 12)
 # ========================
@@ -96,7 +98,7 @@ async def multi_region_uptime_check(site_id: str, _=Depends(require_editor)):
 
     regions = [{"name": "US-East"}, {"name": "EU-West"}, {"name": "Asia-Pacific"}]
     regions_results = []
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True) as client:
         for region in regions:
             try:
                 t0 = _time.monotonic()

@@ -8,19 +8,19 @@ set is approved and applied.
 import json
 import logging
 from datetime import datetime, timezone
+from typing import List, Optional
 
 from fastapi import BackgroundTasks, Depends
 from pydantic import BaseModel, ConfigDict
-from typing import List, Optional
 
 from core.activity import log_activity
 from core.ai import get_ai_response
+from core.content_proposals import propose_content
 from core.json_utils import _repair_and_parse_json
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
 from core.security import require_editor
-from core.tasks import make_task_id, create_task_queue, push_event, finish_task
-from core.content_proposals import propose_content
+from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.sites import get_site
 
 logger = logging.getLogger(__name__)

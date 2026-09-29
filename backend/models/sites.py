@@ -182,7 +182,7 @@ class ChangeSetCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=4000)
     operations: list[dict[str, Any]] = Field(min_length=1, max_length=200)
-    source: ChangeSetSource = "manual"
+    source: Optional[ChangeSetSource] = None  # ignored: the server sets it
 
 
 class ChangeSetUpdate(BaseModel):

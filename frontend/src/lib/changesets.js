@@ -55,7 +55,10 @@ export const canDecide = (cs) => cs?.status === "pending_approval";
 export const canApply = (cs) => cs?.status === "approved";
 export const canRollback = (cs) => cs?.status === "applied" && !!cs?.apply?.revision_id;
 export const canCancel = (cs) => PRE_APPLY.includes(cs?.status) && cs?.status !== "rejected";
-export const canValidate = (cs) => ["planned", "validated", "validation_failed"].includes(cs?.status) && cs?.plan?.valid !== false;
+// Validation builds and runs the proposed code on the site host, so it is a
+// deployer action; it gates approval of code changes.
+export const canValidate = (cs) =>
+  ["planned", "validated", "validation_failed", "pending_approval"].includes(cs?.status) && cs?.plan?.valid !== false;
 
 /** Pull the ChangeSet out of `{changeset}` responses (or a bare ChangeSet). */
 export function extractChangeSet(data) {

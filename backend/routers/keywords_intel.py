@@ -5,12 +5,13 @@ connection-test endpoint. Falls back to an AI estimate (clearly flagged
 configured.
 """
 import json
+import logging
 from datetime import datetime, timezone
+from typing import List
 
 import httpx
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel
-from typing import List
 
 from core.activity import log_activity
 from core.ai import get_ai_response
@@ -19,12 +20,19 @@ from core.db import db
 from core.router import api_router
 from core.security import require_admin, require_editor, require_user
 from providers.dataforseo import (
-    DFS_TTL, _cache_get, _cache_key, _cache_set, _data_meta, _dfs_auth_header,
-    _dfs_available, _dfs_check_spend, _get_dfs_credentials, dataforseo_post,
+    DFS_TTL,
+    _cache_get,
+    _cache_key,
+    _cache_set,
+    _data_meta,
+    _dfs_auth_header,
+    _dfs_available,
+    _dfs_check_spend,
+    _get_dfs_credentials,
+    dataforseo_post,
 )
 from providers.google_analytics import fetch_gsc_metrics
 
-import logging
 logger = logging.getLogger(__name__)
 
 

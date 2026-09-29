@@ -2,6 +2,8 @@
 get/update, SSE task streaming + polling, and Scheduled Jobs CRUD.
 """
 import logging
+
+from pymongo.errors import DuplicateKeyError
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -10,20 +12,33 @@ from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from core.activity import log_activity
-from core.crypto import _SENSITIVE_SETTINGS_FIELDS, decrypt_field, encrypt_field
 from core.automation_policy import automatic_writes_frozen
+from core.crypto import _SENSITIVE_SETTINGS_FIELDS, decrypt_field, encrypt_field
 from core.db import db, mongo_client
+from core.rate_limit import clear_login_failures, login_blocked, record_login_failure
 from core.router import api_router
 from core.scheduled_jobs import _schedule_job
 from core.scheduler import scheduler
 from core.security import (
-    create_access_token, get_current_user, hash_password, require_admin, require_editor,
-    require_user, verify_password, verify_stream_token,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_admin,
+    require_editor,
+    require_user,
+    verify_password,
+    verify_stream_token,
 )
 from core.tasks import get_durable_task_status, sse_generator
 from models.legacy import (
-    ScheduledJob, ScheduledJobCreate, Settings, SettingsUpdate, Token,
-    UserCreate, UserLogin, UserResponse,
+    ScheduledJob,
+    ScheduledJobCreate,
+    Settings,
+    SettingsUpdate,
+    Token,
+    UserCreate,
+    UserLogin,
+    UserResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,11 +108,20 @@ async def register(user_data: UserCreate, current_user: Optional[dict] = Depends
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     # First user becomes admin; subsequent registrations require admin auth (invite flow)
-    user_count = await db.users.count_documents({})
-    if user_count > 0:
-        if not current_user or current_user.get("role") != "admin":
+    is_admin_invite = bool(current_user) and current_user.get("role") == "admin"
+    if is_admin_invite:
+        role = user_data.role
+    else:
+        # First-user bootstrap. The unique _id makes it atomic: of two
+        # concurrent registrations on an empty database only one can claim it.
+        if await db.users.count_documents({}) > 0:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required to invite users")
-    role = "admin" if user_count == 0 else user_data.role
+        try:
+            await db.bootstrap.insert_one({"_id": "first_admin", "email": user_data.email,
+                                           "at": datetime.now(timezone.utc).isoformat()})
+        except DuplicateKeyError:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required to invite users")
+        role = "admin"
     user_id = str(uuid.uuid4())
     user_doc = {
         "id": user_id,
@@ -116,9 +140,13 @@ async def register(user_data: UserCreate, current_user: Optional[dict] = Depends
 
 @api_router.post("/auth/login", response_model=Token)
 async def login(user_data: UserLogin):
+    if login_blocked(user_data.email):
+        raise HTTPException(status_code=429, detail="Too many failed sign-in attempts; try again in 15 minutes")
     user = await db.users.find_one({"email": user_data.email})
     if not user or not verify_password(user_data.password, user.get("password_hash", "")):
+        record_login_failure(user_data.email)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    clear_login_failures(user_data.email)
     token = create_access_token({"sub": user["id"]})
     return Token(
         access_token=token,

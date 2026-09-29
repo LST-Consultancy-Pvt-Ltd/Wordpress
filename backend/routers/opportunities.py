@@ -31,17 +31,23 @@ from pydantic import BaseModel, ConfigDict
 
 from core.activity import log_activity
 from core.ai import get_ai_response
+from core.changesets import create_changeset
 from core.db import db
 from core.http_headers import BROWSER_HEADERS, INCONCLUSIVE_STATUSES
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from providers.dataforseo import _data_meta, _dfs_available, _dfs_check_spend, dataforseo_post
+from providers.dataforseo import (
+    _data_meta,
+    _dfs_available,
+    _dfs_check_spend,
+    dataforseo_post,
+)
 from providers.google_cse import cse_available, google_custom_search
 from providers.hunter import hunter_available, hunter_domain_search
 from providers.signalhire import signalhire_available, signalhire_domain_search
-from core.changesets import create_changeset
 from providers.sites import get_site
 from routers.company_profile import get_verified_nap
 
@@ -65,7 +71,7 @@ async def _scrape_site_text(url: str) -> str:
     if "://" not in url:
         url = "https://" + url
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15.0, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(url)
         if resp.status_code != 200:
             # A non-200 (e.g. a WAF block page, 403/429) is not real site
@@ -846,7 +852,7 @@ async def update_guest_prospect(site_id: str, prospect_id: str, body: GuestPostP
 async def check_guest_post_links(site_id: str, user=Depends(require_editor)):
     cursor = db.guest_posts.find({"site_id": site_id, "status": "published", "published_url": {"$ne": None}})
     results = []
-    async with httpx.AsyncClient(timeout=10, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=10, headers=BROWSER_HEADERS) as client:
         async for d in cursor:
             url = d.get("published_url", "")
             live = False
@@ -912,7 +918,7 @@ async def _check_directory_listing(domain: str, business_name: str, address: str
     nap_consistent = None
     inconsistency_note = None
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(listing_url)
         text = resp.text
         phone_digits = _re.sub(r"\D", "", phone or "")
@@ -1066,7 +1072,7 @@ async def _real_inbound_404s(site_id: str, site_url: str) -> list:
     items = (list_data[0].get("items") if list_data else None) or []
     links = []
     seen_targets = set()
-    async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=10, follow_redirects=False, headers=BROWSER_HEADERS) as client:
         for bl in items:
             target_url = bl.get("url_to", "")
             if not target_url or target_url in seen_targets:

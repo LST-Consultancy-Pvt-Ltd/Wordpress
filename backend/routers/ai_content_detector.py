@@ -9,20 +9,20 @@ non-adjacent location further down in the original server.py.
 import json
 import logging
 import os
+from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
 
 from core.activity import log_activity
 from core.ai import get_ai_response
-from core.db import db
 from core.crypto import get_decrypted_settings
+from core.db import db
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
-from core.security import require_user, require_editor
+from core.security import require_editor, require_user
 
 logger = logging.getLogger(__name__)
 

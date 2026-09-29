@@ -19,8 +19,8 @@ import asyncio
 import json
 import logging
 import re
-import ssl
 import socket
+import ssl
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Callable, Optional
@@ -30,6 +30,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from core.http_headers import BROWSER_HEADERS, INCONCLUSIVE_STATUSES
+from core.safe_fetch import SSRF_GUARD
 from providers.onpage import SCORING_FACTORS, score_page
 
 logger = logging.getLogger(__name__)
@@ -618,7 +619,7 @@ async def check_https_redirect(base: str) -> dict:
     http_url = "http://" + urlparse(base).netloc
     out = {"checked": http_url, "redirects_to_https": None, "final_url": None, "error": None}
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as c:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as c:
             resp = await c.get(http_url)
         out["final_url"] = str(resp.url)
         out["redirects_to_https"] = str(resp.url).startswith("https://")
@@ -2900,7 +2901,7 @@ async def run_full_audit(
 
     limits = httpx.Limits(max_connections=CRAWL_CONCURRENCY * 2,
                           max_keepalive_connections=CRAWL_CONCURRENCY)
-    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True,
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=FETCH_TIMEOUT, follow_redirects=True,
                                  headers=BROWSER_HEADERS, limits=limits) as client:
         await say("Reading robots.txt and sitemap…")
         robots = await fetch_robots(client, base)

@@ -415,9 +415,15 @@ export default function AutoBlogGeneration() {
           </DialogHeader>
           <ScrollArea className="h-[60vh]">
             {previewPost?.content ? (
-              <div
-                className="prose prose-invert max-w-none p-4"
-                dangerouslySetInnerHTML={{ __html: previewPost.content }}
+              // AI output is untrusted: render it in a fully sandboxed iframe (no
+              // scripts, no same-origin access to the session) instead of the app DOM.
+              <iframe
+                title={`Preview: ${previewPost.title || "generated post"}`}
+                sandbox=""
+                referrerPolicy="no-referrer"
+                srcDoc={previewPost.content}
+                className="w-full h-[58vh] rounded bg-white"
+                data-testid="auto-blog-preview-frame"
               />
             ) : (
               <pre className="whitespace-pre-wrap text-sm p-4 font-sans">{previewPost?.body || ""}</pre>

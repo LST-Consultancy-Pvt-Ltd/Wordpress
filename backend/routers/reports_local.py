@@ -37,11 +37,18 @@ async def list_reports(site_id: str, _: dict = Depends(require_editor)):
 
 @api_router.post("/reports/{site_id}/generate")
 async def generate_pdf_report(site_id: str, data: GenerateReportRequest, _: dict = Depends(require_editor)):
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.platypus import (
+        HRFlowable,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
 
     site = await db.sites.find_one({"id": site_id}, {"_id": 0}) or {}
     site_name = site.get("name", "Site")

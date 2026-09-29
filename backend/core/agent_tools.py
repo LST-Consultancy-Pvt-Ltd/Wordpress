@@ -9,10 +9,11 @@ from urllib.parse import urlsplit
 import httpx
 
 from core.ai import get_ai_response
-from core.content_proposals import propose_content
 from core.changesets import create_changeset
+from core.content_proposals import propose_content
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
+from core.safe_fetch import SSRF_GUARD
 
 AGENT_TOOLS = [
     {
@@ -154,7 +155,7 @@ async def execute_agent_tool(tool_name: str, tool_args: dict, site: dict, actor:
             if not _same_site(page_url, site):
                 return json.dumps({"error": "analyze_seo only fetches https pages on this site's own domain"})
             try:
-                async with httpx.AsyncClient(timeout=20.0, headers=BROWSER_HEADERS, follow_redirects=False) as hc:
+                async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=20.0, headers=BROWSER_HEADERS, follow_redirects=False) as hc:
                     page_resp = await hc.get(page_url)
                     page_content = page_resp.text[:3000]
             except Exception:

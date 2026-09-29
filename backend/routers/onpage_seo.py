@@ -22,21 +22,30 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from core.activity import log_activity
+from core.changesets import create_changeset
 from core.crypto import get_decrypted_settings
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from core.changesets import create_changeset
-from providers.bridge_client import BridgeError, capability_enabled
-from providers.sites import get_site, get_site_and_client
-from providers.onpage import SCORING_FACTORS, audit_url  # noqa: F401  (audit_url re-exported)
 from providers import seo_audit
-from providers.seo_audit import (
-    extract_page_signals, fetch_document, fetch_robots, fetch_sitemaps, route_path,
-    run_full_audit, score_page,
+from providers.bridge_client import BridgeError, capability_enabled
+from providers.onpage import (  # noqa: F401  (audit_url re-exported)
+    SCORING_FACTORS,
+    audit_url,
 )
+from providers.seo_audit import (
+    extract_page_signals,
+    fetch_document,
+    fetch_robots,
+    fetch_sitemaps,
+    route_path,
+    run_full_audit,
+    score_page,
+)
+from providers.sites import get_site, get_site_and_client
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +107,7 @@ async def _discover_urls(site: dict, limit: int) -> tuple[list[str], str]:
     cached = [d["url"] for d in await db.content_items.find(
         {"site_id": site["id"], "url": {"$nin": [None, ""]}}, {"_id": 0, "url": 1}
     ).to_list(limit) if d.get("url")]
-    async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         robots = await fetch_robots(client, base)
         sitemap = await fetch_sitemaps(client, base, robots.get("sitemaps"))
         return await seo_audit.discover_urls(client, base, sitemap, limit, cached)
@@ -510,7 +519,7 @@ async def set_focus_keyword(site_id: str, body: FocusKeyword, user=Depends(requi
     site = await get_site(site_id)
     page_url = f"{(site.get('url') or '').rstrip('/')}{route}"
     try:
-        async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=25, follow_redirects=True,
                                      headers=BROWSER_HEADERS) as client:
             fetched = await fetch_document(client, page_url)
         if fetched.get("ok"):
@@ -556,7 +565,7 @@ async def audit_single_page(site_id: str, req: OnPageScanRequest, user=Depends(r
     if not url.startswith("http"):
         url = f"{(site.get('url') or '').rstrip('/')}{url if url.startswith('/') else '/' + url}"
 
-    async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=25, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         doc = await fetch_document(client, url)
     if not doc.get("ok"):
         return {"url": url, "ok": False, "status_code": doc.get("status_code"),

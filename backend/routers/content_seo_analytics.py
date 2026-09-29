@@ -6,18 +6,20 @@ SEO Testing.
 Moved verbatim from two separate non-adjacent locations in the original
 server.py (lines 2776-2819 and lines 2988-3259).
 """
-from fastapi import HTTPException, Depends
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
-import httpx
 import json
+from datetime import datetime, timedelta, timezone
 
-from core.db import db
-from core.security import require_user, require_editor
+import httpx
+from fastapi import Depends, HTTPException
+from pydantic import BaseModel
+
 from core.activity import log_activity
-from providers.sites import get_site
 from core.ai import get_ai_response
+from core.db import db
 from core.router import api_router  # the shared APIRouter instance
+from core.safe_fetch import SSRF_GUARD
+from core.security import require_editor, require_user
+from providers.sites import get_site
 
 # ========================
 # FEATURE: Predictive Ranking Model (Module 5)
@@ -83,7 +85,7 @@ async def compare_competitor_content(site_id: str, data: CompareCompetitorReques
 
     # Fetch competitor page
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True) as client:
             resp = await client.get(competitor_url, headers={"User-Agent": "Mozilla/5.0 (compatible; SEOBot/1.0)"})
             resp.raise_for_status()
             from bs4 import BeautifulSoup

@@ -13,6 +13,7 @@ from core.activity import log_activity
 from core.db import db
 from core.http_headers import BROWSER_HEADERS, INCONCLUSIVE_STATUSES
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.legacy import BrokenLink
 
@@ -76,7 +77,7 @@ async def _scan_broken_links(task_id: str, site_id: str):
         await db.broken_links.delete_many({"site_id": site_id})
 
         results = []
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=8.0, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
             for idx, link in enumerate(link_map):
                 pct = int(((idx + 1) / max(total, 1)) * 100)
                 try:

@@ -7,19 +7,19 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-
-import httpx
-from fastapi import Depends, HTTPException, Request
-from pydantic import BaseModel
 from typing import Optional
 
+import httpx
 from bs4 import BeautifulSoup
+from fastapi import Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from core.activity import log_activity
 from core.ai import get_ai_response
 from core.crypto import get_decrypted_settings
 from core.db import db
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor
 from providers.bridge_client import BridgeError
 from providers.sites import get_site, get_site_and_client
@@ -162,7 +162,7 @@ async def run_health_check(site_id: str, current_user: dict = Depends(require_ed
     try:
         import time as _time
         t0 = _time.monotonic()
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as hc:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15.0, follow_redirects=True) as hc:
             ping = await hc.get(site_url)
         result["response_time_ms"] = int((_time.monotonic() - t0) * 1000)
         result["online"] = ping.status_code < 500
@@ -171,8 +171,8 @@ async def run_health_check(site_id: str, current_user: dict = Depends(require_ed
         result["issues"].append({"key": "unreachable", "status": "critical", "description": f"Site unreachable: {e}"})
     # 2. SSL cert expiry
     try:
-        import ssl
         import socket
+        import ssl
         from urllib.parse import urlparse
         parsed = urlparse(site_url)
         hostname = parsed.hostname

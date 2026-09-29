@@ -21,8 +21,11 @@ class UrlPolicyError(ValueError):
 
 
 def _is_private_ip(ip: ipaddress._BaseAddress) -> bool:
-    return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
-            or ip.is_reserved or ip.is_unspecified)
+    """Anything not globally routable (RFC1918, loopback, link-local/metadata,
+    CGNAT 100.64/10, ULA, reserved, multicast, IPv4-mapped forms of those)."""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return not ip.is_global or ip.is_multicast
 
 
 def _literal_ip(host: str):

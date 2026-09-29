@@ -15,6 +15,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from core.http_headers import BROWSER_HEADERS
+from core.safe_fetch import SSRF_GUARD
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ async def fetch_page(url: str) -> tuple[Optional[str], Optional[int], Optional[s
     WAFs commonly 403 the request and every page would score zero for reasons
     that have nothing to do with its SEO."""
     try:
-        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True,
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=FETCH_TIMEOUT, follow_redirects=True,
                                      headers=BROWSER_HEADERS) as client:
             resp = await client.get(url)
     except httpx.TimeoutException:

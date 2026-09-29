@@ -29,7 +29,14 @@ from core.db import db
 from core.security import has_role
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.sites import (
-    EDITABLE_STATES, RISK_ORDER, TERMINAL_STATES, ChangeSetStatus as S, SitePolicy, now_iso,
+    EDITABLE_STATES,
+    RISK_ORDER,
+    TERMINAL_STATES,
+    SitePolicy,
+    now_iso,
+)
+from models.sites import (
+    ChangeSetStatus as S,
 )
 from providers.bridge_client import BridgeError, capability_enabled
 from providers.sites import get_site_and_client
@@ -61,6 +68,15 @@ def _spawn(coro) -> None:
 
 def _sha256(text: str) -> str:
     return hashlib.sha256((text or "").encode()).hexdigest()
+
+
+def approval_hash(plan: dict) -> str:
+    """What an approval is bound to: the rendered diff AND every file's
+    resulting content hash, so content that renders identically in a diff
+    (binary files) cannot be swapped under an existing approval."""
+    files = sorted((f.get("root", ""), f.get("path", ""), f.get("change", ""), f.get("after_sha256") or "")
+                   for f in plan.get("files") or [])
+    return _sha256((plan.get("diff") or "") + "\n" + repr(files))
 
 
 def _bad(status: int, code: str, message: str, **extra) -> HTTPException:
@@ -110,10 +126,11 @@ def policy_checks(site: dict, cs: dict, policy: SitePolicy) -> list[dict]:
          "message": "Plan is valid" if plan.get("valid") else "No valid plan yet"},
     ]
     if has_files and policy.require_validation_for_file_ops:
-        ok = validation.get("status") == "succeeded" and validation.get("diff_sha256") == plan.get("diff_sha256")
+        ok = validation.get("status") == "succeeded" and validation.get("diff_sha256") == plan.get("approval_sha256")
         checks.append({"name": "validation_for_file_ops", "ok": ok,
                        "message": "Validation passed for this exact diff" if ok
-                       else "Code changes must pass validation (format/lint/typecheck/build/test) before approval"})
+                       else "Code changes must pass validation (format/lint/typecheck/build/test) before approval; "
+                            "a deployer runs it"})
     return checks
 
 
@@ -155,10 +172,11 @@ async def _plan(site: dict, client, cs: dict) -> dict:
         if e.status in (400, 422):
             return {"valid": False, "errors": [{"index": None, "code": e.code, "message": e.message,
                                                 "details": e.details}], "warnings": [], "diff": "",
-                    "diff_sha256": _sha256(""), "files": [], "impacted_routes": [],
+                    "diff_sha256": _sha256(""), "approval_sha256": _sha256(""), "files": [], "impacted_routes": [],
                     "risk": {"level": "high", "flags": []}, "planned_at": now_iso(), "base_revision": None}
         raise e.to_http()
     result["diff_sha256"] = _sha256(result.get("diff", ""))
+    result["approval_sha256"] = approval_hash(result)
     result["planned_at"] = now_iso()
     result["base_revision"] = result.get("current_revision")
     return result
@@ -194,7 +212,7 @@ async def create_changeset(site_id: str, *, title: str, operations: list, actor:
         "id": "cs_" + uuid.uuid4().hex[:20], "site_id": site_id, "title": title, "description": description,
         "source": source, "status": S.draft.value, "operations": operations, "plan": None, "validation": None,
         "preview": None, "policy_checks": [], "approvals": [], "apply": None, "rollback": None,
-        "created_by": actor.get("id"), "created_by_email": actor.get("email"),
+        "created_by": actor.get("id"), "created_by_email": actor.get("email"), "authors": [actor.get("id")],
         "created_at": now_iso(), "updated_at": now_iso(), "correlation_id": cid,
         "environment": site.get("environment"),
     }
@@ -223,27 +241,31 @@ async def update_changeset(cs_id: str, *, actor: dict, title=None, description=N
     if operations is not None:
         validate_operations_shape(operations)
         update["operations"] = operations
+    authors = sorted(set(cs.get("authors") or [cs.get("created_by")]) | {actor.get("id")})
+    update["authors"] = authors
     cs = await _save(cs_id, update, EDITABLE_STATES)
     return await replan(cs_id, actor=actor)
 
 
 async def replan(cs_id: str, *, actor: dict) -> dict:
     cs = await get_changeset(cs_id)
-    if S(cs["status"]) not in EDITABLE_STATES | {S.validated, S.pending_approval, S.approved}:
+    replannable = EDITABLE_STATES | {S.validated, S.pending_approval, S.approved, S.apply_failed}
+    if S(cs["status"]) not in replannable:
         raise _bad(409, "INVALID_STATE", f"a '{cs['status']}' change set cannot be re-planned")
     site, client = await get_site_and_client(cs["site_id"])
     policy = await get_policy(cs["site_id"])
     plan = await _plan(site, client, cs)
     update = {"plan": plan, "status": (S.planned if plan.get("valid") else S.plan_failed).value}
-    old_sha = (cs.get("plan") or {}).get("diff_sha256")
-    if old_sha != plan["diff_sha256"]:
-        update["approvals"] = []  # approvals were for a different diff
+    old_sha = (cs.get("plan") or {}).get("approval_sha256")
+    if old_sha != plan["approval_sha256"]:
+        update["approvals"] = []  # approvals were for a different change
         update["validation"] = None
         update["preview"] = None
-    cs = await _save(cs_id, update)
-    cs = await _save(cs_id, {"policy_checks": policy_checks(site, cs, policy)})
+    # CAS on the status we checked: a concurrent apply must not be overwritten.
+    cs = await _save(cs_id, update, {S(cs["status"])})
+    cs = await _save(cs_id, {"policy_checks": policy_checks(site, cs, policy)}, {S(cs["status"])})
     await audit("changeset.plan", actor=actor, site=site, change_id=cs_id,
-                detail={"valid": plan.get("valid"), "diff_changed": old_sha != plan["diff_sha256"]})
+                detail={"valid": plan.get("valid"), "diff_changed": old_sha != plan["approval_sha256"]})
     return cs
 
 
@@ -251,7 +273,7 @@ async def _run_job(cs_id: str, kind: str, task_id: str, start, actor: dict) -> N
     """Shared runner for validation/preview jobs on the bridge."""
     cs = await get_changeset(cs_id)
     site, client = await get_site_and_client(cs["site_id"])
-    diff_sha = (cs.get("plan") or {}).get("diff_sha256")
+    diff_sha = (cs.get("plan") or {}).get("approval_sha256")
     try:
         started = await start(client, cs)
         job_id = started["job_id"]
@@ -300,7 +322,8 @@ async def start_validation(cs_id: str, *, actor: dict, steps: Optional[list]) ->
                                                      "message": "This bridge has no validation profile configured."})
     if not (cs.get("plan") or {}).get("valid"):
         raise _bad(409, "PLAN_INVALID", "Fix the plan errors before validating")
-    await _save(cs_id, {"status": S.validating.value}, {S.planned, S.validated, S.validation_failed})
+    await _save(cs_id, {"status": S.validating.value},
+                {S.planned, S.validated, S.validation_failed, S.pending_approval})
     task_id = make_task_id()
     await create_task_queue(task_id, "changeset_validation", cs["site_id"])
     body_steps = steps or (site.get("capabilities") or {}).get("validation_steps") or []
@@ -333,18 +356,18 @@ async def submit(cs_id: str, *, actor: dict) -> dict:
     site, _ = await get_site_and_client(cs["site_id"])
     policy = await get_policy(cs["site_id"])
     checks = policy_checks(site, cs, policy)
-    blocking = [c for c in checks if not c["ok"] and c["name"] in
-                ("plan_valid", "capabilities", "operation_limit", "validation_for_file_ops")]
+    blocking = [c for c in checks if not c["ok"] and c["name"] in ("plan_valid", "capabilities", "operation_limit")]
     if blocking:
         raise _bad(409, "POLICY_CHECKS_FAILED", "; ".join(c["message"] for c in blocking), checks=checks)
-    cs = await _save(cs_id, {"status": S.pending_approval.value, "policy_checks": checks,
+    authors = sorted(set(cs.get("authors") or [cs.get("created_by")]) | {actor.get("id")})
+    cs = await _save(cs_id, {"status": S.pending_approval.value, "policy_checks": checks, "authors": authors,
                              "submitted_by": actor.get("id"), "submitted_at": now_iso()},
                      {S.planned, S.validated})
     await audit("changeset.submit", actor=actor, site=site, change_id=cs_id)
     if auto_apply_allowed(site, cs, policy):
         approval = {"user_id": "policy", "user_email": "auto-apply policy", "decision": "approved",
                     "comment": "matched the site's auto-apply policy", "at": now_iso(),
-                    "diff_sha256": cs["plan"]["diff_sha256"]}
+                    "diff_sha256": cs["plan"]["approval_sha256"]}
         cs = await _save(cs_id, {"status": S.approved.value, "approvals": [approval]}, {S.pending_approval})
         await audit("changeset.auto_approve", actor=POLICY_ACTOR, site=site, change_id=cs_id,
                     detail={"policy": policy.auto_apply.model_dump(mode="json")})
@@ -358,7 +381,13 @@ async def review(cs_id: str, *, actor: dict, decision: str, comment: str) -> dic
     cs = await get_changeset(cs_id)
     site, _ = await get_site_and_client(cs["site_id"])
     policy = await get_policy(cs["site_id"])
-    if decision == "approved" and cs.get("created_by") == actor.get("id"):
+    authors = set(cs.get("authors") or [cs.get("created_by")]) | {cs.get("submitted_by")}
+    if decision == "approved":
+        pending_validation = [c for c in policy_checks(site, cs, policy)
+                              if c["name"] == "validation_for_file_ops" and not c["ok"]]
+        if pending_validation:
+            raise _bad(409, "VALIDATION_REQUIRED", pending_validation[0]["message"])
+    if decision == "approved" and actor.get("id") in authors:
         self_ok = site.get("environment") != "production" and policy.allow_self_approval_nonprod
         if not self_ok:
             await audit("changeset.approve", actor=actor, site=site, change_id=cs_id, outcome="denied",
@@ -367,7 +396,7 @@ async def review(cs_id: str, *, actor: dict, decision: str, comment: str) -> dic
     if decision == "rejected" and not comment.strip():
         raise _bad(400, "COMMENT_REQUIRED", "Explain why the change set is rejected")
     entry = {"user_id": actor.get("id"), "user_email": actor.get("email"), "decision": decision,
-             "comment": comment, "at": now_iso(), "diff_sha256": (cs.get("plan") or {}).get("diff_sha256")}
+             "comment": comment, "at": now_iso(), "diff_sha256": (cs.get("plan") or {}).get("approval_sha256")}
     new_status = S.approved if decision == "approved" else S.rejected
     cs = await _save(cs_id, {"status": new_status.value, "approvals": (cs.get("approvals") or []) + [entry]},
                      {S.pending_approval})
@@ -384,7 +413,7 @@ async def start_apply(cs_id: str, *, actor: dict, confirm: str, _policy: bool = 
         require_production_confirmation(site, confirm, "apply this change set to production")
     plan = cs.get("plan") or {}
     approvals = [a for a in cs.get("approvals") or []
-                 if a["decision"] == "approved" and a.get("diff_sha256") == plan.get("diff_sha256")]
+                 if a["decision"] == "approved" and a.get("diff_sha256") == plan.get("approval_sha256")]
     problems = []
     if cs["status"] != S.approved.value:
         problems.append(f"status is '{cs['status']}', not 'approved'")

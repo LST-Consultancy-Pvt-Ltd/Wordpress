@@ -14,7 +14,9 @@ from core.router import api_router
 from core.security import require_editor, require_user
 from models.legacy import (
     PageSpeedAIRecommendation,
-    PageSpeedAnalyzeRequest, PageSpeedDiagnostic, PageSpeedOpportunity,
+    PageSpeedAnalyzeRequest,
+    PageSpeedDiagnostic,
+    PageSpeedOpportunity,
     PageSpeedResult,
 )
 

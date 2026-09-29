@@ -18,6 +18,7 @@ from core.ai import get_ai_response
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor
 from providers.seo_audit import route_path
 from providers.sites import get_site
@@ -48,7 +49,7 @@ async def full_page_seo_audit(
     route = route_path(raw) if "://" in raw else route_path(base + (raw if raw.startswith("/") else "/" + raw))
     page_url = f"{base}{route if route != '/' else ''}" or base
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(page_url)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch {page_url}: {type(e).__name__}")

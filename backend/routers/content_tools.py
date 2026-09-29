@@ -22,7 +22,10 @@ from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
 from core.security import require_admin, require_editor, require_user
 from models.legacy import (
-    BriefRequest, ContentBrief, PostGenerate, RankTrackRequest,
+    BriefRequest,
+    ContentBrief,
+    PostGenerate,
+    RankTrackRequest,
     WritingStyle,
 )
 from providers.google_analytics import fetch_gsc_metrics

@@ -12,7 +12,12 @@ from core.db import db
 from core.router import api_router
 from core.security import require_deployer, require_editor, require_user
 from models.sites import (
-    ApplyRequest, ChangeSetCreate, ChangeSetStatus, ChangeSetUpdate, ReviewDecision, RollbackRequest,
+    ApplyRequest,
+    ChangeSetCreate,
+    ChangeSetStatus,
+    ChangeSetUpdate,
+    ReviewDecision,
+    RollbackRequest,
     ValidateRequest,
 )
 from providers.sites import get_site
@@ -20,8 +25,10 @@ from providers.sites import get_site
 
 @api_router.post("/sites/{site_id}/changesets", status_code=201)
 async def create(site_id: str, body: ChangeSetCreate, user: dict = Depends(require_editor)):
+    # `source` is decided by the server: auto-apply policies can target
+    # sources, so a client must not be able to claim to be e.g. "autopilot".
     return await svc.create_changeset(site_id, title=body.title, description=body.description,
-                                      operations=body.operations, source=body.source, actor=user)
+                                      operations=body.operations, source="manual", actor=user)
 
 
 @api_router.get("/sites/{site_id}/changesets")
@@ -72,12 +79,14 @@ async def plan(cs_id: str, user: dict = Depends(require_editor)):
 
 
 @api_router.post("/changesets/{cs_id}/validate")
-async def validate(cs_id: str, body: ValidateRequest, user: dict = Depends(require_editor)):
+async def validate(cs_id: str, body: ValidateRequest, user: dict = Depends(require_deployer)):
+    """Deployer only: validation builds and runs the proposed code on the site
+    host, which is as powerful as applying it."""
     return await svc.start_validation(cs_id, actor=user, steps=body.steps)
 
 
 @api_router.post("/changesets/{cs_id}/preview")
-async def preview(cs_id: str, user: dict = Depends(require_editor)):
+async def preview(cs_id: str, user: dict = Depends(require_deployer)):
     return await svc.start_preview(cs_id, actor=user)
 
 

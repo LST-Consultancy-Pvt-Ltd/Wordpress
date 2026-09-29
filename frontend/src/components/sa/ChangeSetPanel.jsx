@@ -242,7 +242,7 @@ export default function ChangeSetPanel({ changesetId, onChange, compact = false 
           )}
           {canValidate(cs) && (
             <GatedButton
-              minRole="editor"
+              minRole="deployer"
               variant="outline"
               size="sm"
               blocked={site ? missingCapabilityReason(site, "validate") : null}
@@ -255,7 +255,7 @@ export default function ChangeSetPanel({ changesetId, onChange, compact = false 
           )}
           {canValidate(cs) && (
             <GatedButton
-              minRole="editor"
+              minRole="deployer"
               variant="outline"
               size="sm"
               blocked={site ? missingCapabilityReason(site, "preview") : null}

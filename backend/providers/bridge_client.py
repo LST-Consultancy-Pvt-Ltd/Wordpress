@@ -25,6 +25,7 @@ import httpx
 from fastapi import HTTPException
 
 from core.redact import redact, redact_text
+from core.safe_fetch import UnsafeUrlError, resolve_public
 from core.url_policy import UrlPolicyError, is_private_host, resolves_public_only
 
 logger = logging.getLogger(__name__)
@@ -151,9 +152,32 @@ class BridgeClient:
             if idempotency_key:
                 headers["Idempotency-Key"] = idempotency_key
             try:
+                target, extensions = url, {}
+                if self._check_dns and self._scheme == "https" and not is_private_host(self._host):
+                    # Pin the connection to a vetted public address so a second
+                    # DNS answer cannot point it at an internal host (rebinding).
+                    try:
+                        ip = await resolve_public(self._host, urlsplit(self.base).port or 443)
+                    except UnsafeUrlError:
+                        raise BridgeError(400, "URL_POLICY", "bridge host does not resolve to a public address")
+                    parts = urlsplit(url)
+                    ip_host = f"[{ip}]" if ":" in ip else ip
+                    target = parts._replace(netloc=ip_host if parts.port is None else f"{ip_host}:{parts.port}").geturl()
+                    headers["Host"] = parts.netloc
+                    extensions = {"sni_hostname": self._host}
                 async with httpx.AsyncClient(transport=self._transport, timeout=timeout,
                                              follow_redirects=False) as client:
-                    resp = await client.request(method, url, content=payload or None, headers=headers)
+                    async with client.stream(method, target, content=payload or None, headers=headers,
+                                             extensions=extensions) as streamed:
+                        body = bytearray()
+                        async for chunk in streamed.aiter_bytes():
+                            body += chunk
+                            if len(body) > MAX_RESPONSE_BYTES:
+                                raise BridgeError(502, "BRIDGE_RESPONSE_TOO_LARGE",
+                                                  "bridge response exceeded the size limit",
+                                                  correlation_id=correlation_id)
+                        resp = httpx.Response(streamed.status_code, headers=streamed.headers,
+                                              content=bytes(body), request=streamed.request)
             except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError,
                     httpx.WriteError, httpx.PoolTimeout) as e:
                 last_exc = e

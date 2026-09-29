@@ -102,3 +102,9 @@ def test_finalize_refuses_when_sites_are_unmigrated(db):
         with pytest.raises(SystemExit):
             await m.finalize(db)
     _run(go())
+
+
+def test_migrated_internal_urls_are_not_carried_into_base_url():
+    new, _ = m.transform({**LEGACY, "url": "http://10.0.0.5"})
+    assert new["base_url"] == "" and new["legacy_url"] == "https://10.0.0.5"
+    assert "Public URL rejected" in new["connection"]["last_error"]

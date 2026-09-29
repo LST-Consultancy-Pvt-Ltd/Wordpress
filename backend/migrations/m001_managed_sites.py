@@ -64,15 +64,25 @@ def transform(doc: dict) -> tuple[dict, list[str]]:
     url = (doc.get("url") or doc.get("base_url") or "").strip().rstrip("/")
     if url.startswith("http://"):
         url = "https://" + url[len("http://"):]
+    url_problem = None
+    try:
+        from core.url_policy import UrlPolicyError, validate_base_url
+        url = validate_base_url(url, resolve=False)
+    except UrlPolicyError as e:
+        # Keep the value for the admin to fix, but never let an internal host
+        # through to the audit fetchers: it stays unverified with a clear error.
+        url_problem = str(e)
     new.update({
-        "base_url": url,
+        "base_url": url if not url_problem else "",
+        "legacy_url": url if url_problem else None,
         "bridge_url": "",  # must be supplied when reconnecting
         "environment": "production",
         "site_key": site_key_from(doc.get("name", ""), doc.get("id", "")),
         "install_mode": "sidecar",
         "connection": {"status": "unverified", "key_id": "", "credential_rotated_at": None,
                        "last_handshake_at": None, "private_network_http": False,
-                       "last_error": "Migrated from the previous platform: reconnect this site with a bridge key."},
+                       "last_error": ("Migrated from the previous platform: reconnect this site with a bridge key."
+                                      + (f" Public URL rejected: {url_problem}" if url_problem else ""))},
         "writes_enabled": False,
         "write_verified_at": None,
         "capabilities": None,

@@ -437,8 +437,9 @@ async def media_plan_parse(
     # Convert to text for Claude
     raw_text = ""
     try:
-        import pandas as pd
         import io as _io
+
+        import pandas as pd
         if ext == "csv":
             df_map = {"Sheet1": pd.read_csv(_io.BytesIO(content_bytes))}
         else:

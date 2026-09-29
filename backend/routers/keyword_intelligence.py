@@ -7,30 +7,40 @@ server.py (MODULE: Keyword Research; MODULE: Keyword Analysis +
 FEATURE: Keyword Cannibalization Detector; FEATURE: ROI / Revenue per
 Keyword + FEATURE: Google Trends / Seasonal Queries).
 """
-import json
 import asyncio
+import json
+import logging
 from typing import List
 
 import httpx
+from bs4 import BeautifulSoup
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
-from bs4 import BeautifulSoup
 
-from core.crypto import get_decrypted_settings
-from core.db import db
-from core.security import require_user, require_editor
 from core.activity import log_activity
 from core.ai import get_ai_response
-from providers.google_analytics import fetch_gsc_metrics
-from providers.semrush import semrush_available, semrush_keyword_difficulty, semrush_keyword_overview
-from routers.keywords_intel import SERPAnalysisRequest, get_serp_analysis
-from providers.dataforseo import (
-    DFS_TTL, dataforseo_post, _dfs_available, _dfs_check_spend,
-    _cache_key, _cache_get, _cache_set,
-)
+from core.crypto import get_decrypted_settings
+from core.db import db
 from core.router import api_router  # the shared APIRouter instance
+from core.safe_fetch import SSRF_GUARD
+from core.security import require_editor, require_user
+from providers.dataforseo import (
+    DFS_TTL,
+    _cache_get,
+    _cache_key,
+    _cache_set,
+    _dfs_available,
+    _dfs_check_spend,
+    dataforseo_post,
+)
+from providers.google_analytics import fetch_gsc_metrics
+from providers.semrush import (
+    semrush_available,
+    semrush_keyword_difficulty,
+    semrush_keyword_overview,
+)
+from routers.keywords_intel import SERPAnalysisRequest, get_serp_analysis
 
-import logging
 logger = logging.getLogger(__name__)
 
 
@@ -313,7 +323,7 @@ async def analyze_keyword_density(site_id: str, data: KeywordAnalysisRequest, _=
             "Accept-Language": "en-US,en;q=0.5",
             "Accept-Encoding": "gzip, deflate, br",
         }
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
             # Accept any response that contains HTML content, even 4xx status codes
             html = resp.text

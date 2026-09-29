@@ -3,26 +3,28 @@ Manager, Canonical Tag Manager, Mobile Responsiveness Checker, and Keyword
 Intent Categorisation.
 """
 
-from fastapi import HTTPException, BackgroundTasks, Depends
-from pydantic import BaseModel
-from typing import List, Optional
 import asyncio
+import json
+import os
 import uuid
 from datetime import datetime, timezone
-import os
-import httpx
-import json
+from typing import List, Optional
 
+import httpx
+from fastapi import BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
+
+from core.activity import log_activity
+from core.ai import get_ai_response
+from core.changesets import create_changeset
+from core.crypto import get_decrypted_settings
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
-from core.security import require_editor, require_user
-from core.tasks import make_task_id, create_task_queue, push_event, finish_task
-from core.activity import log_activity
-from core.seo_impact import estimate_seo_impact
-from core.ai import get_ai_response
-from core.crypto import get_decrypted_settings
 from core.router import api_router
-from core.changesets import create_changeset
+from core.safe_fetch import SSRF_GUARD
+from core.security import require_editor, require_user
+from core.seo_impact import estimate_seo_impact
+from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from providers.bridge_client import BridgeError
 from providers.live_page import fetch_page, known_routes, merge_json_ld, normalise_route
 from providers.sites import get_site, get_site_and_client
@@ -140,7 +142,7 @@ async def get_sitemap(site_id: str, _: dict = Depends(require_editor)):
     ]
     content = None
     used_url = None
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=15, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         for url in candidates:
             try:
                 r = await client.get(url)
@@ -190,7 +192,7 @@ async def get_robots_txt(site_id: str, _: dict = Depends(require_editor)):
     site = await get_site(site_id)
     base_url = site.get("base_url", "").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(f"{base_url}/robots.txt")
             if resp.status_code == 200:
                 return {"content": resp.text, "url": f"{base_url}/robots.txt"}

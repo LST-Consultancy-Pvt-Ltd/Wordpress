@@ -14,8 +14,9 @@ from fastapi import Depends, Request
 from core.activity import log_activity
 from core.db import db
 from core.router import api_router
-from providers.sites import get_site
+from core.safe_fetch import SSRF_GUARD
 from core.security import require_editor
+from providers.sites import get_site
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ async def uptime_deep_check(site_id: str, current_user: dict = Depends(require_e
         result["issues"].append({"key": "dns_failure", "status": "critical", "description": f"DNS resolution failed: {e}"})
     # 2. HTTP request + TTFB + redirect chain
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as hc:
+        async with httpx.AsyncClient(event_hooks=SSRF_GUARD, timeout=20.0, follow_redirects=False) as hc:
             url = site_url
             chain = []
             for _ in range(5):
@@ -133,7 +134,8 @@ async def uptime_deep_check(site_id: str, current_user: dict = Depends(require_e
         result["issues"].append({"key": "unreachable", "status": "critical", "description": f"Site unreachable: {e}"})
     # 3. SSL certificate check
     try:
-        import ssl, socket as _socket
+        import socket as _socket
+        import ssl
         if parsed.scheme == "https" and hostname:
             ctx = ssl.create_default_context()
             with ctx.wrap_socket(_socket.socket(), server_hostname=hostname) as s:
