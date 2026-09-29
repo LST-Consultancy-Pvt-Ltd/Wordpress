@@ -21,6 +21,7 @@ LEGACY = {
     "user_id": "u1", "created_at": "2025-01-01T00:00:00Z", "platform": "old-cms", "username": "admin",
     "auth_type": "basic", "jwt_token": "enc:abc", "bridge_token": "enc:def", "bridge_url": "https://x/api/b",
     "consumer_secret": "zzz", "status": "connected", "business_description": "We sell widgets",
+    "description": "Widgets for everyone", "content_topics": ["widgets"],
 }
 
 
@@ -29,6 +30,7 @@ def test_transform_keeps_only_safe_fields_and_drops_every_credential():
     assert new["base_url"] == "https://acme.example"
     assert new["name"] == "Acme Marketing" and new["id"] == LEGACY["id"]
     assert new["business_description"] == "We sell widgets"
+    assert new["description"] == "Widgets for everyone" and new["content_topics"] == ["widgets"]
     for secret_field in ("username", "auth_type", "jwt_token", "bridge_token", "consumer_secret", "platform"):
         assert secret_field not in new
         assert secret_field in dropped

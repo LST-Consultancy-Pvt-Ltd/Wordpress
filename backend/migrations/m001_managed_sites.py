@@ -41,6 +41,7 @@ LEGACY_COLLECTIONS = ("posts", "pages", "navigation", "backups")
 KEEP_FIELDS = {
     "id", "name", "user_id", "created_at", "updated_at", "business_description", "target_audience",
     "industry", "onboarding", "onboarding_completed", "topics", "health_check_interval_minutes",
+    "description", "content_topics",
 }
 # Anything that looks like a secret or a legacy connection detail is dropped.
 SENSITIVE = re.compile(r"(?i)(pass|token|secret|jwt|key|auth|user(name)?$|consumer|credential|bridge_)")
