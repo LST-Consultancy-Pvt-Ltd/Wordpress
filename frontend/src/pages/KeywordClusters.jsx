@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Hash, Plus, Trash2, Loader2, RefreshCw, Star, TrendingUp, Target, Bot } from "lucide-react";
@@ -122,9 +123,9 @@ export default function KeywordClusters() {
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Competitors (for comparison keywords)</label>
                 <Input placeholder="CompetitorA, CompetitorB" value={competitorsInput} onChange={e => setCompetitorsInput(e.target.value)} />
               </div>
-              <Button className="w-full" onClick={handleGenerate} disabled={generating}>
+              <GatedButton minRole="editor" className="w-full" onClick={handleGenerate} disabled={generating}>
                 {generating ? <><Loader2 size={14} className="mr-2 animate-spin" />Generating...</> : <><Plus size={14} className="mr-2" />Generate Keywords</>}
-              </Button>
+              </GatedButton>
             </CardContent>
           </Card>
 
@@ -143,10 +144,10 @@ export default function KeywordClusters() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-medium truncate">{c.seed_service}</span>
-                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-destructive"
+                    <GatedButton minRole="editor" variant="ghost" size="sm" className="h-5 w-5 p-0 text-destructive"
                       onClick={e => { e.stopPropagation(); handleDelete(c.id); }}>
                       <Trash2 size={10} />
-                    </Button>
+                    </GatedButton>
                   </div>
                   <p className="text-xs text-muted-foreground">{c.keywords?.length || 0} keywords · {c.cities?.length || 0} cities</p>
                 </button>

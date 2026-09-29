@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
@@ -154,7 +155,7 @@ export default function KeywordResearch() {
             <TableCell><IntentBadge intent={kw.intent} /></TableCell>
             {showSave && (
               <TableCell>
-                <Button
+                <GatedButton minRole="editor"
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0"
@@ -163,7 +164,7 @@ export default function KeywordResearch() {
                   title="Save to Keyword Tracking"
                 >
                   {savingKeyword === kw.keyword ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                </Button>
+                </GatedButton>
               </TableCell>
             )}
           </TableRow>
@@ -200,9 +201,9 @@ export default function KeywordResearch() {
               onKeyDown={(e) => e.key === "Enter" && handleResearch()}
               className="flex-1"
             />
-            <Button onClick={handleResearch} disabled={researching || !keyword.trim()}>
+            <GatedButton minRole="editor" onClick={handleResearch} disabled={researching || !keyword.trim()}>
               {researching ? <><Loader2 size={14} className="animate-spin mr-2" /> Researching...</> : <><Sparkles size={14} className="mr-2" /> Research</>}
-            </Button>
+            </GatedButton>
           </div>
         </CardContent>
       </Card>
@@ -430,11 +431,11 @@ export default function KeywordResearch() {
                               </TableCell>
                               <TableCell><IntentBadge intent={kw.intent} /></TableCell>
                               <TableCell>
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={savingKeyword === kw.keyword}
+                                <GatedButton minRole="editor" variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={savingKeyword === kw.keyword}
                                   onClick={() => handleSaveKeyword({ keyword: kw.keyword, difficulty: (kw.competition_level || "medium").toLowerCase(), volume: kw.search_volume })}
                                   title="Add to Tracker">
                                   {savingKeyword === kw.keyword ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                                </Button>
+                                </GatedButton>
                               </TableCell>
                             </TableRow>
                           ))}
@@ -470,9 +471,9 @@ export default function KeywordResearch() {
                               <p className="text-sm font-medium">{q.question}</p>
                               {q.volume && <span className="text-xs text-muted-foreground">Volume: {q.volume.toLocaleString()}</span>}
                             </div>
-                            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setKeyword(q.question); handleResearch(); }}>
+                            <GatedButton minRole="editor" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setKeyword(q.question); handleResearch(); }}>
                               <Search size={12} />
-                            </Button>
+                            </GatedButton>
                           </div>
                         ))}
                       </div>
@@ -572,9 +573,9 @@ export default function KeywordResearch() {
                         <SelectItem value="all">Last 5 years</SelectItem>
                       </SelectContent>
                     </Select>
-                    <Button onClick={handleAnalyzeTrends} disabled={trendsLoading || !trendsKeywords.trim()}>
+                    <GatedButton minRole="editor" onClick={handleAnalyzeTrends} disabled={trendsLoading || !trendsKeywords.trim()}>
                       {trendsLoading ? <><Loader2 size={14} className="animate-spin mr-2" /> Analyzing...</> : <><TrendingUp size={14} className="mr-2" /> Analyze Trends</>}
-                    </Button>
+                    </GatedButton>
                   </div>
 
                   {trendsResults && (

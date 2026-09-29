@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
@@ -239,25 +240,25 @@ export default function KeywordTracking() {
             <SelectTrigger className="w-44"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={handleSuggest} disabled={suggesting || !selectedSite}>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleSuggest} disabled={suggesting || !selectedSite}>
             {suggesting ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Sparkles size={14} className="mr-1" />}
             AI Suggest
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || !selectedSite}>
+          </GatedButton>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || !selectedSite}>
             {refreshing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <RefreshCw size={14} className="mr-1" />}
             Refresh Ranks
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleLiveCheck} disabled={liveChecking || !selectedSite || keywords.length === 0} className="border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10">
+          </GatedButton>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleLiveCheck} disabled={liveChecking || !selectedSite || keywords.length === 0} className="border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10">
             {liveChecking ? <Loader2 size={14} className="mr-1 animate-spin" /> : <TrendingUp size={14} className="mr-1" />}
             Check Live Rankings
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleCategorize} disabled={categorizing || !selectedSite}>
+          </GatedButton>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleCategorize} disabled={categorizing || !selectedSite}>
             {categorizing ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Sparkles size={14} className="mr-1" />}
             Categorise All
-          </Button>
-          <Button className="btn-primary" size="sm" onClick={() => setAddOpen(true)} disabled={!selectedSite}>
+          </GatedButton>
+          <GatedButton minRole="editor" className="btn-primary" size="sm" onClick={() => setAddOpen(true)} disabled={!selectedSite}>
             <Plus size={14} className="mr-1" /> Add Keyword
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -376,10 +377,10 @@ export default function KeywordTracking() {
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </td>
                       <td className="py-2 pl-2">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                        <GatedButton minRole="editor" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500"
                           onClick={() => handleDelete(kw)}>
                           <Trash2 size={13} />
-                        </Button>
+                        </GatedButton>
                       </td>
                     </tr>
                   ))}
@@ -610,10 +611,10 @@ export default function KeywordTracking() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
-            <Button className="btn-primary" onClick={handleAdd} disabled={adding || !newKw.keyword.trim()}>
+            <GatedButton minRole="editor" variant="outline" onClick={() => setAddOpen(false)}>Cancel</GatedButton>
+            <GatedButton minRole="editor" className="btn-primary" onClick={handleAdd} disabled={adding || !newKw.keyword.trim()}>
               {adding ? <Loader2 size={14} className="mr-1 animate-spin" /> : null} Add
-            </Button>
+            </GatedButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

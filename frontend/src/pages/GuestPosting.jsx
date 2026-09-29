@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { PenLine, Plus, Loader2, RefreshCw, Mail, FileText, ExternalLink, Check } from "lucide-react";
@@ -97,9 +98,9 @@ export default function GuestPosting() {
           <p className="page-description">Find sites, generate pitches, draft articles, and track submissions</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleCheckLinks} disabled={checkingLinks}>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleCheckLinks} disabled={checkingLinks}>
             {checkingLinks ? <Loader2 size={14} className="animate-spin mr-1" /> : <ExternalLink size={14} className="mr-1" />}Check Live Links
-          </Button>
+          </GatedButton>
           <Select value={selectedSite} onValueChange={setSelectedSite}>
             <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
@@ -123,9 +124,9 @@ export default function GuestPosting() {
             <CardContent className="space-y-3">
               <Input placeholder="Niche *" value={form.niche} onChange={e => setForm(p => ({ ...p, niche: e.target.value }))} />
               <Input placeholder="Your domain (optional)" value={form.target_domain} onChange={e => setForm(p => ({ ...p, target_domain: e.target.value }))} />
-              <Button className="w-full" onClick={handleFind} disabled={finding || !selectedSite}>
+              <GatedButton minRole="editor" className="w-full" onClick={handleFind} disabled={finding || !selectedSite}>
                 {finding ? <><Loader2 size={14} className="mr-2 animate-spin" />Finding…</> : <><Plus size={14} className="mr-2" />Find Sites</>}
-              </Button>
+              </GatedButton>
             </CardContent>
           </Card>
 
@@ -140,12 +141,12 @@ export default function GuestPosting() {
                   {activeProspect.article_drafted && <Badge className="bg-emerald-500/10 text-emerald-400 text-xs"><Check size={9} className="mr-1" />Article</Badge>}
                 </div>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" className="flex-1 text-xs" onClick={() => handleGenerate("pitch")} disabled={generating}>
+                  <GatedButton minRole="editor" size="sm" variant="outline" className="flex-1 text-xs" onClick={() => handleGenerate("pitch")} disabled={generating}>
                     <Mail size={11} className="mr-1" />Generate Pitch
-                  </Button>
-                  <Button size="sm" variant="outline" className="flex-1 text-xs" onClick={() => handleGenerate("article")} disabled={generating}>
+                  </GatedButton>
+                  <GatedButton minRole="editor" size="sm" variant="outline" className="flex-1 text-xs" onClick={() => handleGenerate("article")} disabled={generating}>
                     <FileText size={11} className="mr-1" />Draft Article
-                  </Button>
+                  </GatedButton>
                 </div>
                 <Select value={activeProspect.status} onValueChange={val => handleStatusChange(activeProspect.id, val)}>
                   <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>

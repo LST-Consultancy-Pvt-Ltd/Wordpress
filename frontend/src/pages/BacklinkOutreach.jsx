@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
@@ -317,9 +318,9 @@ export default function BacklinkOutreach() {
                     <Textarea rows={4} placeholder={"https://competitor1.com\nhttps://competitor2.com"} value={form.competitor_urls} onChange={e => setForm(p => ({ ...p, competitor_urls: e.target.value }))} />
                     <p className="text-xs text-muted-foreground mt-1">Leave blank to auto-discover competitors from your own website instead.</p>
                   </div>
-                  <Button className="w-full" onClick={handleScan} disabled={scanning || !selectedSite}>
+                  <GatedButton minRole="editor" className="w-full" onClick={handleScan} disabled={scanning || !selectedSite}>
                     {scanning ? <><Loader2 size={14} className="mr-2 animate-spin" />Scanning…</> : <><TrendingUp size={14} className="mr-2" />Run Search</>}
-                  </Button>
+                  </GatedButton>
                 </CardContent>
               </Card>
 
@@ -327,7 +328,7 @@ export default function BacklinkOutreach() {
                 <CardHeader><CardTitle className="text-base flex items-center gap-2"><Shield size={16} />Disavow File</CardTitle></CardHeader>
                 <CardContent className="space-y-3">
                   <p className="text-xs text-muted-foreground">Auto-generate a disavow file for all low-DA (&lt;20) domains.</p>
-                  <Button variant="outline" className="w-full" onClick={handleGenerateDisavow}>Generate Disavow</Button>
+                  <GatedButton minRole="editor" variant="outline" className="w-full" onClick={handleGenerateDisavow}>Generate Disavow</GatedButton>
                   {disavow?.content && (
                     <div className="relative">
                       <Textarea rows={6} readOnly value={disavow.content} className="font-mono text-xs" />
@@ -416,9 +417,9 @@ export default function BacklinkOutreach() {
                   <CardTitle className="text-base">Opportunities ({opportunities.length})</CardTitle>
                   <div className="flex items-center gap-2">
                     <Badge className="bg-emerald-500/10 text-emerald-400 text-xs">{acquired} acquired</Badge>
-                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleExportExcel} disabled={exporting || !selectedSite}>
+                    <GatedButton minRole="editor" variant="outline" size="sm" className="h-7 text-xs" onClick={handleExportExcel} disabled={exporting || !selectedSite}>
                       {exporting ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Download size={12} className="mr-1" />}Export
-                    </Button>
+                    </GatedButton>
                     <Button variant="ghost" size="sm" onClick={loadOpportunities} disabled={loading}><RefreshCw size={12} className={loading ? "animate-spin" : ""} /></Button>
                   </div>
                 </CardHeader>
@@ -486,9 +487,9 @@ export default function BacklinkOutreach() {
                                 <div className="flex flex-col items-end gap-2 shrink-0">
                                   <Badge className={`text-xs ${statusColors[opp.status]}`}>{opp.status}</Badge>
                                   <div className="flex gap-1">
-                                    <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleGenerateEmail(opp)} disabled={generatingEmail}>
+                                    <GatedButton minRole="editor" variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleGenerateEmail(opp)} disabled={generatingEmail}>
                                       <Mail size={10} className="mr-1" />{opp.email_content ? "View Email" : "Draft Email"}
-                                    </Button>
+                                    </GatedButton>
                                     <Select value={opp.status} onValueChange={val => handleStatusChange(opp.id, val)}>
                                       <SelectTrigger className="h-6 text-xs px-2 w-28"><SelectValue /></SelectTrigger>
                                       <SelectContent>
@@ -566,10 +567,10 @@ export default function BacklinkOutreach() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleVerifyAll} disabled={verifyingAll || !selectedSite}>
+                  <GatedButton minRole="editor" variant="outline" size="sm" className="h-7 text-xs" onClick={handleVerifyAll} disabled={verifyingAll || !selectedSite}>
                     {verifyingAll ? <Loader2 size={12} className="mr-1 animate-spin" /> : <CheckCircle2 size={12} className="mr-1" />}Verify all
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={loadDirectories} disabled={dirLoading}><RefreshCw size={12} className={dirLoading ? "animate-spin" : ""} /></Button>
+                  </GatedButton>
+                  <GatedButton minRole="editor" variant="ghost" size="sm" onClick={loadDirectories} disabled={dirLoading}><RefreshCw size={12} className={dirLoading ? "animate-spin" : ""} /></GatedButton>
                 </div>
               </CardHeader>
               <CardContent>
@@ -596,20 +597,20 @@ export default function BacklinkOutreach() {
                         <div className="flex flex-col items-end gap-2 shrink-0">
                           <Badge className={`text-xs ${dirStatusColors[d.status] || ""}`}>{(d.status || "").replace("_", " ")}</Badge>
                           <div className="flex gap-1 flex-wrap justify-end">
-                            <Button variant="outline" size="sm" className="h-6 text-xs px-2"
+                            <GatedButton minRole="editor" variant="outline" size="sm" className="h-6 text-xs px-2"
                               onClick={() => d.listing_content ? setOpenDir(d) : handlePrepare(d.id)}
                               disabled={busyDir === d.id || (dirData && !dirData.profile_ready)}>
                               {busyDir === d.id ? <Loader2 size={10} className="mr-1 animate-spin" /> : <Sparkles size={10} className="mr-1" />}
                               {d.listing_content ? "View copy" : "Prepare"}
-                            </Button>
+                            </GatedButton>
                             <Button variant="outline" size="sm" className="h-6 text-xs px-2" asChild>
                               <a href={d.submission_url} target="_blank" rel="noopener noreferrer">
                                 <ExternalLink size={10} className="mr-1" />Open
                               </a>
                             </Button>
-                            <Button variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => handleVerify(d.id)} disabled={busyDir === d.id}>
+                            <GatedButton minRole="editor" variant="ghost" size="sm" className="h-6 text-xs px-2" onClick={() => handleVerify(d.id)} disabled={busyDir === d.id}>
                               <CheckCircle2 size={10} className="mr-1" />Verify
-                            </Button>
+                            </GatedButton>
                             <Select value={d.status} onValueChange={val => handleDirStatus(d.id, val)}>
                               <SelectTrigger className="h-6 text-xs px-2 w-28"><SelectValue /></SelectTrigger>
                               <SelectContent>
@@ -685,12 +686,12 @@ export default function BacklinkOutreach() {
                     <ExternalLink size={12} className="mr-1.5" />Open submission page
                   </a>
                 </Button>
-                <Button size="sm" variant="outline" className="flex-1" onClick={() => { handleDirStatus(openDir.id, "submitted"); setOpenDir(null); }}>
+                <GatedButton minRole="editor" size="sm" variant="outline" className="flex-1" onClick={() => { handleDirStatus(openDir.id, "submitted"); setOpenDir(null); }}>
                   Mark submitted
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => handlePrepare(openDir.id)} disabled={busyDir === openDir.id}>
+                </GatedButton>
+                <GatedButton minRole="editor" size="sm" variant="ghost" onClick={() => handlePrepare(openDir.id)} disabled={busyDir === openDir.id}>
                   {busyDir === openDir.id ? <Loader2 size={12} className="animate-spin" /> : "Regenerate"}
-                </Button>
+                </GatedButton>
               </div>
             </div>
           )}

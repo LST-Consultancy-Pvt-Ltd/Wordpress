@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { MapPin, Plus, Trash2, Sparkles, Loader2, Map } from "lucide-react";
@@ -156,10 +157,10 @@ export default function LocalTracking() {
               <Input placeholder="e.g. New York, NY" value={newKw.location}
                 onChange={e => setNewKw(p => ({ ...p, location: e.target.value }))} />
             </div>
-            <Button className="btn-primary" onClick={handleAdd} disabled={adding || !selectedSite}>
+            <GatedButton minRole="editor" className="btn-primary" onClick={handleAdd} disabled={adding || !selectedSite}>
               {adding ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Plus size={14} className="mr-1" />}
               Add
-            </Button>
+            </GatedButton>
           </div>
         </CardContent>
       </Card>
@@ -226,10 +227,10 @@ export default function LocalTracking() {
                         {kw.organic_rank ? `#${kw.organic_rank}` : "–"}
                       </td>
                       <td className="py-2.5 text-right">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500"
+                        <GatedButton minRole="editor" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-red-500"
                           onClick={() => handleDelete(kw)}>
                           <Trash2 size={13} />
-                        </Button>
+                        </GatedButton>
                       </td>
                     </tr>
                   ))}

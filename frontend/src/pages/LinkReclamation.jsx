@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Link2, Search, AlertTriangle, Check, Loader2, RefreshCw, ArrowRight, Mail, Copy } from "lucide-react";
@@ -8,9 +9,12 @@ import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { getSites, scanInbound404s, getLinkReclamationReport, generateReclaimEmail, bulkCreateLinkRedirects, subscribeToTask } from "../lib/api";
+import { useNavigate } from "react-router-dom";
+import { getSites, scanInbound404s, getLinkReclamationReport, generateReclaimEmail, bulkCreateLinkRedirects, subscribeToTask, apiErrorMessage } from "../lib/api";
+import { extractChangeSet, notifyChangeSetCreated } from "../lib/changesets";
 
 export default function LinkReclamation() {
+  const navigate = useNavigate();
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState("");
   const [report, setReport] = useState([]);
@@ -60,11 +64,11 @@ export default function LinkReclamation() {
     if (links.length === 0) return toast.error("Select links with suggested redirects");
     setCreatingRedirects(true);
     try {
-      await bulkCreateLinkRedirects(selectedSite, { redirects: links.map(l => ({ from_url: l.broken_url, to_url: l.suggested_redirect })) });
-      toast.success(`${links.length} redirects created`);
+      const r = await bulkCreateLinkRedirects(selectedSite, { redirects: links.map(l => ({ from_url: l.broken_url, to_url: l.suggested_redirect })) });
+      notifyChangeSetCreated(extractChangeSet(r.data), navigate, { title: `Change set created for ${links.length} redirect(s)` });
       setSelectedLinks(new Set());
       loadReport();
-    } catch { toast.error("Failed"); }
+    } catch (e) { toast.error(apiErrorMessage(e, "Could not create the redirect change set")); }
     finally { setCreatingRedirects(false); }
   };
 
@@ -95,9 +99,9 @@ export default function LinkReclamation() {
             <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button onClick={handleScan} disabled={scanning || !selectedSite}>
+          <GatedButton minRole="editor" onClick={handleScan} disabled={scanning || !selectedSite}>
             {scanning ? <><Loader2 size={14} className="mr-2 animate-spin" />Scanning…</> : <><Search size={14} className="mr-2" />Scan 404s</>}
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -118,7 +122,7 @@ export default function LinkReclamation() {
             {selectedLinks.size > 0 && (
               <Button size="sm" onClick={handleBulkRedirects} disabled={creatingRedirects}>
                 {creatingRedirects ? <Loader2 size={12} className="animate-spin mr-1" /> : <ArrowRight size={12} className="mr-1" />}
-                Create {selectedLinks.size} Redirect{selectedLinks.size > 1 ? "s" : ""}
+                Propose {selectedLinks.size} redirect{selectedLinks.size > 1 ? "s" : ""} (change set)
               </Button>
             )}
             <Button variant="ghost" size="sm" onClick={loadReport} disabled={loading}><RefreshCw size={12} className={loading ? "animate-spin" : ""} /></Button>
@@ -157,9 +161,9 @@ export default function LinkReclamation() {
                   {link.redirect_created && <Check size={12} className="text-emerald-400 shrink-0" />}
                 </div>
                 <div className="w-24 flex gap-1 shrink-0">
-                  <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleGenerateEmail(link)} disabled={generatingEmail === link.id}>
+                  <GatedButton minRole="editor" variant="outline" size="sm" className="h-6 text-xs px-2" onClick={() => handleGenerateEmail(link)} disabled={generatingEmail === link.id}>
                     {generatingEmail === link.id ? <Loader2 size={10} className="animate-spin" /> : <Mail size={10} />}
-                  </Button>
+                  </GatedButton>
                 </div>
               </div>
             ))}
@@ -178,7 +182,7 @@ export default function LinkReclamation() {
               <div className="relative">
                 <label className="text-xs text-muted-foreground">Body</label>
                 <textarea readOnly value={emailDialog.email.body} rows={10} className="w-full mt-1 p-3 rounded-lg bg-muted/30 text-sm resize-none border border-border" />
-                <Button variant="ghost" size="icon" className="absolute top-5 right-1 h-6 w-6" onClick={() => { navigator.clipboard.writeText(emailDialog.email.body); toast.success("Copied"); }}><Copy size={12} /></Button>
+                <GatedButton minRole="editor" variant="ghost" size="icon" className="absolute top-5 right-1 h-6 w-6" onClick={() => { navigator.clipboard.writeText(emailDialog.email.body); toast.success("Copied"); }}><Copy size={12} /></GatedButton>
               </div>
             </div>
           )}

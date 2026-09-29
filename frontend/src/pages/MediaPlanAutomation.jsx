@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -393,16 +394,16 @@ function PlatformConnectCard({ connKey, config, status, onRefresh }) {
                     {oauthLoading ? "Opening OAuth…" : "Authorize with Google"}
                   </Button>
                 ) : (
-                  <Button onClick={handleConnect} disabled={connecting} className="flex-1 gap-2" size="sm">
+                  <GatedButton minRole="editor" onClick={handleConnect} disabled={connecting} className="flex-1 gap-2" size="sm">
                     {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
                     {connecting ? "Connecting…" : `Connect ${config.label}`}
-                  </Button>
+                  </GatedButton>
                 )}
                 {isConnected && (
-                  <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={disconnecting}
+                  <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleDisconnect} disabled={disconnecting}
                     className="text-red-400 border-red-500/30 hover:bg-red-500/10 hover:text-red-400 px-3">
                     {disconnecting ? <Loader2 size={13} className="animate-spin" /> : <Link2Off size={13} />}
-                  </Button>
+                  </GatedButton>
                 )}
               </div>
               {isConnected && status?.connected_at && (
@@ -745,7 +746,7 @@ function ParsedPlanPreview({ plan, onActivate }) {
               </div>
             </div>
           )}
-          <Button
+          <GatedButton minRole="editor"
             onClick={handleActivate}
             disabled={activating || activatablePlatforms.length === 0}
             size="lg"
@@ -756,7 +757,7 @@ function ParsedPlanPreview({ plan, onActivate }) {
               : activatablePlatforms.length === 0
                 ? "Connect a platform first"
                 : `Activate ${activatablePlatforms.length} Platform${activatablePlatforms.length !== 1 ? "s" : ""}`}
-          </Button>
+          </GatedButton>
         </CardContent>
       </Card>
     </div>
@@ -855,12 +856,12 @@ function ExecutionDashboard({ planId, plan }) {
                 {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Refresh
               </Button>
               {paused
-                ? <Button size="sm" onClick={handleResume} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                ? <GatedButton minRole="editor" size="sm" onClick={handleResume} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
                     <Play size={13} /> Resume All
-                  </Button>
-                : <Button size="sm" variant="destructive" onClick={handlePause} className="gap-1.5">
+                  </GatedButton>
+                : <GatedButton minRole="editor" size="sm" variant="destructive" onClick={handlePause} className="gap-1.5">
                     <Pause size={13} /> Pause All
-                  </Button>
+                  </GatedButton>
               }
             </div>
           </div>
@@ -987,19 +988,19 @@ function TaskCard({ task, colKey, onExecute, onApprove }) {
           <StatusBadge status={task.status} />
           <div className="flex gap-1">
             {colKey === "scheduled" && (
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-[10px] gap-0.5" onClick={onExecute}>
+              <GatedButton minRole="editor" size="sm" variant="ghost" className="h-6 px-2 text-[10px] gap-0.5" onClick={onExecute}>
                 <Play size={10} /> Run
-              </Button>
+              </GatedButton>
             )}
             {isConnectNeeded && (
-              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-0.5 text-violet-400 border-violet-500/30 hover:bg-violet-500/10" onClick={onExecute}>
+              <GatedButton minRole="editor" size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-0.5 text-violet-400 border-violet-500/30 hover:bg-violet-500/10" onClick={onExecute}>
                 <Link2 size={10} /> Retry After Connect
-              </Button>
+              </GatedButton>
             )}
             {task.status === "requires_approval" && (
-              <Button size="sm" className="h-6 px-2 text-[10px] bg-amber-600 hover:bg-amber-700 gap-0.5" onClick={onApprove}>
+              <GatedButton minRole="editor" size="sm" className="h-6 px-2 text-[10px] bg-amber-600 hover:bg-amber-700 gap-0.5" onClick={onApprove}>
                 <CheckSquare size={10} /> Approve
-              </Button>
+              </GatedButton>
             )}
             {task.status === "awaiting_asset" && (
               <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-0.5">

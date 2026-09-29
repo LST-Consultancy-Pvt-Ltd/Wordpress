@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Zap, TrendingUp, BarChart3, Target, RefreshCw, Loader2, Star } from "lucide-react";
@@ -90,9 +91,9 @@ export default function OffPageAutopilot() {
                   <span className={`text-4xl font-bold ${scoreColor(score.overall_score)}`}>{score.overall_score}</span>
                 </div>
                 <p className="text-sm text-muted-foreground mt-2">out of 100</p>
-                <Button className="w-full mt-4" onClick={handleStrategy} disabled={generatingStrategy}>
+                <GatedButton minRole="editor" className="w-full mt-4" onClick={handleStrategy} disabled={generatingStrategy}>
                   {generatingStrategy ? <><Loader2 size={14} className="mr-2 animate-spin" />Generating…</> : <><Star size={14} className="mr-2" />Generate 90-Day Strategy</>}
-                </Button>
+                </GatedButton>
               </>
             ) : (
               <div className="py-8 text-center"><p className="text-sm text-muted-foreground">No score data yet</p></div>
