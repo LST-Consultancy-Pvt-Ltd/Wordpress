@@ -328,3 +328,39 @@ Breaking changes create `/v2`. Within v1 fields may be added; clients must
 ignore unknown fields. `protocol_version` in `/capabilities` is the major
 version as a string. The control plane refuses a bridge whose major version it
 does not support and shows the upgrade instruction.
+
+## 15. v1 clarifications (from the reference implementation)
+
+Additive and binding for v1; both implementations follow them.
+
+1. **Size limits.** The effective change-set limit is `min(limits.max_body_bytes, 2 MiB)`.
+2. **File reads.** `GET /files/{root}?path=` (read scope, capability `files.read`) returns
+   `{root, path, content, sha256, bytes}` for one allow-listed UTF-8 text file in a `code` or
+   `assets` root, up to `max_file_bytes`. Binary files return `OPERATION_NOT_ALLOWED`.
+3. **Revoked keys.** `AUTH_REVOKED` is returned only when the signature verifies against a
+   revoked or expired key. Unknown keys and bad signatures get `AUTH_INVALID`, so a key's
+   existence is never revealed.
+4. **Replaying `/auth/rotate`.** The new secret is never persisted. A replay after a restart
+   returns `409 IDEMPOTENCY_MISMATCH` with `details.reason = "secret_not_replayable"`.
+5. **Idempotency fingerprint.** The fingerprint is method + path + sha256(body). Transient
+   outcomes (`LOCKED`, `RATE_LIMITED`, `PAYLOAD_TOO_LARGE`, `INTERNAL`) are not stored.
+6. **Post-apply route check.** An impacted route (at most 20 checked) must answer < 500
+   after the apply only if it did so before the apply.
+7. **Stale plans.** A plan against a stale `base_revision` returns `valid: false` with an
+   error at index `-1`, code `CONFLICT_REVISION`. Apply returns `409`.
+8. **Error shapes.** Apply maps the first plan error to its HTTP status and lists all errors
+   in `details.errors`. A rollback response has the apply shape plus `reverts` and `forced`.
+9. **Additive fields.**
+   - In `/capabilities`: `unsupported` (capability → reason).
+   - In adapter descriptors: `route_pattern`.
+   - In deployment records: `previous_images`, `kind`, `reason`, `failed_step`.
+   - In revision records: `snapshot_available`, `error`.
+   - Plan warning codes: `REVALIDATE_DYNAMIC_ROUTE`, `VALUE_SANITIZED`, `REDIRECT_CHAIN`,
+     `MDX_EXECUTABLE_CONTENT`.
+   - MDX bodies containing import, export or `{…}` also get the `code-change` risk flag.
+   - `repository.dirty` may be `null`.
+10. **Routes with no page.** `metadata.set` on a route no page serves is a
+    `METADATA_NOT_OPTED_IN` warning with `effective: false`, not an error.
+11. **Deployment strategies.** `build-and-swap` may be declared unsupported.
+    `POST /deployments/{id}/rollback` returns `202 {deployment_id, job_id}`.
+12. **Scopes.** Scopes do not imply one another; for example, `admin` does not include `read`.
