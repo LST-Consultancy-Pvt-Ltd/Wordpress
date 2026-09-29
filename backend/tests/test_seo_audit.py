@@ -8,9 +8,7 @@ The bias throughout is against false confidence. A check that reports a clean
 pass when it could not actually measure something is worse than no check, so
 several tests exist purely to pin down the "we could not tell" cases.
 """
-import asyncio
 
-import pytest
 
 from providers import seo_audit as sa
 from providers.seo_audit import (

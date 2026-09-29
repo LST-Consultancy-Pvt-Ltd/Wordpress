@@ -1,7 +1,6 @@
 """Migration 001 (legacy site records -> ManagedSite): transform purity,
 credential purge, backup-manifest gate, idempotency, rollback, finalize.
 Runs against the test MongoDB in an isolated database."""
-import asyncio
 import json
 import uuid
 

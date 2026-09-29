@@ -15,7 +15,6 @@ Uses the real MongoDB instance (same one server.py connects to for the
 route-parity test) — each test uses a fresh uuid4 site_id and cleans up its
 own documents in a `finally` block inside that single coroutine.
 """
-import asyncio
 import json
 import uuid
 from unittest.mock import AsyncMock, patch

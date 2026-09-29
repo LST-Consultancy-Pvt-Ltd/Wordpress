@@ -20,7 +20,6 @@ json.dump(routes, open('tests/route_baseline.json', 'w'), indent=2)
 import json
 from pathlib import Path
 
-import pytest
 
 BASELINE_PATH = Path(__file__).parent / "route_baseline.json"
 

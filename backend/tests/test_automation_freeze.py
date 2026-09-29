@@ -5,7 +5,6 @@ must stay inert while the freeze is on, and the freeze must be on by default.
 Scheduler interaction is checked against the real (unstarted) shared scheduler;
 database and CMS calls are mocked, so no MongoDB is needed.
 """
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch  # noqa: F401
 
 import pytest

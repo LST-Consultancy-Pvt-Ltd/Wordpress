@@ -208,7 +208,7 @@ async def meta_ads_create(data: dict = Body(...), current_user: dict = Depends(r
     creds = await _get_ads_credentials("meta")
     ad_account_id = creds.get("ad_account_id", "")
     access_token = creds["access_token"]
-    base_url = f"https://graph.facebook.com/v19.0"
+    base_url = "https://graph.facebook.com/v19.0"
     created = {"campaign_id": None, "ad_sets": [], "ads": []}
     try:
         async with httpx.AsyncClient(timeout=60) as client:

@@ -981,7 +981,7 @@ def cat_keyword_content(ctx: dict) -> dict:
         (f"{len(rambling)} pages average over 25 words per sentence. Long sentences are the half of "
          f"readability you can actually fix — splitting them helps more than swapping vocabulary."
          if rambling else
-         f"Every page averages under 25 words per sentence."),
+         "Every page averages under 25 words per sentence."),
         severity="low",
         items=[_page_ref(p, f"{p['signals'].get('avg_sentence_words')} words/sentence")
                for p in rambling][:50]))
