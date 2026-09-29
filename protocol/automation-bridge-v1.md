@@ -43,7 +43,9 @@ canonical = METHOD + "\n" + PATH_WITH_QUERY + "\n" + TIMESTAMP + "\n" + NONCE + 
 
 `PATH_WITH_QUERY` is the raw request target starting at `/api/automation-bridge/v1`
 (query string exactly as sent). Empty body hashes the empty string.
-Comparison is constant-time. Failures return `401` with codes
+The HMAC key is the **decoded** 32 secret bytes (not the base64 text).
+Reference vectors: `protocol/signing-test-vectors.json` — both implementations
+must reproduce them in their tests. Comparison is constant-time. Failures return `401` with codes
 `AUTH_MISSING | AUTH_INVALID | AUTH_EXPIRED | AUTH_REPLAY | AUTH_REVOKED`
 — the response never says whether the key id exists. A valid key lacking the
 endpoint's scope gets `403 AUTH_SCOPE`. Every attempt, successful or not, is

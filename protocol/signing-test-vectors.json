@@ -1,0 +1,34 @@
+{
+ "key_id": "k_testvector",
+ "secret_b64url": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+ "note": "secret is base64url(no padding) of bytes 0x00..0x1f; the HMAC key is the decoded 32 bytes",
+ "cases": [
+  {
+   "method": "GET",
+   "path_with_query": "/api/automation-bridge/v1/capabilities",
+   "timestamp": 1790000000,
+   "nonce": "nonce_abcdefghijklmnop",
+   "body_utf8": "",
+   "canonical": "GET\n/api/automation-bridge/v1/capabilities\n1790000000\nnonce_abcdefghijklmnop\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "signature": "ec182d2f49b446dc7c570e561acb2f202264410e7bc40ea23d8fea815ccb162f"
+  },
+  {
+   "method": "POST",
+   "path_with_query": "/api/automation-bridge/v1/changesets/plan",
+   "timestamp": 1790000123,
+   "nonce": "n-0123456789ABCDEF",
+   "body_utf8": "{\"change_id\":\"cs_1\",\"operations\":[{\"op\":\"metadata.clear\",\"route\":\"/\"}],\"base_revision\":null}",
+   "canonical": "POST\n/api/automation-bridge/v1/changesets/plan\n1790000123\nn-0123456789ABCDEF\n08f06837cb484d85ed77a0f7b49e91cd7da009abc74afc3aef2d2066732b0de8",
+   "signature": "169c4177dc5d0647ca09e4cfe997299ad60aa4ea923e9c511398fe7cda5df35a"
+  },
+  {
+   "method": "GET",
+   "path_with_query": "/api/automation-bridge/v1/content/posts/items?status=all&limit=10",
+   "timestamp": 1790000200,
+   "nonce": "QWERTYuiop_-1234",
+   "body_utf8": "",
+   "canonical": "GET\n/api/automation-bridge/v1/content/posts/items?status=all&limit=10\n1790000200\nQWERTYuiop_-1234\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "signature": "134f3307c83ff832e75be4ac0c1b9f6d840af6fda25ded705661a6c0e41326b3"
+  }
+ ]
+}
