@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
   FileText, Download, Calendar, Loader2, FileBarChart2,
@@ -8,13 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { getSites, listReports, generateReport, scheduleReport } from "../lib/api";
+import { getSites, listReports, generateReport, scheduleReport, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 const TEMPLATES = [
   {
@@ -28,7 +28,7 @@ const TEMPLATES = [
   {
     id: "content_performance",
     title: "Content Performance",
-    description: "Published posts, engagement metrics and top pages",
+    description: "Published content items, engagement metrics and top routes",
     icon: FileBarChart2,
     color: "text-purple-500",
     bg: "bg-purple-500/10",
@@ -62,21 +62,23 @@ export default function Reports() {
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadHistory();
-  }, [selectedSite]);
-
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
+    if (!selectedSite) return;
     try {
       const r = await listReports(selectedSite);
-      setHistory(r.data || []);
+      setHistory(listItems(r.data));
     } catch { setHistory([]); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   const handleGenerate = async (template) => {
     setGenerating(prev => ({ ...prev, [template]: true }));
@@ -92,7 +94,7 @@ export default function Reports() {
       toast.success("Report downloaded!");
       loadHistory();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to generate report");
+      toast.error(apiErrorMessage(e, "Failed to generate report"));
     } finally { setGenerating(prev => ({ ...prev, [template]: false })); }
   };
 
@@ -104,7 +106,7 @@ export default function Reports() {
       setScheduleOpen(false);
       toast.success(`Report scheduled ${scheduleData.frequency} to ${scheduleData.email}`);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to schedule report");
+      toast.error(apiErrorMessage(e, "Failed to schedule report"));
     } finally { setScheduling(false); }
   };
 
@@ -119,12 +121,12 @@ export default function Reports() {
         </div>
         <div className="flex gap-2 items-center">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+            <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={() => setScheduleOpen(true)} disabled={!selectedSite}>
+          <GatedButton minRole="editor" variant="outline" size="sm" onClick={() => setScheduleOpen(true)} disabled={!selectedSite}>
             <Calendar size={14} className="mr-1.5" /> Schedule
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -145,13 +147,13 @@ export default function Reports() {
                   </div>
                 </div>
                 <div className="mt-auto pt-3 border-t border-border/30">
-                  <Button className="w-full btn-primary" size="sm"
+                  <GatedButton minRole="editor" className="w-full btn-primary" size="sm"
                     onClick={() => handleGenerate(tpl.id)}
                     disabled={generating[tpl.id] || !selectedSite}>
                     {generating[tpl.id]
                       ? <><Loader2 size={13} className="mr-2 animate-spin" /> Generating…</>
                       : <><Download size={13} className="mr-2" /> Download PDF</>}
-                  </Button>
+                  </GatedButton>
                 </div>
               </CardContent>
             </Card>
@@ -191,9 +193,9 @@ export default function Reports() {
           <DialogHeader><DialogTitle className="font-heading">Schedule Auto-Reports</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1">
-              <Label>Frequency</Label>
+              <Label htmlFor="report-frequency">Frequency</Label>
               <Select value={scheduleData.frequency} onValueChange={v => setScheduleData(p => ({ ...p, frequency: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="report-frequency"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="weekly">Weekly</SelectItem>
                   <SelectItem value="monthly">Monthly</SelectItem>
@@ -201,8 +203,8 @@ export default function Reports() {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label>Email Address</Label>
-              <Input type="email" placeholder="you@example.com" value={scheduleData.email}
+              <Label htmlFor="report-email">Email Address</Label>
+              <Input id="report-email" type="email" placeholder="you@example.com" value={scheduleData.email}
                 onChange={e => setScheduleData(p => ({ ...p, email: e.target.value }))} />
             </div>
           </div>

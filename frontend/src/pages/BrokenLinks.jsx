@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   LinkIcon,
@@ -12,6 +13,7 @@ import {
   ShieldAlert,
   RefreshCw,
   Filter,
+  PencilLine,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -31,7 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { getSites, scanBrokenLinks, getBrokenLinks, dismissBrokenLink } from "../lib/api";
+import { getSites, scanBrokenLinks, getBrokenLinks, dismissBrokenLink, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 import ImpactBadge from "../components/ImpactBadge";
 import SSEProgressDrawer, { useSSETask } from "../components/SSEProgressDrawer";
 import { toast } from "sonner";
@@ -79,32 +82,37 @@ export default function BrokenLinks() {
   const [dismissing, setDismissing] = useState({});
 
   const { tasks, startTask, dismissTask } = useSSETask();
+  const timerRef = useRef(null);
 
-  useEffect(() => { loadSites(); }, []);
-  useEffect(() => { if (selectedSite) loadLinks(); }, [selectedSite, statusFilter]); // eslint-disable-line
+  useEffect(() => {
+    getSites()
+      .then((r) => {
+        const list = listItems(r.data);
+        setSites(list);
+        if (list.length > 0) setSelectedSite(list[0].id);
+      })
+      .catch(() => toast.error("Failed to load sites"));
+  }, []);
 
-  const loadSites = async () => {
-    try {
-      const r = await getSites();
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
-    } catch {
-      toast.error("Failed to load sites");
-    }
-  };
-
-  const loadLinks = async () => {
+  const loadLinks = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const filter = statusFilter === "all" ? undefined : statusFilter;
       const r = await getBrokenLinks(selectedSite, filter);
-      setLinks(r.data || []);
+      setLinks(listItems(r.data));
     } catch {
       toast.error("Failed to load broken links");
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSite, statusFilter]);
+
+  useEffect(() => {
+    loadLinks();
+  }, [loadLinks]);
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   const handleScan = async () => {
     if (!selectedSite) return;
@@ -112,20 +120,15 @@ export default function BrokenLinks() {
     try {
       const r = await scanBrokenLinks(selectedSite);
       startTask(r.data.task_id, "Scanning for broken links");
-      // Reload results once the drawer task completes
-      // We poll after a short delay; the SSE drawer shows live progress
-      const poll = setInterval(async () => {
-        const stillRunning = tasks.some(
-          (t) => t.id === r.data.task_id && t.status === "running"
-        );
-        if (!stillRunning) {
-          clearInterval(poll);
-          await loadLinks();
-          setScanning(false);
-        }
+      // Reload results after a short delay; the progress drawer shows live status.
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(async () => {
+        timerRef.current = null;
+        await loadLinks();
+        setScanning(false);
       }, 2000);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to start scan");
+      toast.error(apiErrorMessage(err, "Failed to start scan"));
       setScanning(false);
     }
   };
@@ -136,14 +139,14 @@ export default function BrokenLinks() {
       await dismissBrokenLink(selectedSite, linkId);
       setLinks((prev) => prev.filter((l) => l.id !== linkId));
       toast.success("Link dismissed");
-    } catch {
-      toast.error("Failed to dismiss link");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Failed to dismiss link"));
     } finally {
       setDismissing((prev) => ({ ...prev, [linkId]: false }));
     }
   };
 
-  const selectedSiteData = sites.find((s) => s.id === selectedSite);
+  const contentEditorUrl = `/sites/${selectedSite}/content`;
 
   const brokenCount = links.filter((l) => l.status === "broken").length;
   const timeoutCount = links.filter((l) => l.status === "timeout").length;
@@ -165,16 +168,16 @@ export default function BrokenLinks() {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
         >
-          Detect and manage broken links across your WordPress site's content
+          Detect and manage broken links across your site's content. Fix a link in the content editor, which creates a change set for review.
         </motion.p>
       </div>
 
       {/* Site selector + scan button */}
       <div className="flex flex-wrap items-end gap-4 mb-6">
         <div>
-          <p className="text-sm text-muted-foreground mb-1.5">Select Site</p>
+          <p id="broken-site-label" className="text-sm text-muted-foreground mb-1.5">Select Site</p>
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-[240px]" data-testid="site-select">
+            <SelectTrigger className="w-[240px]" data-testid="site-select" aria-labelledby="broken-site-label">
               <SelectValue placeholder="Select a site" />
             </SelectTrigger>
             <SelectContent>
@@ -185,7 +188,8 @@ export default function BrokenLinks() {
           </Select>
         </div>
 
-        <Button
+        <GatedButton
+          minRole="editor"
           onClick={handleScan}
           disabled={!selectedSite || scanning}
           className="btn-primary"
@@ -195,7 +199,7 @@ export default function BrokenLinks() {
             ? <Loader2 size={15} className="mr-2 animate-spin" />
             : <ScanLine size={15} className="mr-2" />}
           Scan for Broken Links
-        </Button>
+        </GatedButton>
 
         <Button
           variant="outline"
@@ -203,6 +207,7 @@ export default function BrokenLinks() {
           onClick={loadLinks}
           disabled={!selectedSite || loading}
           data-testid="refresh-btn"
+          aria-label="Refresh results"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </Button>
@@ -252,9 +257,9 @@ export default function BrokenLinks() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Filter size={14} className="text-muted-foreground" />
+              <Filter size={14} className="text-muted-foreground" aria-hidden="true" />
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[140px] h-8 text-sm" data-testid="filter-select">
+                <SelectTrigger className="w-[140px] h-8 text-sm" data-testid="filter-select" aria-label="Filter by status">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -287,7 +292,7 @@ export default function BrokenLinks() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Post / Page</TableHead>
+                  <TableHead>Page</TableHead>
                   <TableHead>Broken URL</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Last Scanned</TableHead>
@@ -295,64 +300,57 @@ export default function BrokenLinks() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {links.map((link) => {
-                  const wpEditUrl = selectedSiteData
-                    ? `${selectedSiteData.url.replace(/\/$/, "")}/wp-admin/post.php?post=${link.post_id}&action=edit`
-                    : null;
-                  return (
-                    <TableRow key={link.id}>
-                      <TableCell className="font-medium max-w-[180px] truncate">
-                        {wpEditUrl ? (
-                          <a
-                            href={wpEditUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="hover:text-primary flex items-center gap-1"
-                          >
-                            {link.post_title || `Post #${link.post_id}`}
-                            <ExternalLink size={11} className="shrink-0 opacity-60" />
-                          </a>
-                        ) : (
-                          link.post_title || `Post #${link.post_id}`
-                        )}
-                      </TableCell>
-                      <TableCell className="max-w-[280px]">
-                        <a
-                          href={link.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-muted-foreground hover:text-primary break-all flex items-start gap-1"
-                        >
-                          <span className="truncate">{link.url}</span>
-                          <ExternalLink size={11} className="shrink-0 mt-0.5 opacity-60" />
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={link.status} statusCode={link.status_code} />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                        {link.scanned_at
-                          ? new Date(link.scanned_at).toLocaleString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
+                {links.map((link) => (
+                  <TableRow key={link.id}>
+                    <TableCell className="font-medium max-w-[180px] truncate">
+                      {link.post_title || link.content_id || "Untitled page"}
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-muted-foreground hover:text-primary break-all flex items-start gap-1"
+                      >
+                        <span className="truncate">{link.url}</span>
+                        <ExternalLink size={11} className="shrink-0 mt-0.5 opacity-60" aria-hidden="true" />
+                      </a>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge status={link.status} statusCode={link.status_code} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                      {link.scanned_at
+                        ? new Date(link.scanned_at).toLocaleString()
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end items-center gap-1">
+                        <Button asChild variant="outline" size="sm" className="h-7 text-xs">
+                          <Link to={contentEditorUrl} data-testid={`edit-${link.id}`}>
+                            <PencilLine size={12} className="mr-1" aria-hidden="true" />
+                            Open in editor
+                          </Link>
+                        </Button>
+                        <GatedButton
+                          minRole="editor"
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDismiss(link.id)}
                           disabled={!!dismissing[link.id]}
                           className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
                           title="Dismiss"
+                          aria-label="Dismiss link"
                           data-testid={`dismiss-${link.id}`}
                         >
                           {dismissing[link.id]
                             ? <Loader2 size={13} className="animate-spin" />
                             : <Trash2 size={13} />}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                        </GatedButton>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           )}

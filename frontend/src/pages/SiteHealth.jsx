@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { HeartPulse, RefreshCw, Loader2, CheckCircle, AlertTriangle, XCircle, Shield, Clock, Server, Wrench, Globe } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -9,7 +9,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { getSites, getHealthData, runHealthCheck, getHealthFix, multiRegionUptimeCheck } from "../lib/api";
+import { getSites, getHealthData, runHealthCheck, getHealthFix, multiRegionUptimeCheck, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 import { toast } from "sonner";
 
 const SEVERITY_CONFIG = {
@@ -26,31 +27,36 @@ export default function SiteHealth() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(false);
   const [fixingKey, setFixingKey] = useState(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyData, setHistoryData] = useState([]);
+  const [fixGuides, setFixGuides] = useState({});
   const [multiRegionLoading, setMultiRegionLoading] = useState(false);
   const [multiRegionResults, setMultiRegionResults] = useState(null);
 
-  useEffect(() => { loadSites(); }, []);
-  useEffect(() => { if (selectedSite) loadHealth(); }, [selectedSite]);
+  useEffect(() => {
+    getSites()
+      .then((r) => {
+        const list = listItems(r.data);
+        setSites(list);
+        if (list.length) setSelectedSite(list[0].id);
+      })
+      .catch(() => {});
+  }, []);
 
-  const loadSites = async () => {
-    try {
-      const r = await getSites();
-      setSites(r.data || []);
-      if (r.data?.length) setSelectedSite(r.data[0].id);
-    } catch { }
-  };
-
-  const loadHealth = async () => {
+  const loadHealth = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await getHealthData(selectedSite);
       setHealth(r.data);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to load health data");
+      toast.error(apiErrorMessage(err, "Failed to load health data"));
     } finally { setLoading(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    setFixGuides({});
+    setMultiRegionResults(null);
+    loadHealth();
+  }, [loadHealth]);
 
   const handleCheck = async () => {
     setChecking(true);
@@ -59,25 +65,35 @@ export default function SiteHealth() {
       setHealth(r.data);
       toast.success("Health check complete");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Health check failed");
+      toast.error(apiErrorMessage(err, "Health check failed"));
     } finally { setChecking(false); }
   };
 
-  const handleFix = async (issueKey, issueLabel) => {
+  /** Fetch step-by-step guidance for an issue (read-only; nothing is changed on the site). */
+  const handleFixGuide = async (issueKey, issueLabel) => {
     setFixingKey(issueKey);
     try {
       const r = await getHealthFix(selectedSite, issueKey);
-      toast.success(`Fixed: ${issueLabel}`);
-      loadHealth();
+      setFixGuides((prev) => ({ ...prev, [issueKey]: r.data?.instructions || "No guidance available for this issue." }));
     } catch (err) {
-      toast.error(err.response?.data?.detail || `Could not auto-fix: ${issueLabel}`);
+      toast.error(apiErrorMessage(err, `Could not get guidance for: ${issueLabel}`));
     } finally { setFixingKey(null); }
+  };
+
+  const handleMultiRegion = async () => {
+    setMultiRegionLoading(true);
+    try {
+      const r = await multiRegionUptimeCheck(selectedSite);
+      setMultiRegionResults(r.data?.regions || r.data || []);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Multi-region check failed"));
+    } finally { setMultiRegionLoading(false); }
   };
 
   const sslDays = health?.ssl_expiry_days ?? null;
   const sslColor = sslDays === null ? "text-muted-foreground" : sslDays < 14 ? "text-red-400" : sslDays < 30 ? "text-yellow-500" : "text-emerald-500";
 
-  const issues = Array.isArray(health?.issues) ? health.issues : [];
+  const issues = (Array.isArray(health?.issues) ? health.issues : []).map((i) => ({ ...i, severity: i.severity || i.status }));
   const criticalCount = issues.filter(i => i.severity === "critical").length;
   const warningCount = issues.filter(i => i.severity === "warning").length;
   const goodCount = issues.filter(i => i.severity === "good").length;
@@ -90,22 +106,22 @@ export default function SiteHealth() {
           Site Health
         </motion.h1>
         <motion.p className="page-description" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-          Monitor uptime, performance, SSL and WordPress health checks
+          Monitor uptime, response time, SSL and HTTP health checks
         </motion.p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-[200px]" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
         <Button onClick={loadHealth} variant="outline" size="sm" disabled={!selectedSite}>
           <RefreshCw size={14} className="mr-2" />Refresh
         </Button>
-        <Button onClick={handleCheck} disabled={!selectedSite || checking} size="sm">
+        <GatedButton minRole="editor" onClick={handleCheck} disabled={!selectedSite || checking} size="sm">
           {checking ? <Loader2 size={14} className="animate-spin mr-2" /> : <HeartPulse size={14} className="mr-2" />}
           Run Check
-        </Button>
+        </GatedButton>
       </div>
 
       {loading ? (
@@ -154,13 +170,13 @@ export default function SiteHealth() {
           {/* More details row */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             {[
-              { label: "WordPress", value: health.wp_version || "—" },
-              { label: "PHP", value: health.php_version || "—" },
+              { label: "HTTP Status", value: health.http_status || "—", color: health.http_status >= 400 ? "text-red-400" : "" },
+              { label: "Last Checked", value: health.checked_at ? new Date(health.checked_at).toLocaleString() : "—", small: true },
               { label: "Critical Issues", value: criticalCount, color: criticalCount > 0 ? "text-red-400" : "" },
               { label: "Warnings", value: warningCount, color: warningCount > 0 ? "text-yellow-500" : "" },
             ].map(s => (
               <Card key={s.label} className="stat-card">
-                <p className={`stat-value ${s.color || ""}`}>{s.value}</p>
+                <p className={`${s.small ? "text-sm font-medium" : "stat-value"} ${s.color || ""}`}>{s.value}</p>
                 <p className="stat-label">{s.label}</p>
               </Card>
             ))}
@@ -205,21 +221,26 @@ export default function SiteHealth() {
                           <Icon size={16} className={`${cfg.color} flex-shrink-0 mt-0.5`} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-0.5">
-                              <span className="font-medium text-sm">{issue.label || issue.test || "Issue"}</span>
+                              <span className="font-medium text-sm">{issue.label || issue.test || issue.key || "Issue"}</span>
                               <Badge variant="outline" className={`text-xs ${cfg.border} ${cfg.color}`}>{issue.severity}</Badge>
                             </div>
                             <p className="text-xs text-muted-foreground">{issue.description || issue.details || ""}</p>
                             {issue.actions?.length > 0 && (
                               <p className="text-xs text-muted-foreground mt-1">Action: {issue.actions[0]?.label || issue.actions[0]}</p>
                             )}
+                            {issue.key && fixGuides[issue.key] && (
+                              <div className="mt-2 rounded-md border border-border/40 bg-background/60 p-2 text-xs whitespace-pre-wrap" role="region" aria-label={`How to fix ${issue.label || issue.key}`}>
+                                {fixGuides[issue.key]}
+                              </div>
+                            )}
                           </div>
-                          {issue.auto_fix && issue.key && (
-                            <Button variant="outline" size="sm" className="h-6 text-xs flex-shrink-0"
+                          {issue.key && (
+                            <GatedButton minRole="editor" variant="outline" size="sm" className="h-6 text-xs flex-shrink-0"
                               disabled={fixingKey === issue.key}
-                              onClick={() => handleFix(issue.key, issue.label || issue.key)}>
+                              onClick={() => handleFixGuide(issue.key, issue.label || issue.key)}>
                               {fixingKey === issue.key ? <Loader2 size={10} className="animate-spin mr-1" /> : <Wrench size={10} className="mr-1" />}
-                              Fix
-                            </Button>
+                              How to fix
+                            </GatedButton>
                           )}
                         </div>
                       );
@@ -235,16 +256,9 @@ export default function SiteHealth() {
             <CardHeader>
               <CardTitle className="font-heading text-sm flex items-center justify-between">
                 <span className="flex items-center gap-2"><Globe size={16} className="text-primary" /> Global Availability Check</span>
-                <Button onClick={async () => {
-                  setMultiRegionLoading(true);
-                  try {
-                    const r = await multiRegionUptimeCheck(selectedSite);
-                    setMultiRegionResults(r.data?.regions || r.data || []);
-                  } catch (e) { toast.error(e.response?.data?.detail || "Multi-region check failed"); }
-                  finally { setMultiRegionLoading(false); }
-                }} disabled={multiRegionLoading || !selectedSite} size="sm">
+                <GatedButton minRole="editor" onClick={handleMultiRegion} disabled={multiRegionLoading || !selectedSite} size="sm">
                   {multiRegionLoading ? <><Loader2 size={14} className="mr-2 animate-spin" /> Checking...</> : <><Globe size={14} className="mr-2" /> Run Multi-Region Check</>}
-                </Button>
+                </GatedButton>
               </CardTitle>
             </CardHeader>
             <CardContent>

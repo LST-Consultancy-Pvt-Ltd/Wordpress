@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Zap, Globe, Loader2, Play, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Zap, Loader2, Play, Clock, AlertTriangle, FileCode } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -8,7 +9,8 @@ import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
-import { getSites, analyzePageSpeed, getPageSpeedResults } from "../lib/api";
+import { getSites, analyzePageSpeed, getPageSpeedResults, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 const MetricCard = ({ label, value, unit, description }) => {
   const num = parseFloat(value) || 0;
@@ -47,30 +49,30 @@ export default function SiteSpeed() {
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) {
-        setSelectedSite(r.data[0].id);
-        setUrl(r.data[0].url || "");
-      }
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadResults();
+  const loadResults = useCallback(async () => {
+    if (!selectedSite) return;
+    try {
+      const r = await getPageSpeedResults(selectedSite);
+      const list = listItems(r.data);
+      setResults(list);
+      setLatest(list[0] || null);
+    } catch { setResults([]); setLatest(null); }
   }, [selectedSite]);
 
   useEffect(() => {
-    const site = sites.find(s => s.id === selectedSite);
-    if (site) setUrl(site.url || "");
-  }, [selectedSite, sites]);
+    loadResults();
+  }, [loadResults]);
 
-  const loadResults = async () => {
-    try {
-      const r = await getPageSpeedResults(selectedSite);
-      setResults(r.data || []);
-      setLatest(r.data?.[0] || null);
-    } catch { setResults([]); setLatest(null); }
-  };
+  useEffect(() => {
+    const site = sites.find(s => s.id === selectedSite);
+    if (site) setUrl(site.base_url || "");
+  }, [selectedSite, sites]);
 
   const handleAnalyze = async () => {
     if (!url.trim()) { toast.error("Enter a URL to analyze"); return; }
@@ -83,7 +85,7 @@ export default function SiteSpeed() {
       if (r.data.psi_warning) toast.warning(r.data.psi_warning, { duration: 7000 });
       else toast.success("Analysis complete!");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Analysis failed");
+      toast.error(apiErrorMessage(e, "Analysis failed"));
     } finally { setAnalyzing(false); }
   };
 
@@ -97,7 +99,7 @@ export default function SiteSpeed() {
           <p className="page-description">Google PageSpeed Insights + AI-powered fix recommendations</p>
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
@@ -107,13 +109,13 @@ export default function SiteSpeed() {
         <CardContent className="pt-4">
           <div className="flex gap-3 items-end">
             <div className="flex-1 space-y-1">
-              <Label>Page URL to Audit</Label>
-              <Input placeholder="https://example.com" value={url} onChange={e => setUrl(e.target.value)} />
+              <Label htmlFor="speed-url">Page URL to Audit</Label>
+              <Input id="speed-url" placeholder="https://example.com" value={url} onChange={e => setUrl(e.target.value)} />
             </div>
-            <Button className="btn-primary" onClick={handleAnalyze} disabled={analyzing}>
+            <GatedButton minRole="editor" className="btn-primary" onClick={handleAnalyze} disabled={analyzing || !selectedSite}>
               {analyzing ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Play size={15} className="mr-2" />}
               Analyze
-            </Button>
+            </GatedButton>
           </div>
         </CardContent>
       </Card>
@@ -179,9 +181,21 @@ export default function SiteSpeed() {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
               <Card className="content-card">
                 <CardHeader>
-                  <CardTitle className="font-heading flex items-center gap-2">
-                    <AlertTriangle size={18} className="text-primary" /> AI Fix Recommendations
-                  </CardTitle>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <CardTitle className="font-heading flex items-center gap-2">
+                      <AlertTriangle size={18} className="text-primary" /> AI Fix Recommendations
+                    </CardTitle>
+                    {selectedSite && (
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={`/sites/${selectedSite}/code`}>
+                          <FileCode size={13} className="mr-1" aria-hidden="true" /> Implement in Code workspace
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Code changes are proposed as change sets and reviewed before they reach the site.
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {latest.ai_recommendations.map((rec, i) => (

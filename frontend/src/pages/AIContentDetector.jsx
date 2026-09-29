@@ -1,9 +1,13 @@
 import { useState, useEffect } from "react";
+import { Label } from "../components/ui/label";
+import GatedButton from "../components/sa/GatedButton";
+import CapabilityNotice from "../components/sa/CapabilityNotice";
+import { hasCapability } from "../lib/capabilities";
 import { motion } from "framer-motion";
 import {
-  ShieldCheck, Loader2, AlertCircle, Search, FileText,
+  ShieldCheck, Loader2, Search, FileText,
   CheckCircle2, XCircle, AlertTriangle, Eye, Wand2, BarChart3,
-  BookOpen, Award, Sparkles, Target, TrendingUp, Brain,
+  Award, TrendingUp,
   Layers, HelpCircle, Scale, Globe
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -20,7 +24,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "../components/ui/table";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { getSites, getPosts, analyzeAIContent, bulkScanAIContent, fullScoreAIContent, humanizeContent, sectionAIDetection, helpfulContentScore, factCheckContent } from "../lib/api";
+import {
+  apiErrorMessage, listItems, getSites, getContentCollections, getContentItems, getContentItem,
+  analyzeAIContent, bulkScanAIContent, fullScoreAIContent, humanizeContent, sectionAIDetection,
+  helpfulContentScore, factCheckContent, compareCompetitorContent,
+} from "../lib/api";
 import { toast } from "sonner";
 
 const VerdictBadge = ({ score }) => {
@@ -42,9 +50,14 @@ export default function AIContentDetector() {
   const [text, setText] = useState("");
   const [analyzing, setAnalyzing] = useState(false);
   const [result, setResult] = useState(null);
+  // Site content picker (capability content.read)
+  const [collections, setCollections] = useState([]);
+  const [collection, setCollection] = useState("");
+  const [items, setItems] = useState([]);
+  const [itemSlug, setItemSlug] = useState("");
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [loadingItem, setLoadingItem] = useState(false);
   // Bulk scan
-  const [posts, setPosts] = useState([]);
-  const [loadingPosts, setLoadingPosts] = useState(false);
   const [bulkScanning, setBulkScanning] = useState(false);
   const [bulkResults, setBulkResults] = useState([]);
   // Full score
@@ -67,24 +80,65 @@ export default function AIContentDetector() {
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareResult, setCompareResult] = useState(null);
 
+  const site = sites.find(s => s.id === selectedSite) || null;
+  const canReadContent = hasCapability(site, "content.read");
+
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
+  // Collections for the selected site
   useEffect(() => {
-    if (selectedSite && activeTab === "bulk") loadPosts();
-  }, [selectedSite, activeTab]);
+    setCollections([]);
+    setCollection("");
+    setItems([]);
+    setItemSlug("");
+    if (!selectedSite || !canReadContent) return undefined;
+    let cancelled = false;
+    getContentCollections(selectedSite)
+      .then(r => {
+        if (cancelled) return;
+        const list = listItems(r.data);
+        setCollections(list);
+        if (list.length > 0) setCollection(list[0].id);
+      })
+      .catch(e => { if (!cancelled) toast.error(apiErrorMessage(e, "Could not load content collections")); });
+    return () => { cancelled = true; };
+  }, [selectedSite, canReadContent]);
 
-  const loadPosts = async () => {
-    setLoadingPosts(true);
+  // Items in the selected collection
+  useEffect(() => {
+    setItems([]);
+    setItemSlug("");
+    if (!selectedSite || !collection) return undefined;
+    let cancelled = false;
+    setLoadingItems(true);
+    getContentItems(selectedSite, collection, { status: "all" })
+      .then(r => { if (!cancelled) setItems(listItems(r.data)); })
+      .catch(e => { if (!cancelled) toast.error(apiErrorMessage(e, "Could not load content items")); })
+      .finally(() => { if (!cancelled) setLoadingItems(false); });
+    return () => { cancelled = true; };
+  }, [selectedSite, collection]);
+
+  const handleLoadItem = async () => {
+    if (!itemSlug) return;
+    setLoadingItem(true);
     try {
-      const r = await getPosts(selectedSite);
-      setPosts(r.data);
-    } catch { setPosts([]); }
-    finally { setLoadingPosts(false); }
+      const r = await getContentItem(selectedSite, collection, itemSlug);
+      const body = r.data?.body || "";
+      if (!body.trim()) {
+        toast.error("That item has no body text");
+        return;
+      }
+      setText(body);
+      toast.success(`Loaded "${r.data?.frontmatter?.title || itemSlug}" into the analyzer`);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, "Could not load content item"));
+    } finally { setLoadingItem(false); }
   };
 
   const handleAnalyze = async () => {
@@ -96,7 +150,7 @@ export default function AIContentDetector() {
       setResult(r.data);
       toast.success("Analysis complete");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Analysis failed");
+      toast.error(apiErrorMessage(e, "Analysis failed"));
     } finally { setAnalyzing(false); }
   };
 
@@ -107,9 +161,9 @@ export default function AIContentDetector() {
     try {
       const r = await bulkScanAIContent(selectedSite, { site_id: selectedSite });
       setBulkResults(r.data?.results || []);
-      toast.success(`Scanned ${r.data?.results?.length || 0} posts`);
+      toast.success(`Scanned ${r.data?.results?.length || 0} content items`);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Bulk scan failed");
+      toast.error(apiErrorMessage(e, "Bulk scan failed"));
     } finally { setBulkScanning(false); }
   };
 
@@ -122,7 +176,7 @@ export default function AIContentDetector() {
       setFullResult(r.data);
       toast.success("Full scoring complete");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Full scoring failed");
+      toast.error(apiErrorMessage(e, "Full scoring failed"));
     } finally { setFullScoring(false); }
   };
 
@@ -135,7 +189,7 @@ export default function AIContentDetector() {
       setHumanizedText(r.data?.rewritten || "");
       toast.success("Content humanized");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Humanization failed");
+      toast.error(apiErrorMessage(e, "Humanization failed"));
     } finally { setHumanizing(false); }
   };
 
@@ -147,7 +201,7 @@ export default function AIContentDetector() {
       const r = await sectionAIDetection(selectedSite, { text: text.trim() });
       setSectionResults(r.data);
       toast.success("Section analysis complete");
-    } catch (e) { toast.error(e.response?.data?.detail || "Section analysis failed"); }
+    } catch (e) { toast.error(apiErrorMessage(e, "Section analysis failed")); }
     finally { setSectionLoading(false); }
   };
 
@@ -159,7 +213,7 @@ export default function AIContentDetector() {
       const r = await helpfulContentScore(selectedSite, { text: text.trim() });
       setHelpfulResult(r.data);
       toast.success("Helpful content check complete");
-    } catch (e) { toast.error(e.response?.data?.detail || "Helpful content check failed"); }
+    } catch (e) { toast.error(apiErrorMessage(e, "Helpful content check failed")); }
     finally { setHelpfulLoading(false); }
   };
 
@@ -171,7 +225,7 @@ export default function AIContentDetector() {
       const r = await factCheckContent(selectedSite, { text: text.trim(), google_api_key: "" });
       setFactResult(r.data);
       toast.success("Fact check complete");
-    } catch (e) { toast.error(e.response?.data?.detail || "Fact check failed"); }
+    } catch (e) { toast.error(apiErrorMessage(e, "Fact check failed")); }
     finally { setFactLoading(false); }
   };
 
@@ -181,11 +235,10 @@ export default function AIContentDetector() {
     setCompareLoading(true);
     setCompareResult(null);
     try {
-      const { compareCompetitorContent } = await import("../lib/api");
       const r = await compareCompetitorContent(selectedSite, { your_text: text.trim(), competitor_url: competitorUrl.trim() });
       setCompareResult(r.data);
       toast.success("Comparison complete");
-    } catch (e) { toast.error(e.response?.data?.detail || "Comparison failed"); }
+    } catch (e) { toast.error(apiErrorMessage(e, "Comparison failed")); }
     finally { setCompareLoading(false); }
   };
 
@@ -206,22 +259,70 @@ export default function AIContentDetector() {
           <h1 className="text-3xl font-heading font-bold flex items-center gap-3">
             <ShieldCheck className="text-primary" /> AI Content Detector
           </h1>
-          <p className="text-muted-foreground mt-1">Detect AI-generated content in your posts and text</p>
+          <p className="text-muted-foreground mt-1">Detect AI-generated content in your site content or any pasted text</p>
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-[220px]"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-[220px]" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>
-            {sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name || s.url}</SelectItem>)}
+            {sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name || s.base_url}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
+
+      {/* Load text from the site's content (optional — pasting text always works) */}
+      {site && (canReadContent ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><FileText size={16} /> Load from site content</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col md:flex-row gap-3 md:items-end">
+              <div className="space-y-1.5 md:w-56">
+                <Label>Collection</Label>
+                <Select value={collection} onValueChange={setCollection} disabled={collections.length === 0}>
+                  <SelectTrigger aria-label="Content collection">
+                    <SelectValue placeholder={collections.length ? "Select collection" : "No collections"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {collections.map(c => (
+                      <SelectItem key={c.id} value={c.id}>{c.label || c.id}{c.kind ? ` · ${c.kind}` : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 flex-1 min-w-0">
+                <Label>Item</Label>
+                <Select value={itemSlug} onValueChange={setItemSlug} disabled={loadingItems || items.length === 0}>
+                  <SelectTrigger aria-label="Content item">
+                    <SelectValue placeholder={loadingItems ? "Loading…" : items.length ? "Select an item" : "No items"} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {items.map(it => (
+                      <SelectItem key={it.slug} value={it.slug}>
+                        {it.title || it.slug}{it.status ? ` (${it.status})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button variant="outline" onClick={handleLoadItem} disabled={!itemSlug || loadingItem}>
+                {loadingItem ? <><Loader2 size={14} className="animate-spin mr-2" /> Loading...</> : "Load into analyzer"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <CapabilityNotice capability="content.read" site={site} compact>
+          <p className="text-xs text-muted-foreground mt-2">You can still paste any text below to analyze it.</p>
+        </CapabilityNotice>
+      ))}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="text"><Search size={14} className="mr-1" /> Analyze Text</TabsTrigger>
           <TabsTrigger value="fullscore"><BarChart3 size={14} className="mr-1" /> Full Score</TabsTrigger>
           <TabsTrigger value="humanize"><Wand2 size={14} className="mr-1" /> Humanize</TabsTrigger>
-          <TabsTrigger value="bulk"><FileText size={14} className="mr-1" /> Scan Posts</TabsTrigger>
+          <TabsTrigger value="bulk"><FileText size={14} className="mr-1" /> Scan Content</TabsTrigger>
           <TabsTrigger value="sections"><Layers size={14} className="mr-1" /> Section Analysis</TabsTrigger>
           <TabsTrigger value="helpful"><HelpCircle size={14} className="mr-1" /> Helpful Content</TabsTrigger>
           <TabsTrigger value="factcheck"><Scale size={14} className="mr-1" /> Fact Check</TabsTrigger>
@@ -233,6 +334,7 @@ export default function AIContentDetector() {
             <CardHeader><CardTitle>Paste Content</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <Textarea
+                aria-label="Content to analyze"
                 placeholder="Paste the text you want to analyze for AI-generated content..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -240,9 +342,9 @@ export default function AIContentDetector() {
               />
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{text.length} characters</span>
-                <Button onClick={handleAnalyze} disabled={analyzing || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleAnalyze} disabled={analyzing || !text.trim()}>
                   {analyzing ? <><Loader2 size={14} className="animate-spin mr-2" /> Analyzing...</> : <><ShieldCheck size={14} className="mr-2" /> Analyze</>}
-                </Button>
+                </GatedButton>
               </div>
             </CardContent>
           </Card>
@@ -311,6 +413,7 @@ export default function AIContentDetector() {
             <CardHeader><CardTitle>Comprehensive Content Scoring</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <Textarea
+                aria-label="Content to analyze"
                 placeholder="Paste content for full AI Detection + EEAT + Readability + Originality + Content Depth scoring..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -318,9 +421,9 @@ export default function AIContentDetector() {
               />
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{text.length} characters</span>
-                <Button onClick={handleFullScore} disabled={fullScoring || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleFullScore} disabled={fullScoring || !text.trim()}>
                   {fullScoring ? <><Loader2 size={14} className="animate-spin mr-2" /> Scoring...</> : <><BarChart3 size={14} className="mr-2" /> Run Full Score</>}
-                </Button>
+                </GatedButton>
               </div>
             </CardContent>
           </Card>
@@ -494,6 +597,7 @@ export default function AIContentDetector() {
             <CardHeader><CardTitle>AI Content Humanizer</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <Textarea
+                aria-label="Content to analyze"
                 placeholder="Paste AI-generated content to humanize..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
@@ -501,9 +605,9 @@ export default function AIContentDetector() {
               />
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{text.length} characters</span>
-                <Button onClick={handleHumanize} disabled={humanizing || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleHumanize} disabled={humanizing || !text.trim()}>
                   {humanizing ? <><Loader2 size={14} className="animate-spin mr-2" /> Humanizing...</> : <><Wand2 size={14} className="mr-2" /> Humanize Content</>}
-                </Button>
+                </GatedButton>
               </div>
             </CardContent>
           </Card>
@@ -532,10 +636,10 @@ export default function AIContentDetector() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
-                <span>Bulk Post Scan</span>
-                <Button onClick={handleBulkScan} disabled={bulkScanning || !selectedSite}>
-                  {bulkScanning ? <><Loader2 size={14} className="animate-spin mr-2" /> Scanning...</> : <><Eye size={14} className="mr-2" /> Scan All Posts</>}
-                </Button>
+                <span>Bulk Content Scan</span>
+                <GatedButton minRole="editor" onClick={handleBulkScan} disabled={bulkScanning || !selectedSite}>
+                  {bulkScanning ? <><Loader2 size={14} className="animate-spin mr-2" /> Scanning...</> : <><Eye size={14} className="mr-2" /> Scan All Content</>}
+                </GatedButton>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -543,7 +647,7 @@ export default function AIContentDetector() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Post</TableHead>
+                      <TableHead>Content</TableHead>
                       <TableHead className="w-[100px]">AI Score</TableHead>
                       <TableHead className="w-[100px]">Verdict</TableHead>
                     </TableRow>
@@ -551,7 +655,7 @@ export default function AIContentDetector() {
                   <TableBody>
                     {bulkResults.map((r, i) => (
                       <TableRow key={i}>
-                        <TableCell className="font-medium">{r.title}</TableCell>
+                        <TableCell className="font-medium">{r.title || r.slug}</TableCell>
                         <TableCell>
                           <span className={`font-mono font-bold ${scoreColor(r.ai_probability)}`}>{r.ai_probability}%</span>
                         </TableCell>
@@ -567,7 +671,7 @@ export default function AIContentDetector() {
                   ) : (
                     <ShieldCheck size={24} className="mx-auto mb-2 opacity-40" />
                   )}
-                  <p>{bulkScanning ? "Scanning posts..." : "Click 'Scan All Posts' to detect AI content across your site"}</p>
+                  <p>{bulkScanning ? "Scanning content..." : "Click 'Scan All Content' to detect AI content across your site's synced content"}</p>
                 </div>
               )}
             </CardContent>
@@ -580,9 +684,9 @@ export default function AIContentDetector() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Section-by-Section AI Analysis</span>
-                <Button onClick={handleSectionAnalysis} disabled={sectionLoading || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleSectionAnalysis} disabled={sectionLoading || !text.trim()}>
                   {sectionLoading ? <><Loader2 size={14} className="animate-spin mr-2" /> Analyzing...</> : <><Layers size={14} className="mr-2" /> Analyze by Section</>}
-                </Button>
+                </GatedButton>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -636,9 +740,9 @@ export default function AIContentDetector() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Google Helpful Content Compliance</span>
-                <Button onClick={handleHelpfulContent} disabled={helpfulLoading || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleHelpfulContent} disabled={helpfulLoading || !text.trim()}>
                   {helpfulLoading ? <><Loader2 size={14} className="animate-spin mr-2" /> Checking...</> : <><HelpCircle size={14} className="mr-2" /> Check Helpful Content Compliance</>}
-                </Button>
+                </GatedButton>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -712,9 +816,9 @@ export default function AIContentDetector() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 <span>Fact Check</span>
-                <Button onClick={handleFactCheck} disabled={factLoading || !text.trim()}>
+                <GatedButton minRole="editor" onClick={handleFactCheck} disabled={factLoading || !text.trim()}>
                   {factLoading ? <><Loader2 size={14} className="animate-spin mr-2" /> Checking...</> : <><Scale size={14} className="mr-2" /> Check Facts</>}
-                </Button>
+                </GatedButton>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -789,19 +893,21 @@ export default function AIContentDetector() {
             <CardHeader><CardTitle>Compare vs Competitor Content</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <Textarea
+                aria-label="Content to analyze"
                 placeholder="Paste your content here..."
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 rows={6}
               />
               <Input
+                aria-label="Competitor URL"
                 placeholder="Competitor URL to compare against (e.g. https://example.com/article)"
                 value={competitorUrl}
                 onChange={(e) => setCompetitorUrl(e.target.value)}
               />
-              <Button onClick={handleCompareCompetitor} disabled={compareLoading || !text.trim() || !competitorUrl.trim()}>
+              <GatedButton minRole="editor" onClick={handleCompareCompetitor} disabled={compareLoading || !text.trim() || !competitorUrl.trim()}>
                 {compareLoading ? <><Loader2 size={14} className="animate-spin mr-2" /> Fetching competitor content and comparing...</> : <><Globe size={14} className="mr-2" /> Compare Content</>}
-              </Button>
+              </GatedButton>
             </CardContent>
           </Card>
 

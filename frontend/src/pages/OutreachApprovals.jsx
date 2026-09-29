@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ClipboardCheck, Loader2, Send, Check, X, RefreshCw } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
+import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
@@ -9,15 +9,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { toast } from "sonner";
 import {
   getSites, listBacklinkOpportunities, listGuestPostProspects, getLinkReclamationReport,
-  setOutreachRecipient, approveOutreach, rejectOutreach, sendOutreach,
+  setOutreachRecipient, approveOutreach, rejectOutreach, sendOutreach, listItems, apiErrorMessage,
 } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 // One entry per outreach collection the backend's Trust & Safety Gate
-// (routers/outreach_gate.py) knows how to approve/send.
+// knows how to approve/send. Saving a recipient needs the editor role;
+// approving, rejecting and sending need admin (enforced server-side too).
 const SOURCES = [
-  { collection: "backlink_outreach", field: "email_content", nameField: "prospect_domain", label: "Backlink Outreach", fetch: listBacklinkOpportunities, unwrap: (r) => r },
-  { collection: "guest_posts", field: "pitch", nameField: "site_name", label: "Guest Posting", fetch: listGuestPostProspects, unwrap: (r) => r },
-  { collection: "link_reclamation", field: "outreach_email", nameField: "broken_url", label: "Link Reclamation", fetch: getLinkReclamationReport, unwrap: (r) => r.links || [] },
+  { collection: "backlink_outreach", field: "email_content", nameField: "prospect_domain", label: "Backlink Outreach", fetch: listBacklinkOpportunities, unwrap: (r) => listItems(r) },
+  { collection: "guest_posts", field: "pitch", nameField: "site_name", label: "Guest Posting", fetch: listGuestPostProspects, unwrap: (r) => listItems(r) },
+  { collection: "link_reclamation", field: "outreach_email", nameField: "broken_url", label: "Link Reclamation", fetch: getLinkReclamationReport, unwrap: (r) => r?.links || [] },
 ];
 
 const statusColors = {
@@ -37,7 +39,11 @@ export default function OutreachApprovals() {
   const [recipientDrafts, setRecipientDrafts] = useState({});
 
   useEffect(() => {
-    getSites().then(r => { setSites(r.data); if (r.data.length > 0) setSelectedSite(r.data[0].id); }).catch(() => {});
+    getSites().then(r => {
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
+    }).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -83,7 +89,7 @@ export default function OutreachApprovals() {
       }
       await load();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Action failed");
+      toast.error(apiErrorMessage(e, "Action failed"));
     } finally { setBusyId(""); }
   };
 
@@ -99,10 +105,10 @@ export default function OutreachApprovals() {
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+            <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} aria-label="Refresh outreach queue">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </Button>
         </div>
@@ -133,29 +139,30 @@ export default function OutreachApprovals() {
 
                   {(status === "draft" || status === "rejected") && (
                     <div className="flex items-center gap-2">
-                      <Input placeholder="recipient@example.com" className="h-8 text-xs"
+                      <Input type="email" placeholder="recipient@example.com" className="h-8 text-xs"
+                        aria-label={`Recipient email for ${item._name || "outreach draft"}`}
                         value={recipientDrafts[item.id] ?? item.recipient_email ?? ""}
                         onChange={e => setRecipientDrafts({ ...recipientDrafts, [item.id]: e.target.value })} />
-                      <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "recipient")}>Save recipient</Button>
+                      <GatedButton minRole="editor" size="sm" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "recipient")}>Save recipient</GatedButton>
                     </div>
                   )}
                   {status === "pending" && (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">To: {item.recipient_email}</span>
-                      <Button size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "approve")}>
+                      <GatedButton minRole="admin" size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "approve")}>
                         {busy ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Check size={12} className="mr-1" />}Approve
-                      </Button>
-                      <Button size="sm" variant="outline" className="h-8 text-xs text-red-400" disabled={busy} onClick={() => doAction(item, "reject")}>
+                      </GatedButton>
+                      <GatedButton minRole="admin" size="sm" variant="outline" className="h-8 text-xs text-red-400" disabled={busy} onClick={() => doAction(item, "reject")}>
                         <X size={12} className="mr-1" />Reject
-                      </Button>
+                      </GatedButton>
                     </div>
                   )}
                   {status === "approved" && (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">To: {item.recipient_email}</span>
-                      <Button size="sm" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "send")}>
+                      <GatedButton minRole="admin" size="sm" className="h-8 text-xs" disabled={busy} onClick={() => doAction(item, "send")}>
                         {busy ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Send size={12} className="mr-1" />}Send
-                      </Button>
+                      </GatedButton>
                     </div>
                   )}
                   {status === "sent" && (

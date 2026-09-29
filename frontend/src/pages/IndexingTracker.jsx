@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Search, Globe, CheckCircle2, XCircle, Loader2, RefreshCw, Send, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -7,7 +7,8 @@ import { Input } from "../components/ui/input";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
-import { getSites, checkIndexingStatus, getIndexingReport, submitSitemapToGSC, subscribeToTask } from "../lib/api";
+import { getSites, checkIndexingStatus, getIndexingReport, submitSitemapToGSC, subscribeToTask, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 const priorityBadge = {
   high: "bg-red-500/10 text-red-400 border-red-500/20",
@@ -27,23 +28,28 @@ export default function IndexingTracker() {
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadReport();
-  }, [selectedSite]);
-
-  const loadReport = async () => {
+  const loadReport = useCallback(async () => {
+    if (!selectedSite) return;
     setLoadingReport(true);
     try {
       const r = await getIndexingReport(selectedSite);
       setReport(r.data);
     } catch { setReport(null); }
     finally { setLoadingReport(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
+
+  const site = sites.find((s) => s.id === selectedSite);
+  const defaultSitemapUrl = site?.base_url ? `${site.base_url.replace(/\/+$/, "")}/sitemap.xml` : "";
 
   const handleCheck = async () => {
     if (!selectedSite) return toast.error("Select a site");
@@ -53,8 +59,10 @@ export default function IndexingTracker() {
       const r = await checkIndexingStatus(selectedSite);
       const taskId = r.data.task_id;
       subscribeToTask(taskId, (event) => {
-        if (event.type === "progress") setProgress(event.data?.message || "Checking...");
-        if (event.type === "complete") {
+        if (event.type === "status" && event.data?.status !== "completed") {
+          setProgress(event.data?.message || "Checking...");
+        }
+        if (event.type === "status" && event.data?.status === "completed") {
           setProgress("");
           setChecking(false);
           loadReport();
@@ -69,19 +77,20 @@ export default function IndexingTracker() {
     } catch (e) {
       setChecking(false);
       setProgress("");
-      toast.error(e.response?.data?.detail || "Failed to start check");
+      toast.error(apiErrorMessage(e, "Failed to start check"));
     }
   };
 
   const handleSubmitSitemap = async () => {
-    if (!sitemapUrl.trim()) return toast.error("Enter a sitemap URL");
+    const url = sitemapUrl.trim() || defaultSitemapUrl;
+    if (!url) return toast.error("Enter a sitemap URL");
     setSubmitting(true);
     try {
-      const r = await submitSitemapToGSC(selectedSite, { sitemap_url: sitemapUrl });
-      toast.success(r.data.message || "Sitemap submitted");
+      const r = await submitSitemapToGSC(selectedSite, { sitemap_url: url });
+      toast.success(r.data?.message || "Sitemap submitted");
       setSitemapUrl("");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Submission failed");
+      toast.error(apiErrorMessage(e, "Submission failed"));
     } finally {
       setSubmitting(false);
     }
@@ -100,12 +109,12 @@ export default function IndexingTracker() {
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+            <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button onClick={handleCheck} disabled={checking || !selectedSite}>
+          <GatedButton minRole="editor" onClick={handleCheck} disabled={checking || !selectedSite}>
             {checking ? <><Loader2 size={14} className="mr-2 animate-spin" />Checking...</> : <><RefreshCw size={14} className="mr-2" />Run Check</>}
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -145,7 +154,7 @@ export default function IndexingTracker() {
         <Card>
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <CardTitle className="text-base">URL Indexing Status</CardTitle>
-            <Button variant="ghost" size="sm" onClick={loadReport} disabled={loadingReport}>
+            <Button variant="ghost" size="sm" onClick={loadReport} disabled={loadingReport || !selectedSite} aria-label="Reload indexing report">
               <RefreshCw size={12} className={loadingReport ? "animate-spin" : ""} />
             </Button>
           </CardHeader>
@@ -198,17 +207,19 @@ export default function IndexingTracker() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Send size={16} />Submit Sitemap to GSC</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">Submit your sitemap directly to Google Search Console to request indexing.</p>
+              <p id="gsc-sitemap-help" className="text-xs text-muted-foreground">Submit your sitemap directly to Google Search Console to request indexing. Leave empty to submit the site's default sitemap.</p>
               <div className="flex gap-2">
                 <Input
-                  placeholder="https://example.com/sitemap.xml"
+                  aria-label="Sitemap URL"
+                  aria-describedby="gsc-sitemap-help"
+                  placeholder={defaultSitemapUrl || "https://example.com/sitemap.xml"}
                   value={sitemapUrl}
                   onChange={e => setSitemapUrl(e.target.value)}
                   className="flex-1"
                 />
-                <Button onClick={handleSubmitSitemap} disabled={submitting} variant="outline">
+                <GatedButton minRole="editor" onClick={handleSubmitSitemap} disabled={submitting || !selectedSite} variant="outline" aria-label="Submit sitemap">
                   {submitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                </Button>
+                </GatedButton>
               </div>
             </CardContent>
           </Card>

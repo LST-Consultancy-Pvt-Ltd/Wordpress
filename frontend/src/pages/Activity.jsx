@@ -1,9 +1,8 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
-  Activity as ActivityIcon, Clock, Globe, Loader2, AlertCircle,
-  CheckCircle, XCircle, RefreshCw, Calendar, Bot, BarChart3,
-  Image, Zap, Cpu
+  Activity as ActivityIcon, Clock, Globe, Loader2,
+  CheckCircle, XCircle, RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -15,38 +14,42 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "../components/ui/table";
-import { getSites, getActivityLogs, getAllActivityLogs, getJobs } from "../lib/api";
+import { getSites, getActivityLogs, getAllActivityLogs, getJobs, listItems } from "../lib/api";
 import { toast } from "sonner";
 
 const ACTION_META = {
-  site_added:       { label: "Site Added",            color: "bg-blue-500/10 text-blue-400" },
-  site_synced:      { label: "Site Synced",           color: "bg-blue-500/10 text-blue-400" },
-  post_created:     { label: "Post Created",          color: "bg-emerald-500/10 text-emerald-400" },
-  post_deleted:     { label: "Post Deleted",          color: "bg-red-500/10 text-red-400" },
-  post_generated:   { label: "Post Generated (AI)",   color: "bg-violet-500/10 text-violet-400" },
-  page_created:     { label: "Page Created",          color: "bg-emerald-500/10 text-emerald-400" },
-  page_deleted:     { label: "Page Deleted",          color: "bg-red-500/10 text-red-400" },
+  site_added:       { label: "Site Connected",        color: "bg-blue-500/10 text-blue-400" },
+  site_updated:     { label: "Site Updated",          color: "bg-blue-500/10 text-blue-400" },
+  site_handshake:   { label: "Bridge Handshake",      color: "bg-blue-500/10 text-blue-400" },
+  site_synced:      { label: "Content Synced",        color: "bg-blue-500/10 text-blue-400" },
+  writes_enabled:   { label: "Writes Enabled",        color: "bg-orange-500/10 text-orange-400" },
+  writes_disabled:  { label: "Writes Disabled",       color: "bg-slate-500/10 text-slate-400" },
+  credential_rotated: { label: "Credential Rotated",  color: "bg-orange-500/10 text-orange-400" },
+  changeset_created:  { label: "Change Set Created",  color: "bg-violet-500/10 text-violet-400" },
+  changeset_submitted: { label: "Submitted for Approval", color: "bg-amber-500/10 text-amber-400" },
+  changeset_approved: { label: "Change Set Approved", color: "bg-emerald-500/10 text-emerald-400" },
+  changeset_rejected: { label: "Change Set Rejected", color: "bg-red-500/10 text-red-400" },
+  changeset_applied:  { label: "Change Set Applied",  color: "bg-emerald-500/10 text-emerald-400" },
+  changeset_rolled_back: { label: "Change Set Rolled Back", color: "bg-orange-500/10 text-orange-400" },
+  deployment_started: { label: "Deployment Started",  color: "bg-sky-500/10 text-sky-400" },
+  deployment_rolled_back: { label: "Deployment Rolled Back", color: "bg-orange-500/10 text-orange-400" },
+  backup_created:   { label: "Backup Created",        color: "bg-teal-500/10 text-teal-400" },
+  backup_restored:  { label: "Backup Restored",       color: "bg-orange-500/10 text-orange-400" },
+  content_generated: { label: "Content Generated (AI)", color: "bg-violet-500/10 text-violet-400" },
   seo_analyzed:     { label: "SEO Analyzed",          color: "bg-amber-500/10 text-amber-400" },
-  seo_healed:       { label: "SEO Self-Healed",       color: "bg-amber-500/10 text-amber-400" },
   seo_google_refresh: { label: "Google SEO Refresh",  color: "bg-sky-500/10 text-sky-400" },
   bulk_seo_audit:   { label: "Bulk SEO Audit",        color: "bg-amber-500/10 text-amber-400" },
-  bulk_content_refresh: { label: "Bulk Content Refresh", color: "bg-violet-500/10 text-violet-400" },
-  bulk_publish:     { label: "Bulk Publish",          color: "bg-emerald-500/10 text-emerald-400" },
-  bulk_draft:       { label: "Bulk Unpublish",        color: "bg-orange-500/10 text-orange-400" },
-  content_refreshed: { label: "Content Refreshed",   color: "bg-teal-500/10 text-teal-400" },
+  content_refreshed: { label: "Content Refresh Proposed", color: "bg-teal-500/10 text-teal-400" },
   ai_command:       { label: "AI Command",            color: "bg-violet-500/10 text-violet-400" },
   agent_turn:       { label: "AI Agent Turn",         color: "bg-violet-500/10 text-violet-400" },
-  nav_synced:       { label: "Navigation Synced",     color: "bg-blue-500/10 text-blue-400" },
   settings_updated: { label: "Settings Updated",      color: "bg-slate-500/10 text-slate-400" },
   scheduled_freshness_scan: { label: "Freshness Scan (Scheduled)", color: "bg-teal-500/10 text-teal-400" },
   scheduled_seo_check: { label: "SEO Check (Scheduled)", color: "bg-amber-500/10 text-amber-400" },
-  scheduled_publish: { label: "Scheduled Publish",   color: "bg-emerald-500/10 text-emerald-400" },
 };
 
 const JOB_TYPE_LABELS = {
   content_freshness: "Content Freshness Scan",
   seo_health: "SEO Health Check",
-  scheduled_publish: "Scheduled Publish",
 };
 
 function ActionBadge({ action }) {
@@ -63,17 +66,14 @@ export default function Activity() {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [activeTab, setActiveTab] = useState("activity");
 
-  useEffect(() => { loadSites(); }, []);
-  useEffect(() => { loadLogs(); if (activeTab === "jobs" && selectedSite !== "all") loadJobs(); }, [selectedSite, activeTab]);
-
-  const loadSites = async () => {
+  const loadSites = useCallback(async () => {
     try {
       const r = await getSites();
-      setSites(r.data);
+      setSites(listItems(r.data));
     } catch { toast.error("Failed to load sites"); }
-  };
+  }, []);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     setLoading(true);
     try {
       let r;
@@ -82,20 +82,26 @@ export default function Activity() {
       } else {
         r = await getActivityLogs(selectedSite);
       }
-      setActivityLogs(r.data || []);
+      setActivityLogs(listItems(r.data));
     } catch { toast.error("Failed to load activity logs"); }
     finally { setLoading(false); }
-  };
+  }, [selectedSite]);
 
-  const loadJobs = async () => {
+  const loadJobs = useCallback(async () => {
     if (selectedSite === "all") return;
     setLoadingJobs(true);
     try {
       const r = await getJobs(selectedSite);
-      setJobs(r.data || []);
+      setJobs(listItems(r.data));
     } catch { setJobs([]); }
     finally { setLoadingJobs(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => { loadSites(); }, [loadSites]);
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+  useEffect(() => { if (activeTab === "jobs") loadJobs(); }, [activeTab, loadJobs]);
+
+  const siteName = (id) => sites.find((s) => s.id === id)?.name || id;
 
   return (
     <div className="page-container" data-testid="activity-page">
@@ -118,13 +124,13 @@ export default function Activity() {
               {sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={loadLogs} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={loadLogs} disabled={loading} aria-label="Refresh activity">
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
           </Button>
         </div>
       </div>
 
-      <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v); if (v === "jobs" && selectedSite !== "all") loadJobs(); }}>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="mb-6">
           <TabsTrigger value="activity">
             <ActivityIcon size={14} className="mr-2" />Activity Log
@@ -166,7 +172,7 @@ export default function Activity() {
                         <TableCell className="text-sm">
                           {log.site_id ? (
                             <span className="flex items-center gap-1 text-muted-foreground">
-                              <Globe size={12} />{log.site_id}
+                              <Globe size={12} aria-hidden="true" />{siteName(log.site_id)}
                             </span>
                           ) : "All Sites"}
                         </TableCell>
@@ -195,7 +201,7 @@ export default function Activity() {
                   <CardTitle className="font-heading flex items-center gap-2">
                     <Clock size={16} className="text-primary" />Scheduled Jobs
                   </CardTitle>
-                  <Button variant="ghost" size="sm" onClick={loadJobs} disabled={loadingJobs}>
+                  <Button variant="ghost" size="sm" onClick={loadJobs} disabled={loadingJobs} aria-label="Refresh scheduled jobs">
                     <RefreshCw size={14} className={loadingJobs ? "animate-spin" : ""} />
                   </Button>
                 </div>

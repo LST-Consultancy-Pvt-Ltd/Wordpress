@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { register } from "../lib/api";
+import { register, apiErrorMessage } from "../lib/api";
+import { setSession } from "../lib/session";
 import { toast } from "sonner";
 
 export default function Register() {
@@ -22,7 +23,7 @@ export default function Register() {
     if (!form.email) errs.email = "Email is required";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = "Invalid email";
     if (!form.password) errs.password = "Password is required";
-    else if (form.password.length < 8) errs.password = "Password must be at least 8 characters";
+    else if (form.password.length < 10) errs.password = "Password must be at least 10 characters";
     if (form.password !== form.confirmPassword) errs.confirmPassword = "Passwords do not match";
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -34,12 +35,11 @@ export default function Register() {
     setLoading(true);
     try {
       const res = await register({ email: form.email, password: form.password, full_name: form.full_name });
-      localStorage.setItem("wp_token", res.data.access_token);
-      localStorage.setItem("wp_user", JSON.stringify(res.data.user));
-      toast.success("Account created! Welcome to WP Autopilot.");
+      setSession(res.data.access_token, res.data.user);
+      toast.success("Account created! Welcome to Site Autopilot.");
       navigate("/");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Registration failed");
+      toast.error(apiErrorMessage(err, "Registration failed"));
     } finally {
       setLoading(false);
     }
@@ -59,8 +59,8 @@ export default function Register() {
               <Zap size={26} className="text-primary" />
             </div>
             <div>
-              <h1 className="font-heading font-bold text-xl text-foreground">WP Autopilot</h1>
-              <p className="text-xs text-muted-foreground">AI Website Manager</p>
+              <h1 className="font-heading font-bold text-xl text-foreground">Site Autopilot</h1>
+              <p className="text-xs text-muted-foreground">Next.js automation platform</p>
             </div>
           </div>
         </div>
@@ -104,7 +104,7 @@ export default function Register() {
                   <Input
                     id="password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="Min. 8 characters"
+                    placeholder="Min. 10 characters"
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     className={`pr-10 ${errors.password ? "border-red-500" : ""}`}
@@ -116,6 +116,7 @@ export default function Register() {
                     size="sm"
                     className="absolute right-0 top-0 h-full px-3"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                   </Button>

@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Mail, Bot, Send, RefreshCw, Loader2, Users, Clock, CheckCircle } from "lucide-react";
+import { Mail, Bot, Send, RefreshCw, Loader2, Users, CheckCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -11,8 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
-import { ScrollArea } from "../components/ui/scroll-area";
-import { getSites, getNewsletterLists, generateNewsletter, sendNewsletter, getNewsletterHistory } from "../lib/api";
+import { getSites, getNewsletterLists, generateNewsletter, sendNewsletter, getNewsletterHistory, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 import { toast } from "sonner";
 
 export default function Newsletter() {
@@ -28,33 +28,36 @@ export default function Newsletter() {
   const [generatedHtml, setGeneratedHtml] = useState("");
   const [topic, setTopic] = useState("");
 
-  useEffect(() => { loadSites(); }, []);
-  useEffect(() => { if (selectedSite) { loadLists(); loadHistory(); } }, [selectedSite]);
-
-  const loadSites = async () => {
+  const loadSites = useCallback(async () => {
     try {
       const r = await getSites();
-      setSites(r.data || []);
-      if (r.data?.length) setSelectedSite(r.data[0].id);
-    } catch { }
-  };
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length) setSelectedSite(list[0].id);
+    } catch { /* ignore */ }
+  }, []);
 
-  const loadLists = async () => {
+  const loadLists = useCallback(async () => {
+    if (!selectedSite) return;
     setLoadingLists(true);
     try {
       const r = await getNewsletterLists(selectedSite);
       const arr = Array.isArray(r.data) ? r.data : (r.data?.lists || []);
       setLists(arr);
-      if (arr.length && !draft.selectedList) setDraft(p => ({ ...p, selectedList: String(arr[0].id) }));
-    } catch { } finally { setLoadingLists(false); }
-  };
+      if (arr.length) setDraft(p => (p.selectedList ? p : { ...p, selectedList: String(arr[0].id) }));
+    } catch { /* ignore */ } finally { setLoadingLists(false); }
+  }, [selectedSite]);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
+    if (!selectedSite) return;
     try {
       const r = await getNewsletterHistory(selectedSite);
-      setHistory(Array.isArray(r.data) ? r.data : []);
-    } catch { }
-  };
+      setHistory(listItems(r.data));
+    } catch { /* ignore */ }
+  }, [selectedSite]);
+
+  useEffect(() => { loadSites(); }, [loadSites]);
+  useEffect(() => { loadLists(); loadHistory(); }, [loadLists, loadHistory]);
 
   const handleGenerate = async () => {
     if (!topic) return toast.error("Enter a topic first");
@@ -65,7 +68,7 @@ export default function Newsletter() {
       setDraft(p => ({ ...p, subject: r.data.subject || p.subject, content: r.data.html || r.data.content || "" }));
       toast.success("Newsletter generated!");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Generation failed");
+      toast.error(apiErrorMessage(err, "Generation failed"));
     } finally { setGenerating(false); }
   };
 
@@ -83,7 +86,7 @@ export default function Newsletter() {
       setGeneratedHtml("");
       loadHistory();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to send newsletter");
+      toast.error(apiErrorMessage(err, "Failed to send newsletter"));
     } finally { setSending(false); }
   };
 
@@ -102,7 +105,7 @@ export default function Newsletter() {
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-[200px]" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
         <Button onClick={() => { loadLists(); loadHistory(); }} variant="outline" size="sm" disabled={!selectedSite}>
@@ -142,12 +145,12 @@ export default function Newsletter() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div>
-                    <Label className="text-xs mb-1 block">Send to list</Label>
+                    <Label htmlFor="newsletter-list" className="text-xs mb-1 block">Send to list</Label>
                     {loadingLists ? (
                       <div className="h-9 flex items-center"><Loader2 size={14} className="animate-spin text-muted-foreground" /></div>
                     ) : (
                       <Select value={draft.selectedList} onValueChange={v => setDraft(p => ({ ...p, selectedList: v }))}>
-                        <SelectTrigger><SelectValue placeholder="Select email list" /></SelectTrigger>
+                        <SelectTrigger id="newsletter-list"><SelectValue placeholder="Select email list" /></SelectTrigger>
                         <SelectContent>
                           {lists.map(l => (
                             <SelectItem key={l.id} value={String(l.id)}>
@@ -159,15 +162,15 @@ export default function Newsletter() {
                     )}
                   </div>
                   <div>
-                    <Label className="text-xs mb-1 block">Topic / Prompt</Label>
-                    <Textarea value={topic} onChange={e => setTopic(e.target.value)}
+                    <Label htmlFor="newsletter-topic" className="text-xs mb-1 block">Topic / Prompt</Label>
+                    <Textarea id="newsletter-topic" value={topic} onChange={e => setTopic(e.target.value)}
                       placeholder="e.g., Monthly product update for October, highlighting new features..."
                       className="min-h-[80px]" />
                   </div>
-                  <Button onClick={handleGenerate} disabled={generating || !topic || !selectedSite} className="w-full">
+                  <GatedButton minRole="editor" onClick={handleGenerate} disabled={generating || !topic || !selectedSite} className="w-full">
                     {generating ? <Loader2 size={14} className="animate-spin mr-2" /> : <Bot size={14} className="mr-2" />}
                     Generate Newsletter
-                  </Button>
+                  </GatedButton>
                 </CardContent>
               </Card>
 
@@ -177,15 +180,15 @@ export default function Newsletter() {
                 </CardHeader>
                 <CardContent>
                   <Input value={draft.subject} onChange={e => setDraft(p => ({ ...p, subject: e.target.value }))}
-                    placeholder="Newsletter subject..." />
+                    placeholder="Newsletter subject..." aria-label="Subject line" />
                 </CardContent>
               </Card>
 
-              <Button onClick={handleSend} disabled={sending || !draft.subject || !draft.content || !draft.selectedList}
+              <GatedButton minRole="editor" onClick={handleSend} disabled={sending || !draft.subject || !draft.content || !draft.selectedList}
                 className="w-full">
                 {sending ? <Loader2 size={14} className="animate-spin mr-2" /> : <Send size={14} className="mr-2" />}
                 Send Newsletter
-              </Button>
+              </GatedButton>
             </div>
 
             {/* right: preview */}

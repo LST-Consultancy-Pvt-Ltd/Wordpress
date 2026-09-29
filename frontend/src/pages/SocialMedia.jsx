@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Share2, Twitter, Linkedin, Facebook, Instagram, Plus, Bot, Send, Loader2, RefreshCw, Clock, CheckCircle, Unlink } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
@@ -14,11 +14,11 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "../components/ui/dialog";
-import { ScrollArea } from "../components/ui/scroll-area";
 import {
   getSites, getSocialAccounts, connectSocialAccount, disconnectSocialAccount,
-  generateSocialPost, publishSocialPost, getSocialQueue,
+  generateSocialPost, publishSocialPost, getSocialQueue, listItems, apiErrorMessage,
 } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 import { toast } from "sonner";
 
 const PLATFORM_ICONS = {
@@ -46,38 +46,41 @@ export default function SocialMedia() {
   const [activeTab, setActiveTab] = useState("accounts");
   const [generateOpen, setGenerateOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [genForm, setGenForm] = useState({ platform: "twitter", topic: "", post_id: "" });
+  const [genForm, setGenForm] = useState({ platform: "twitter", topic: "", content_id: "" });
   const [connectForm, setConnectForm] = useState({ platform: "twitter", access_token: "", page_id: "", account_name: "" });
   const [generating, setGenerating] = useState(false);
   const [generatedPost, setGeneratedPost] = useState(null);
   const [publishing, setPublishing] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
-  useEffect(() => { loadSites(); }, []);
-  useEffect(() => { if (selectedSite) { loadAccounts(); loadQueue(); } }, [selectedSite]);
-
-  const loadSites = async () => {
+  const loadSites = useCallback(async () => {
     try {
       const r = await getSites();
-      setSites(r.data || []);
-      if (r.data?.length) setSelectedSite(r.data[0].id);
-    } catch { }
-  };
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length) setSelectedSite(list[0].id);
+    } catch { /* ignore */ }
+  }, []);
 
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
+    if (!selectedSite) return;
     setLoadingAccounts(true);
     try {
       const r = await getSocialAccounts(selectedSite);
-      setAccounts(Array.isArray(r.data) ? r.data : []);
-    } catch { } finally { setLoadingAccounts(false); }
-  };
+      setAccounts(listItems(r.data));
+    } catch { /* ignore */ } finally { setLoadingAccounts(false); }
+  }, [selectedSite]);
 
-  const loadQueue = async () => {
+  const loadQueue = useCallback(async () => {
+    if (!selectedSite) return;
     try {
       const r = await getSocialQueue(selectedSite);
-      setQueue(Array.isArray(r.data) ? r.data : []);
-    } catch { }
-  };
+      setQueue(listItems(r.data));
+    } catch { /* ignore */ }
+  }, [selectedSite]);
+
+  useEffect(() => { loadSites(); }, [loadSites]);
+  useEffect(() => { loadAccounts(); loadQueue(); }, [loadAccounts, loadQueue]);
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -88,13 +91,7 @@ export default function SocialMedia() {
       setConnectForm({ platform: "twitter", access_token: "", page_id: "", account_name: "" });
       loadAccounts();
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      const msg = Array.isArray(detail)
-        ? detail.map(e => e.msg || JSON.stringify(e)).join("; ")
-        : typeof detail === "string"
-        ? detail
-        : "Failed to connect account";
-      toast.error(msg);
+      toast.error(apiErrorMessage(err, "Failed to connect account"));
     } finally { setConnecting(false); }
   };
 
@@ -104,7 +101,7 @@ export default function SocialMedia() {
       setAccounts(prev => prev.filter(a => a.platform !== platform));
       toast.success(`${platform} disconnected`);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to disconnect");
+      toast.error(apiErrorMessage(err, "Failed to disconnect"));
     }
   };
 
@@ -112,14 +109,17 @@ export default function SocialMedia() {
     setGenerating(true);
     setGeneratedPost(null);
     try {
-      const r = await generateSocialPost(selectedSite, { topic: genForm.topic, platform: genForm.platform });
+      const r = await generateSocialPost(selectedSite, {
+        topic: genForm.topic,
+        platform: genForm.platform,
+        content_id: genForm.content_id || undefined,
+      });
       const variants = r.data || {};
       const text = variants[genForm.platform] || variants.twitter || Object.values(variants)[0] || "";
       setGeneratedPost({ content: text, platform: genForm.platform, all: variants });
       toast.success("Post generated!");
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      toast.error(Array.isArray(detail) ? detail.map(e => e.msg).join("; ") : detail || "Generation failed");
+      toast.error(apiErrorMessage(err, "Generation failed"));
     } finally { setGenerating(false); }
   };
 
@@ -127,9 +127,10 @@ export default function SocialMedia() {
     if (!generatedPost) return;
     setPublishing(true);
     try {
-      const r = await publishSocialPost(selectedSite, genForm.post_id || "0", {
+      const r = await publishSocialPost(selectedSite, genForm.content_id || "0", {
         platforms: [generatedPost.platform],
-        content: generatedPost.all || { [generatedPost.platform]: generatedPost.content },
+        content: { ...(generatedPost.all || {}), [generatedPost.platform]: generatedPost.content },
+        content_id: genForm.content_id || undefined,
         scheduled_at: scheduleAt,
       });
       const data = r.data || {};
@@ -150,8 +151,7 @@ export default function SocialMedia() {
       setGeneratedPost(null);
       loadQueue();
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      toast.error(Array.isArray(detail) ? detail.map(e => e.msg).join("; ") : detail || "Publish failed");
+      toast.error(apiErrorMessage(err, "Publish failed"));
     } finally { setPublishing(false); }
   };
 
@@ -170,19 +170,19 @@ export default function SocialMedia() {
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-[200px]" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
         <Button onClick={() => { loadAccounts(); loadQueue(); }} variant="outline" size="sm" disabled={!selectedSite}>
           <RefreshCw size={14} className="mr-2" />Refresh
         </Button>
-        <Button onClick={() => setConnectOpen(true)} disabled={!selectedSite} variant="outline" size="sm"
+        <GatedButton minRole="editor" onClick={() => setConnectOpen(true)} disabled={!selectedSite} variant="outline" size="sm"
           className="border-primary/30 text-primary">
           <Plus size={14} className="mr-2" />Connect Account
-        </Button>
-        <Button onClick={() => setGenerateOpen(true)} disabled={!selectedSite} size="sm">
+        </GatedButton>
+        <GatedButton minRole="editor" onClick={() => setGenerateOpen(true)} disabled={!selectedSite} size="sm">
           <Bot size={14} className="mr-2" />Generate Post
-        </Button>
+        </GatedButton>
       </div>
 
       {/* Stats */}
@@ -226,10 +226,11 @@ export default function SocialMedia() {
                             <p className="text-xs text-muted-foreground">{a.account_name || a.username || "Connected"}</p>
                           </div>
                         </div>
-                        <Button variant="outline" size="sm" className="h-7 text-xs text-red-400 border-red-500/30"
-                          onClick={() => handleDisconnect(a.platform)}>
+                        <GatedButton minRole="editor" variant="outline" size="sm" className="h-7 text-xs text-red-400 border-red-500/30"
+                          onClick={() => handleDisconnect(a.platform)}
+                          aria-label={`Disconnect ${a.platform}`}>
                           <Unlink size={12} className="mr-1" />Disconnect
-                        </Button>
+                        </GatedButton>
                       </div>
                     </CardContent>
                   </Card>
@@ -272,6 +273,9 @@ export default function SocialMedia() {
                           {q.schedule_at && (
                             <span className="text-xs text-muted-foreground">{new Date(q.schedule_at).toLocaleString()}</span>
                           )}
+                          {q.content_id && (
+                            <span className="text-xs text-muted-foreground font-mono">content: {q.content_id}</span>
+                          )}
                         </div>
                         <p className="text-sm line-clamp-2">{previewText}</p>
                       </div>
@@ -293,30 +297,30 @@ export default function SocialMedia() {
           <DialogHeader><DialogTitle>Connect Social Account</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs mb-1 block">Platform</Label>
+              <Label htmlFor="connect-platform" className="text-xs mb-1 block">Platform</Label>
               <Select value={connectForm.platform} onValueChange={v => setConnectForm(p => ({ ...p, platform: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="connect-platform"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PLATFORMS.map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-xs mb-1 block">Account Name</Label>
-              <Input value={connectForm.account_name}
+              <Label htmlFor="connect-account-name" className="text-xs mb-1 block">Account Name</Label>
+              <Input id="connect-account-name" value={connectForm.account_name}
                 onChange={e => setConnectForm(p => ({ ...p, account_name: e.target.value }))}
                 placeholder="e.g. My Business Page" />
             </div>
             <div>
-              <Label className="text-xs mb-1 block">Access Token</Label>
-              <Input type="password" value={connectForm.access_token}
+              <Label htmlFor="connect-access-token" className="text-xs mb-1 block">Access Token</Label>
+              <Input id="connect-access-token" type="password" value={connectForm.access_token}
                 onChange={e => setConnectForm(p => ({ ...p, access_token: e.target.value }))}
                 placeholder="Bearer token or access token" />
             </div>
             {(connectForm.platform === "facebook" || connectForm.platform === "instagram") && (
               <div>
-                <Label className="text-xs mb-1 block">Page ID</Label>
-                <Input value={connectForm.page_id}
+                <Label htmlFor="connect-page-id" className="text-xs mb-1 block">Page ID</Label>
+                <Input id="connect-page-id" value={connectForm.page_id}
                   onChange={e => setConnectForm(p => ({ ...p, page_id: e.target.value }))}
                   placeholder="Facebook Page ID" />
               </div>
@@ -324,10 +328,10 @@ export default function SocialMedia() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConnectOpen(false)}>Cancel</Button>
-            <Button onClick={handleConnect} disabled={connecting || !connectForm.access_token || !connectForm.account_name}>
+            <GatedButton minRole="editor" onClick={handleConnect} disabled={connecting || !connectForm.access_token || !connectForm.account_name}>
               {connecting ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
               Connect
-            </Button>
+            </GatedButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -338,27 +342,37 @@ export default function SocialMedia() {
           <DialogHeader><DialogTitle>Generate Social Post</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label className="text-xs mb-1 block">Platform</Label>
+              <Label htmlFor="gen-platform" className="text-xs mb-1 block">Platform</Label>
               <Select value={genForm.platform} onValueChange={v => setGenForm(p => ({ ...p, platform: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="gen-platform"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {PLATFORMS.map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="text-xs mb-1 block">Topic or Post ID</Label>
-              <Input value={genForm.topic} onChange={e => setGenForm(p => ({ ...p, topic: e.target.value }))}
+              <Label htmlFor="gen-topic" className="text-xs mb-1 block">Topic</Label>
+              <Input id="gen-topic" value={genForm.topic} onChange={e => setGenForm(p => ({ ...p, topic: e.target.value }))}
                 placeholder="Write about our new product launch..." />
             </div>
-            <Button onClick={handleGenerate} disabled={generating || (!genForm.topic)} variant="outline" className="w-full">
+            <div>
+              <Label htmlFor="gen-content-id" className="text-xs mb-1 block">
+                Content item ID <span className="text-muted-foreground">(optional)</span>
+              </Label>
+              <Input id="gen-content-id" value={genForm.content_id} onChange={e => setGenForm(p => ({ ...p, content_id: e.target.value }))}
+                placeholder="e.g. blog/launch-announcement" aria-describedby="gen-content-id-help" />
+              <p id="gen-content-id-help" className="text-xs text-muted-foreground mt-1">
+                Link the post to a content item on the site so it can be tracked with that item.
+              </p>
+            </div>
+            <GatedButton minRole="editor" onClick={handleGenerate} disabled={generating || (!genForm.topic)} variant="outline" className="w-full">
               {generating ? <Loader2 size={14} className="animate-spin mr-2" /> : <Bot size={14} className="mr-2" />}
               Generate
-            </Button>
+            </GatedButton>
             {generatedPost && (
               <div>
-                <Label className="text-xs mb-1 block">Generated Post</Label>
-                <Textarea value={generatedPost.content}
+                <Label htmlFor="gen-output" className="text-xs mb-1 block">Generated Post</Label>
+                <Textarea id="gen-output" value={generatedPost.content}
                   onChange={e => setGeneratedPost(p => ({ ...p, content: e.target.value }))}
                   className="min-h-[120px]" />
               </div>
@@ -366,13 +380,13 @@ export default function SocialMedia() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setGenerateOpen(false)}>Cancel</Button>
-            <Button variant="outline" onClick={() => handlePublish("scheduled")} disabled={!generatedPost || publishing}>
+            <GatedButton minRole="editor" variant="outline" onClick={() => handlePublish("scheduled")} disabled={!generatedPost || publishing}>
               <Clock size={14} className="mr-2" />Schedule
-            </Button>
-            <Button onClick={() => handlePublish(null)} disabled={!generatedPost || publishing}>
+            </GatedButton>
+            <GatedButton minRole="editor" onClick={() => handlePublish(null)} disabled={!generatedPost || publishing}>
               {publishing ? <Loader2 size={14} className="animate-spin mr-2" /> : <Send size={14} className="mr-2" />}
               Publish Now
-            </Button>
+            </GatedButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

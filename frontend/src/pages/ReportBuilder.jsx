@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
-  LayoutGrid, Plus, X, GripVertical, BarChart3, Gauge, Zap,
+  LayoutGrid, X, GripVertical, BarChart3, Gauge, Zap,
   FileText, Activity, MapPin, TrendingUp, Loader2, Save, Download
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -9,7 +9,7 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
-import { getSites } from "../lib/api";
+import { getSites, listItems } from "../lib/api";
 
 const WIDGET_CATALOG = [
   { id: "keyword_rankings", label: "Keyword Rankings Table", icon: BarChart3, color: "text-blue-500", bg: "bg-blue-500/10" },
@@ -43,15 +43,15 @@ export default function ReportBuilder() {
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState("");
   const [canvas, setCanvas] = useState([]);
-  const [layouts, setLayouts] = useState([]);
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [draggingIdx, setDraggingIdx] = useState(null);
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
@@ -105,7 +105,7 @@ export default function ReportBuilder() {
 
   const handleExport = () => {
     if (canvas.length === 0) { toast.error("Add widgets to the canvas first"); return; }
-    const content = `WP Autopilot — Custom Report\nSite: ${sites.find(s => s.id === selectedSite)?.name || selectedSite}\nGenerated: ${new Date().toLocaleString()}\n\nWidgets:\n${canvas.map(w => {
+    const content = `Site Autopilot — Next.js automation platform\nCustom Report\nSite: ${sites.find(s => s.id === selectedSite)?.name || selectedSite}\nGenerated: ${new Date().toLocaleString()}\n\nWidgets:\n${canvas.map(w => {
       const def = WIDGET_CATALOG.find(d => d.id === w.id);
       return `• ${def?.label || w.id}`;
     }).join("\n")}`;
