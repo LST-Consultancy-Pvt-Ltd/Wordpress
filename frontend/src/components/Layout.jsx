@@ -5,8 +5,6 @@ import {
   LayoutDashboard,
   Globe,
   Sparkles,
-  FileText,
-  Newspaper,
   Search,
   Menu as MenuIcon,
   RefreshCw,
@@ -14,8 +12,6 @@ import {
   Activity,
   Link2,
   Copy,
-  CalendarDays,
-  X,
   ChevronRight,
   Zap,
   LogOut,
@@ -25,53 +21,34 @@ import {
   Network,
   BarChart3,
   MapPin,
-  PenTool,
   LayoutGrid,
   Bug,
   Bot,
-  Image,
-  MessageSquare,
-  Users,
-  Puzzle,
-  ShoppingCart,
-  FileInput,
-  Archive,
-  ArrowRightLeft,
-  FlaskConical,
   Share2,
-
   HeartPulse,
   Bell,
-  Command,
-
   Hash,
   PenLine,
-
-  Code2,
   Map,
-  GitMerge,
   Smartphone,
   ShieldCheck,
   LinkIcon,
   ExternalLink,
-  TrendingUp,
-
   Bookmark,
   Compass,
-  Clock,
-  AlertTriangle,
-  Store,
   Mail,
   Layers,
   BarChart2,
   FileSpreadsheet,
   Building2,
   ClipboardCheck,
+  GitPullRequest,
+  ScrollText,
+  PlusCircle,
 } from "lucide-react";
 import { Button } from "./ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "./ui/sheet";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "./ui/sheet";
 import { ScrollArea } from "./ui/scroll-area";
-import { Badge } from "./ui/badge";
 import {
   CommandDialog,
   CommandEmpty,
@@ -80,22 +57,30 @@ import {
   CommandItem,
   CommandList,
 } from "./ui/command";
-import { getNotifications, markAllNotificationsRead } from "../lib/api";
-import { useApplyMode } from "../hooks/useApplyMode";
+import { getNotifications, getSites } from "../lib/api";
+import { clearSession } from "../lib/session";
+import { useRole } from "../hooks/useRole";
+import { ROLE_LABELS } from "../lib/roles";
 
-const navGroups = [
-  // Module 11 — Connected Sites Dashboard
+export const navGroups = [
   {
     label: null,
     items: [
       { path: "/", icon: LayoutDashboard, label: "Dashboard" },
-      { path: "/sites", icon: Globe, label: "Sites" },
       { path: "/portfolio", icon: LayoutGrid, label: "Portfolio" },
       { path: "/ai-command", icon: Sparkles, label: "AI Command" },
       { path: "/autopilot", icon: Bot, label: "Autopilot" },
     ],
   },
-  // Module 12 — AI SEO Autopilot Pipeline & AI Tools
+  {
+    label: "Sites & Delivery",
+    items: [
+      { path: "/sites", icon: Globe, label: "Sites" },
+      { path: "/sites/new", icon: PlusCircle, label: "Connect a Site", minRole: "admin" },
+      { path: "/changesets", icon: GitPullRequest, label: "Change Sets" },
+      { path: "/audit", icon: ScrollText, label: "Audit" },
+    ],
+  },
   {
     label: "AI Tools",
     items: [
@@ -106,11 +91,10 @@ const navGroups = [
       { path: "/programmatic-seo", icon: Layers, label: "Programmatic SEO" },
     ],
   },
-  // Module 1 — Keyword Module + Module 2 — SEO Metrics + Module 6 — Extra SEO
   {
     label: "SEO & Analytics",
     items: [
-      { path: "/seo", icon: Search, label: "SEO" },
+      { path: "/seo", icon: Search, label: "SEO Metrics" },
       { path: "/onpage-seo", icon: Gauge, label: "On-Page SEO" },
       { path: "/keyword-tracking", icon: Target, label: "Keyword Tracking" },
       { path: "/keyword-clusters", icon: Hash, label: "Keyword Clusters" },
@@ -118,6 +102,7 @@ const navGroups = [
       { path: "/link-builder", icon: Network, label: "Link Builder" },
       { path: "/broken-links", icon: Link2, label: "Broken Links" },
       { path: "/duplicate-content", icon: Copy, label: "Duplicate Content" },
+      { path: "/content-refresh", icon: RefreshCw, label: "Content Refresh" },
       { path: "/crawl-report", icon: Bug, label: "Crawl Report" },
       { path: "/sitemap-robots", icon: Map, label: "Sitemap & Robots" },
       { path: "/mobile-checker", icon: Smartphone, label: "Mobile Checker" },
@@ -126,7 +111,6 @@ const navGroups = [
       { path: "/report-builder", icon: LayoutGrid, label: "Report Builder" },
     ],
   },
-  // Module 9 — Off-Page SEO & Backlinks
   {
     label: "Off-Page SEO",
     items: [
@@ -137,7 +121,6 @@ const navGroups = [
       { path: "/outreach-approvals", icon: ClipboardCheck, label: "Outreach Approvals" },
     ],
   },
-  // Module 5 — Local SEO
   {
     label: "Local SEO",
     items: [
@@ -146,7 +129,6 @@ const navGroups = [
       { path: "/company-profile", icon: Building2, label: "Company Profile" },
     ],
   },
-  // Module 3 — Uptime & Module 8 — Site Health
   {
     label: "Health & Uptime",
     items: [
@@ -154,14 +136,6 @@ const navGroups = [
       { path: "/activity", icon: Activity, label: "Activity" },
     ],
   },
-  // Module 5 — Content
-  {
-    label: "Content",
-    items: [
-      { path: "/content-refresh", icon: RefreshCw, label: "Content Refresh" },
-    ],
-  },
-  // Module 7 — Social Media & Marketing
   {
     label: "Marketing",
     items: [
@@ -169,83 +143,75 @@ const navGroups = [
       { path: "/newsletter", icon: Mail, label: "Newsletter" },
     ],
   },
-  // Paid Ads
   {
     label: "Paid Ads",
-    items: [
-      { path: "/ads-manager", icon: BarChart2, label: "Ads Manager" },
-    ],
+    items: [{ path: "/ads-manager", icon: BarChart2, label: "Ads Manager" }],
   },
-  // Automation Hub
   {
     label: "Automation Hub",
-    items: [
-      { path: "/media-plan", icon: FileSpreadsheet, label: "Media Plan Automation" },
-    ],
+    items: [{ path: "/media-plan", icon: FileSpreadsheet, label: "Media Plan Automation" }],
   },
   {
     label: null,
-    items: [
-      { path: "/settings", icon: Settings, label: "Settings" },
-    ],
+    items: [{ path: "/settings", icon: Settings, label: "Settings" }],
   },
 ];
 
-// Flat list for CMD+K search
-const allNavItems = navGroups.flatMap(g => g.items);
+const testIdFor = (label) => `nav-${label.toLowerCase().replace(/&/g, "and").replace(/\s+/g, "-")}`;
+
+function isActivePath(pathname, path) {
+  if (path === "/") return pathname === "/";
+  if (path === "/sites") return pathname === "/sites" || (pathname.startsWith("/sites/") && pathname !== "/sites/new");
+  return pathname === path || pathname.startsWith(`${path}/`);
+}
 
 const NavItem = ({ item, isActive, onClick }) => (
   <NavLink
     to={item.path}
+    end
     onClick={onClick}
     className={`flex items-center gap-3 px-4 py-2.5 rounded-md text-sm font-medium transition-all duration-200 ${
-      isActive
-        ? "bg-primary/10 text-primary ai-glow"
-        : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      isActive ? "bg-primary/10 text-primary ai-glow" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
     }`}
-    data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
+    aria-current={isActive ? "page" : undefined}
+    data-testid={testIdFor(item.label)}
   >
-    <item.icon size={18} strokeWidth={1.5} />
+    <item.icon size={18} strokeWidth={1.5} aria-hidden="true" />
     <span>{item.label}</span>
-    {isActive && (
-      <ChevronRight size={14} className="ml-auto text-primary" />
-    )}
+    {isActive && <ChevronRight size={14} className="ml-auto text-primary" aria-hidden="true" />}
   </NavLink>
 );
 
 const Sidebar = ({ className = "", onNavClick, notifications = [], onOpenSearch }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const user = (() => { try { return JSON.parse(localStorage.getItem("wp_user") || "null"); } catch { return null; } })();
-  const unread = notifications.filter(n => !n.read).length;
-  const { applyMode, setApplyMode } = useApplyMode();
+  const { user, role, can } = useRole();
+  const unread = notifications.filter((n) => !n.read).length;
 
   const handleLogout = () => {
-    localStorage.removeItem("wp_token");
-    localStorage.removeItem("wp_user");
+    clearSession();
     navigate("/login");
   };
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
-      {/* Logo + top actions */}
       <div className="p-6 border-b border-border/30">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center ai-pulse">
-            <Zap size={22} className="text-primary" />
+            <Zap size={22} className="text-primary" aria-hidden="true" />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="font-heading font-bold text-lg text-foreground">WP Autopilot</h1>
-            <p className="text-xs text-muted-foreground">AI Website Manager</p>
+            <p className="font-heading font-bold text-lg text-foreground" data-testid="brand-name">Site Autopilot</p>
+            <p className="text-xs text-muted-foreground">Next.js automation platform</p>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="relative h-8 w-8" onClick={onOpenSearch} title="Search (⌘K)">
-              <Search size={15} className="text-muted-foreground" />
+            <Button variant="ghost" size="icon" className="relative h-8 w-8" onClick={onOpenSearch} aria-label="Search (Cmd+K)">
+              <Search size={15} className="text-muted-foreground" aria-hidden="true" />
             </Button>
-            <Button variant="ghost" size="icon" className="relative h-8 w-8" title="Notifications">
-              <Bell size={15} className="text-muted-foreground" />
+            <Button variant="ghost" size="icon" className="relative h-8 w-8" aria-label={`Notifications${unread ? ` (${unread} unread)` : ""}`}>
+              <Bell size={15} className="text-muted-foreground" aria-hidden="true" />
               {unread > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-primary text-[9px] flex items-center justify-center text-primary-foreground font-bold">
+                <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-primary text-[9px] flex items-center justify-center text-primary-foreground font-bold" aria-hidden="true">
                   {unread > 9 ? "9+" : unread}
                 </span>
               )}
@@ -254,85 +220,42 @@ const Sidebar = ({ className = "", onNavClick, notifications = [], onOpenSearch 
         </div>
       </div>
 
-      {/* Navigation */}
       <ScrollArea className="flex-1 px-3 py-4">
-        <nav className="space-y-0.5">
-          {navGroups.map((group, gi) => (
-            <div key={gi} className={gi > 0 ? "mt-4" : ""}>
-              {group.label && (
-                <p className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">
-                  {group.label}
-                </p>
-              )}
-              {group.items.map(item => (
-                <NavItem
-                  key={item.path}
-                  item={item}
-                  isActive={location.pathname === item.path}
-                  onClick={onNavClick}
-                />
-              ))}
-            </div>
-          ))}
+        <nav className="space-y-0.5" aria-label="Main">
+          {navGroups.map((group, gi) => {
+            const items = group.items.filter((it) => can(it.minRole));
+            if (!items.length) return null;
+            return (
+              <div key={gi} className={gi > 0 ? "mt-4" : ""}>
+                {group.label && (
+                  <p className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 mb-1">{group.label}</p>
+                )}
+                {items.map((item) => (
+                  <NavItem key={item.path} item={item} isActive={isActivePath(location.pathname, item.path)} onClick={onNavClick} />
+                ))}
+              </div>
+            );
+          })}
         </nav>
       </ScrollArea>
 
-      {/* Footer */}
       <div className="p-4 border-t border-border/30 space-y-3">
-        {/* Apply Mode Toggle */}
-        <div className="bg-muted/40 rounded-lg p-3 border border-border/40">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-medium text-foreground">Apply Mode</span>
-            {applyMode === "manual" && (
-              <span className="text-[10px] font-semibold bg-yellow-500/15 text-yellow-600 border border-yellow-500/30 rounded px-1.5 py-0.5">
-                Manual
-              </span>
-            )}
-          </div>
-          <div className="flex gap-1">
-            <button
-              onClick={() => setApplyMode("automatic")}
-              className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
-                applyMode === "automatic"
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-              }`}
-            >
-              Automatic
-            </button>
-            <button
-              onClick={() => setApplyMode("manual")}
-              className={`flex-1 text-xs py-1.5 rounded-md font-medium transition-all ${
-                applyMode === "manual"
-                  ? "bg-yellow-500 text-white shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-              }`}
-            >
-              Manual
-            </button>
-          </div>
-        </div>
-
-        <div className="bg-primary/5 rounded-lg p-3 border border-primary/20">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles size={14} className="text-primary" />
-            <span className="text-xs font-medium text-foreground">AI Status</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-            <span className="text-xs text-muted-foreground">Ready for commands</span>
-          </div>
+        <div className="bg-primary/5 rounded-lg p-3 border border-primary/20 text-xs text-muted-foreground">
+          Changes to sites are proposed as change sets and applied only after approval.
         </div>
         {user && (
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <User size={12} className="text-primary" />
+                <User size={12} className="text-primary" aria-hidden="true" />
               </div>
-              <span className="text-xs text-muted-foreground truncate">{user.email || user.name || "User"}</span>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">{user.email || user.name || "User"}</p>
+                <p className="text-[10px] text-muted-foreground/70" data-testid="current-role">{ROLE_LABELS[role] || role}</p>
+              </div>
             </div>
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500" onClick={handleLogout} title="Logout">
-              <LogOut size={13} />
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500" onClick={handleLogout} aria-label="Log out">
+              <LogOut size={13} aria-hidden="true" />
             </Button>
           </div>
         )}
@@ -346,76 +269,81 @@ export default function Layout() {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
+  const location = useLocation();
+  const { can } = useRole();
 
-  // Load notifications for the first site
   useEffect(() => {
-    const loadNotifs = async () => {
+    let cancelled = false;
+    (async () => {
       try {
-        const { getSites } = await import("../lib/api");
         const r = await getSites();
-        const sites = r.data || [];
+        const sites = Array.isArray(r.data) ? r.data : r.data?.items || [];
         if (sites.length) {
-          const { getNotifications } = await import("../lib/api");
           const nr = await getNotifications(sites[0].id);
-          setNotifications(Array.isArray(nr.data) ? nr.data : []);
+          if (!cancelled) setNotifications(Array.isArray(nr.data) ? nr.data : []);
         }
-      } catch { }
+      } catch {
+        /* notifications are optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
-    loadNotifs();
   }, []);
 
-  // CMD+K keyboard shortcut
   useEffect(() => {
     const handler = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
-        setCmdOpen(prev => !prev);
+        setCmdOpen((prev) => !prev);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleNavFromCmd = useCallback((path) => {
-    navigate(path);
-    setCmdOpen(false);
-  }, [navigate]);
+  const handleNavFromCmd = useCallback(
+    (path) => {
+      navigate(path);
+      setCmdOpen(false);
+    },
+    [navigate]
+  );
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Desktop Sidebar */}
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-64 border-r border-border/30 bg-card/50 backdrop-blur-xl z-50">
         <Sidebar notifications={notifications} onOpenSearch={() => setCmdOpen(true)} />
       </aside>
 
-      {/* Mobile Header */}
       <header className="md:hidden fixed top-0 left-0 right-0 h-16 border-b border-border/30 bg-card/80 backdrop-blur-xl z-50 flex items-center px-4">
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" data-testid="mobile-menu-btn">
-              <MenuIcon size={20} />
+            <Button variant="ghost" size="icon" data-testid="mobile-menu-btn" aria-label="Open navigation">
+              <MenuIcon size={20} aria-hidden="true" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-64 p-0 bg-card border-r border-border/30">
-            <Sidebar onNavClick={() => setMobileOpen(false)} notifications={notifications} onOpenSearch={() => { setMobileOpen(false); setCmdOpen(true); }} />
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <Sidebar
+              onNavClick={() => setMobileOpen(false)}
+              notifications={notifications}
+              onOpenSearch={() => {
+                setMobileOpen(false);
+                setCmdOpen(true);
+              }}
+            />
           </SheetContent>
         </Sheet>
-        
         <div className="flex items-center gap-2 ml-3 flex-1">
-          <Zap size={20} className="text-primary" />
-          <span className="font-heading font-bold">WP Autopilot</span>
-          {localStorage.getItem("apply_mode") === "manual" && (
-            <span className="text-[10px] font-semibold bg-yellow-500/15 text-yellow-600 border border-yellow-500/30 rounded px-1.5 py-0.5 ml-1">
-              Manual Mode
-            </span>
-          )}
+          <Zap size={20} className="text-primary" aria-hidden="true" />
+          <span className="font-heading font-bold">Site Autopilot</span>
         </div>
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCmdOpen(true)}>
-          <Search size={16} />
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setCmdOpen(true)} aria-label="Search">
+          <Search size={16} aria-hidden="true" />
         </Button>
       </header>
 
-      {/* Main Content */}
       <main className="md:ml-64 min-h-screen">
         <div className="pt-16 md:pt-0">
           <AnimatePresence mode="wait">
@@ -432,20 +360,20 @@ export default function Layout() {
         </div>
       </main>
 
-      {/* CMD+K Global Search */}
       <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen}>
         <CommandInput placeholder="Search pages, features..." />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           {navGroups.map((group, gi) => (
             <CommandGroup key={gi} heading={group.label || "General"}>
-              {group.items.map(item => (
-                <CommandItem key={item.path} onSelect={() => handleNavFromCmd(item.path)}
-                  className="flex items-center gap-2 cursor-pointer">
-                  <item.icon size={14} className="text-muted-foreground" />
-                  {item.label}
-                </CommandItem>
-              ))}
+              {group.items
+                .filter((it) => can(it.minRole))
+                .map((item) => (
+                  <CommandItem key={item.path} onSelect={() => handleNavFromCmd(item.path)} className="flex items-center gap-2 cursor-pointer">
+                    <item.icon size={14} className="text-muted-foreground" aria-hidden="true" />
+                    {item.label}
+                  </CommandItem>
+                ))}
             </CommandGroup>
           ))}
         </CommandList>

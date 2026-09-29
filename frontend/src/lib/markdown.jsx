@@ -74,9 +74,10 @@ export function renderMarkdown(src) {
         i += 1;
       }
       const Tag = ordered ? "ol" : "ul";
+      const lk = key++;
       blocks.push(
-        <Tag key={key++} className={`${ordered ? "list-decimal" : "list-disc"} ml-6 my-2 space-y-1`}>
-          {items.map((it, j) => <li key={j}>{inline(it, `l${key}-${j}`)}</li>)}
+        <Tag key={lk} className={`${ordered ? "list-decimal" : "list-disc"} ml-6 my-2 space-y-1`}>
+          {items.map((it, j) => <li key={j}>{inline(it, `l${lk}-${j}`)}</li>)}
         </Tag>
       );
       continue;
@@ -93,12 +94,13 @@ export function renderMarkdown(src) {
     }
     const buf = [];
     while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|>|\s*[-*+]\s|\s*\d+\.\s)/.test(lines[i])) buf.push(lines[i++]);
+    const pk = key++;
     blocks.push(
-      <p key={key++} className="my-2 leading-relaxed">
+      <p key={pk} className="my-2 leading-relaxed">
         {buf.map((b, j) => (
           <Fragment key={j}>
             {j > 0 && " "}
-            {inline(b, `p${key}-${j}`)}
+            {inline(b, `p${pk}-${j}`)}
           </Fragment>
         ))}
       </p>

@@ -1,10 +1,12 @@
 import { Fragment, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Loader2, Save, Undo2, ExternalLink, ChevronDown, Search, Target, Image as ImageIcon, RefreshCw,
-  Sparkles, FileText, Link as LinkIcon, ArrowRight, Copy,
+  FileText, Link as LinkIcon, ArrowRight, Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Button } from "../ui/button";
+import GatedButton from "../sa/GatedButton";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { Badge } from "../ui/badge";
@@ -12,22 +14,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { scoreChip, sevChip } from "./shared";
 import { cn } from "../../lib/utils";
 import { toast } from "sonner";
-import {
-  editorAIAssist, nextjsGetPageContent, nextjsGetPageImages,
-  nextjsSetPageContent, nextjsSetImageAlt, nextjsGenerateImageAlt, movePage,
-} from "../../lib/api";
+import { movePage, apiErrorMessage } from "../../lib/api";
+import { notifyChangeSetCreated } from "../../lib/changesets";
 
 const INTENTS = ["", "informational", "commercial", "transactional", "navigational"];
 
-// Same five actions as the WordPress content editor — kept here so a Next.js
-// page's body copy gets the same rewrite options, not a reduced set.
-const AI_ACTIONS = [
-  { action: "improve_writing", label: "Improve" },
-  { action: "seo_friendly", label: "SEO-Friendly" },
-  { action: "add_internal_links", label: "Internal Links" },
-  { action: "summarize", label: "Summarize" },
-  { action: "expand", label: "Expand" },
-];
 
 /** How close a value is to its target band, as a bar. Character counts are the
  *  one place in SEO where a number really is the whole story, so showing it as
@@ -54,26 +45,15 @@ function LengthMeter({ length, min, max, overhead = 0 }) {
 
 export default function PagesEditor({
   pagesData, onSaveMeta, onClearMeta, onSaveKeyword, onClearKeyword, onReload, loading,
-  siteId, platform, siteUrl,
+  siteId, siteBaseUrl, writeBlocked = null,
 }) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState({});
   const [query, setQuery] = useState("");
   const [drafts, setDrafts] = useState({});      // path -> {title, description, ogImage}
   const [kwDrafts, setKwDrafts] = useState({});  // path -> {keyword, secondary, intent}
   const [busy, setBusy] = useState("");
   const [errors, setErrors] = useState({});
-
-  // Next.js body-copy blocks + image alt text, keyed by page path — lazily
-  // fetched the first time a row expands, same pattern as the parent's
-  // per-category cache.
-  const [contentCache, setContentCache] = useState({});   // path -> { blocks, loading }
-  const [blockDrafts, setBlockDrafts] = useState({});      // path -> { key: value }
-  const [savingBlock, setSavingBlock] = useState(null);    // "path:key"
-  const [blockAiBusy, setBlockAiBusy] = useState(null);    // "path:key:action"
-  const [imagesCache, setImagesCache] = useState({});      // path -> { images, loading }
-  const [imageDrafts, setImageDrafts] = useState({});      // path -> { key: alt }
-  const [savingImage, setSavingImage] = useState(null);    // "path:key"
-  const [generatingImage, setGeneratingImage] = useState(null); // "path:key"
 
   // Moving a page's stored SEO data to a new route path. The route itself is
   // a folder name compiled into the Next.js build, so this can only carry the
@@ -83,110 +63,14 @@ export default function PagesEditor({
   const [moving, setMoving] = useState("");
   const [moveResults, setMoveResults] = useState({}); // path -> API response
 
-  const isNextjs = platform === "nextjs";
-
-  const resolveImageUrl = (src) => {
-    if (!src) return "";
-    if (/^https?:\/\//i.test(src)) return src;
-    const base = (siteUrl || "").replace(/\/+$/, "");
-    return `${base}${src.startsWith("/") ? "" : "/"}${src}`;
-  };
-
-  const toggleExpand = async (p) => {
-    const willExpand = !expanded[p.path];
-    setExpanded((e) => ({ ...e, [p.path]: willExpand }));
-    if (!willExpand || !isNextjs || contentCache[p.path]) return;
-    setContentCache((c) => ({ ...c, [p.path]: { blocks: {}, loading: true } }));
-    setImagesCache((c) => ({ ...c, [p.path]: { images: {}, loading: true } }));
-
-    // Fetched independently — a bridge that doesn't implement one of these
-    // (yet) shouldn't hide a real error behind the other's result, and the
-    // error message itself (surfaced from the backend, which already
-    // distinguishes "bridge not deployed" from "bridge doesn't implement
-    // this endpoint") is the actionable diagnostic, not a generic blank.
-    try {
-      const cRes = await nextjsGetPageContent(siteId, p.path);
-      setContentCache((c) => ({ ...c, [p.path]: { blocks: cRes.data.blocks || {}, loading: false } }));
-      setBlockDrafts((d) => ({ ...d, [p.path]: cRes.data.blocks || {} }));
-    } catch (e) {
-      setContentCache((c) => ({
-        ...c, [p.path]: { blocks: {}, loading: false, error: e.response?.data?.detail || "Could not load page content" },
-      }));
-    }
-
-    try {
-      const iRes = await nextjsGetPageImages(siteId, p.path);
-      setImagesCache((c) => ({ ...c, [p.path]: { images: iRes.data.images || {}, loading: false } }));
-      setImageDrafts((d) => ({
-        ...d,
-        [p.path]: Object.fromEntries(Object.entries(iRes.data.images || {}).map(([k, v]) => [k, v?.alt || ""])),
-      }));
-    } catch (e) {
-      setImagesCache((c) => ({
-        ...c, [p.path]: { images: {}, loading: false, error: e.response?.data?.detail || "Could not load images" },
-      }));
-    }
-  };
-
-  const saveBlock = async (path, key) => {
-    setSavingBlock(`${path}:${key}`);
-    try {
-      await nextjsSetPageContent(siteId, path, key, (blockDrafts[path] || {})[key] ?? "");
-      toast.success(`Saved "${key}" — live now`);
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Save failed");
-    } finally { setSavingBlock(null); }
-  };
-
-  const aiAssistBlock = async (path, key, action) => {
-    const text = (blockDrafts[path] || {})[key] || "";
-    if (!text.trim()) { toast.error("Nothing to rewrite yet"); return; }
-    const busyKey = `${path}:${key}:${action}`;
-    setBlockAiBusy(busyKey);
-    try {
-      const r = await editorAIAssist({ text, action, site_id: siteId });
-      setBlockDrafts((d) => ({ ...d, [path]: { ...d[path], [key]: r.data.result } }));
-      toast.success("AI edit applied — review and Save");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "AI assist failed");
-    } finally { setBlockAiBusy(null); }
-  };
-
-  const saveImageAlt = async (path, key) => {
-    setSavingImage(`${path}:${key}`);
-    try {
-      await nextjsSetImageAlt(siteId, path, key, (imageDrafts[path] || {})[key] ?? "");
-      toast.success(`Saved alt text for "${key}"`);
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Save failed");
-    } finally { setSavingImage(null); }
-  };
-
-  const generateImageAlt = async (path, key, src) => {
-    setGeneratingImage(`${path}:${key}`);
-    try {
-      const r = await nextjsGenerateImageAlt(siteId, path, key, src);
-      setImageDrafts((d) => ({ ...d, [path]: { ...d[path], [key]: r.data.image?.alt ?? (d[path] || {})[key] } }));
-      toast.success("AI alt text generated — review and Save");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Generation failed");
-    } finally { setGeneratingImage(null); }
-  };
-
   const pages = pagesData?.pages || [];
-  const caps = pagesData?.meta_capabilities || {};
-  const canEdit = pagesData?.meta_editing_supported;
-  const supports = (field) => !caps.supported_fields || caps.supported_fields.includes(field);
+  const canEdit = pagesData?.meta_editing_supported !== false;
+  const supports = () => true;
 
   const overrideFor = (p) => p.override || null;
 
-  // The word "override" is only accurate for a bridge that layers a store on
-  // top of the page's own generateMetadata(). A slug-keyed bridge holds the
-  // page's SEO fields outright, so labelling those as overrides implies a
-  // code default that is being shadowed when there isn't one.
-  const isOverrideStore = caps.dialect !== "pages";
-  const storedLabel = isOverrideStore ? "override active" : "stored in bridge";
-  const resetLabel = isOverrideStore ? "Reset to page default" : "Clear stored values";
+  const storedLabel = "override stored";
+  const resetLabel = "Propose clearing override";
 
   /** What the page currently renders (or has stored), which is both what the
    *  inputs start from and the baseline a save is diffed against. */
@@ -243,7 +127,7 @@ export default function PagesEditor({
     } catch (e) {
       // Inline as well as a toast: a save that looks fine but silently failed
       // is the worst outcome, and a toast is easy to miss.
-      setErrors((er) => ({ ...er, [p.path]: e.response?.data?.detail || "Could not save" }));
+      setErrors((er) => ({ ...er, [p.path]: apiErrorMessage(e, "Could not save") }));
     } finally { setBusy(""); }
   };
 
@@ -254,9 +138,10 @@ export default function PagesEditor({
     try {
       const r = await movePage(siteId, p.path, to);
       setMoveResults((m) => ({ ...m, [p.path]: r.data }));
-      toast.success(`Data moved to ${r.data.to_path} — deploy the code change to make the URL live`);
+      if (r.data?.changeset) notifyChangeSetCreated(r.data.changeset, navigate, { title: `Move to ${r.data.to_path}: change set created` });
+      else toast.success(`Nothing stored to move — make the code change to serve ${r.data?.to_path || to}`);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Move failed");
+      toast.error(apiErrorMessage(e, "Move failed"));
     } finally { setMoving(""); }
   };
 
@@ -298,14 +183,6 @@ export default function PagesEditor({
               {pagesData.meta_editing_note}
             </p>
           )}
-          {canEdit && caps.unsupported_fields?.length > 0 && (
-            <p className="text-[11px] text-muted-foreground border-l-2 border-muted pl-2 mt-2">
-              This site's bridge stores <span className="font-mono">
-                {caps.supported_fields.join(", ")}</span>. <span className="font-mono">
-                {caps.unsupported_fields.join(", ")}</span> live in the page's own code — the
-              Fix code tab generates it.
-            </p>
-          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <div className="relative">
@@ -338,7 +215,9 @@ export default function PagesEditor({
                 {filtered.map((p) => (
                   <Fragment key={p.path + p.url}>
                     <TableRow className="cursor-pointer"
-                              onClick={() => toggleExpand(p)}>
+                              onClick={() => setExpanded((e) => ({ ...e, [p.path]: !e[p.path] }))}
+                              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpanded((x) => ({ ...x, [p.path]: !x[p.path] })); } }}
+                              tabIndex={0} aria-expanded={!!expanded[p.path]}>
                       <TableCell className="max-w-0">
                         <div className="flex items-center gap-1.5">
                           <ChevronDown size={11}
@@ -346,7 +225,7 @@ export default function PagesEditor({
                           <span className="truncate text-xs">{p.url}</span>
                           {overrideFor(p) && (
                             <Badge className="text-[9px] bg-primary/10 text-primary shrink-0">
-                              {isOverrideStore ? "override" : "in bridge"}
+                              override
                             </Badge>
                           )}
                         </div>
@@ -443,13 +322,13 @@ export default function PagesEditor({
                                   </select>
                                 </div>
                                 <div className="flex gap-2">
-                                  <Button size="sm" className="h-7 text-xs"
+                                  <GatedButton minRole="editor" size="sm" className="h-7 text-xs"
                                           disabled={busy === p.path + "-kw" || !kwDraftFor(p).keyword.trim()}
                                           onClick={() => handleSaveKeyword(p)}>
                                     {busy === p.path + "-kw"
                                       ? <Loader2 size={11} className="mr-1 animate-spin" />
                                       : <Target size={11} className="mr-1" />}Save keyword
-                                  </Button>
+                                  </GatedButton>
                                   {p.focus_keyword && (
                                     <Button size="sm" variant="outline" className="h-7 text-xs"
                                             onClick={() => onClearKeyword(p.path)}>
@@ -505,7 +384,7 @@ export default function PagesEditor({
                                           Canonical URL
                                         </span>
                                       </div>
-                                      <Input className="h-7 text-xs" placeholder={`${siteUrl || ""}${p.path}`}
+                                      <Input className="h-7 text-xs" placeholder={`${siteBaseUrl || ""}${p.path}`}
                                         value={draftFor(p).canonical}
                                         onChange={(e) => setDrafts((d) => ({
                                           ...d, [p.path]: { ...draftFor(p), canonical: e.target.value } }))} />
@@ -526,209 +405,96 @@ export default function PagesEditor({
                                     </div>
                                   )}
                                   <div className="flex gap-2">
-                                    <Button size="sm" className="h-7 text-xs"
+                                    <GatedButton minRole="editor" blocked={writeBlocked} size="sm" className="h-7 text-xs"
                                             onClick={() => handleSave(p)} disabled={busy === p.path}>
                                       {busy === p.path
                                         ? <Loader2 size={11} className="mr-1 animate-spin" />
-                                        : <Save size={11} className="mr-1" />}Save
-                                    </Button>
+                                        : <Save size={11} className="mr-1" />}Create change set
+                                    </GatedButton>
                                     {overrideFor(p) && (
-                                      <Button size="sm" variant="outline" className="h-7 text-xs"
+                                      <GatedButton minRole="editor" blocked={writeBlocked} size="sm" variant="outline" className="h-7 text-xs"
                                               onClick={() => onClearMeta(p.path)} disabled={busy === p.path}>
                                         <Undo2 size={11} className="mr-1" />{resetLabel}
-                                      </Button>
+                                      </GatedButton>
                                     )}
                                   </div>
                                   {errors[p.path] && (
                                     <p className="text-[11px] text-red-400 border-l-2 border-red-400/50 pl-2">
-                                      Save failed — {errors[p.path]}
+                                      Change set not created — {errors[p.path]}
                                     </p>
                                   )}
                                 </div>
                               )}
 
-                              {isNextjs && (
+                              {(
                                 <div className="border-t pt-2.5 space-y-2">
                                   <p className="text-xs font-medium flex items-center gap-1.5">
                                     <LinkIcon size={11} />Move / rename this page
                                   </p>
                                   <p className="text-[11px] text-muted-foreground">
-                                    Carries the SEO title/description/canonical, body-copy blocks, image
-                                    alt text and focus keyword stored for this page over to a new path.
-                                    The route itself is a folder name compiled into your build, so the
-                                    URL doesn't change until you make the code change this generates.
+                                    Proposes a change set that carries the metadata override stored for this
+                                    page over to a new path (the focus keyword moves immediately). The route
+                                    itself is a folder in your repository, so the URL changes only with the
+                                    code change described below.
                                   </p>
                                   <div className="flex gap-2">
                                     <Input className="h-7 text-xs" placeholder="/new-path"
                                       value={moveDrafts[p.path] ?? ""}
                                       onChange={(e) => setMoveDrafts((d) => ({ ...d, [p.path]: e.target.value }))} />
-                                    <Button size="sm" className="h-7 text-xs shrink-0"
+                                    <GatedButton minRole="editor" size="sm" className="h-7 text-xs shrink-0"
                                       disabled={moving === p.path || !(moveDrafts[p.path] || "").trim()}
                                       onClick={() => handleMove(p)}>
                                       {moving === p.path
                                         ? <Loader2 size={11} className="mr-1 animate-spin" />
                                         : <ArrowRight size={11} className="mr-1" />}
                                       Move
-                                    </Button>
+                                    </GatedButton>
                                   </div>
                                   {moveResults[p.path] && (
                                     <div className="rounded-md border border-border/40 p-2 space-y-1.5">
-                                      {moveResults[p.path].moved?.length > 0 && (
+                                      {moveResults[p.path].changeset ? (
                                         <p className="text-[11px] text-emerald-500">
-                                          Moved: {moveResults[p.path].moved.join(", ")}
+                                          Change set created —{" "}
+                                          <Link className="underline" to={`/changesets/${moveResults[p.path].changeset.id}`}>review it in Change Sets</Link>
                                         </p>
+                                      ) : (
+                                        <p className="text-[11px] text-muted-foreground">No stored metadata to move.</p>
                                       )}
-                                      {moveResults[p.path].errors?.length > 0 && (
-                                        <p className="text-[11px] text-yellow-500">
-                                          {moveResults[p.path].errors.join(" · ")}
-                                        </p>
+                                      {moveResults[p.path].focus_keyword_moved && (
+                                        <p className="text-[11px] text-muted-foreground">Focus keyword moved.</p>
                                       )}
                                       <ol className="text-[11px] text-muted-foreground list-decimal list-inside space-y-0.5">
                                         {moveResults[p.path].instructions?.map((ins, i) => <li key={i}>{ins}</li>)}
                                       </ol>
-                                      <pre className="text-[10px] bg-muted/30 rounded p-2 overflow-x-auto whitespace-pre-wrap">
-                                        {moveResults[p.path].redirect_snippet}
-                                      </pre>
-                                      <Button variant="outline" size="sm" className="h-6 text-[10px]"
-                                        onClick={() => copySnippet(moveResults[p.path].redirect_snippet)}>
-                                        <Copy size={10} className="mr-1" />Copy snippet
-                                      </Button>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-
-                              {isNextjs && (
-                                <div className="border-t pt-2.5 space-y-2">
-                                  <p className="text-xs font-medium flex items-center gap-1.5">
-                                    <FileText size={11} />Page content
-                                  </p>
-                                  {contentCache[p.path]?.loading ? (
-                                    <Loader2 size={14} className="animate-spin text-muted-foreground" />
-                                  ) : contentCache[p.path]?.error ? (
-                                    <p className="text-[11px] text-yellow-500 border-l-2 border-yellow-500/50 pl-2">
-                                      {contentCache[p.path].error}
-                                    </p>
-                                  ) : Object.keys(blockDrafts[p.path] || {}).length === 0 ? (
-                                    <p className="text-[11px] text-muted-foreground">
-                                      No editable blocks found yet — wrap this page's copy in{" "}
-                                      <code>&lt;Editable&gt;</code> or <code>&lt;EditableHtml&gt;</code>{" "}
-                                      (see nextjs-bridge/README.md).
-                                    </p>
-                                  ) : (
-                                    Object.entries(blockDrafts[p.path]).map(([key, value]) => (
-                                      <div key={key} className="space-y-1.5 rounded-md border border-border/40 p-2">
-                                        <div className="flex items-center justify-between gap-2 flex-wrap">
-                                          <span className="text-[11px] font-mono text-muted-foreground">{key}</span>
-                                          <div className="flex gap-1 flex-wrap">
-                                            {AI_ACTIONS.map(({ action, label }) => (
-                                              <Button key={action} variant="outline" size="sm"
-                                                className="h-6 text-[10px] px-1.5"
-                                                disabled={blockAiBusy !== null}
-                                                onClick={() => aiAssistBlock(p.path, key, action)}>
-                                                {blockAiBusy === `${p.path}:${key}:${action}`
-                                                  ? <Loader2 size={10} className="mr-1 animate-spin" />
-                                                  : <Sparkles size={10} className="mr-1" />}
-                                                {label}
-                                              </Button>
-                                            ))}
-                                          </div>
-                                        </div>
-                                        <Textarea rows={3} className="text-xs font-mono"
-                                          value={value}
-                                          onChange={(e) => setBlockDrafts((d) => ({
-                                            ...d, [p.path]: { ...d[p.path], [key]: e.target.value } }))} />
-                                        <div className="flex justify-end">
-                                          <Button size="sm" className="h-6 text-[10px]"
-                                            disabled={savingBlock === `${p.path}:${key}`}
-                                            onClick={() => saveBlock(p.path, key)}>
-                                            {savingBlock === `${p.path}:${key}`
-                                              ? <Loader2 size={10} className="mr-1 animate-spin" />
-                                              : <Save size={10} className="mr-1" />}
-                                            Save &amp; publish
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ))
-                                  )}
-                                </div>
-                              )}
-
-                              {isNextjs && (
-                                <div className="border-t pt-2.5 space-y-2">
-                                  <p className="text-xs font-medium flex items-center gap-1.5">
-                                    <ImageIcon size={11} />Image alt text
-                                  </p>
-                                  {(() => {
-                                    // The crawl counts every real <img> on the rendered page — compare
-                                    // that against what the bridge actually registered so a page with
-                                    // some, but not all, of its images wrapped in <EditableImg> says so
-                                    // instead of just looking like it only has two images.
-                                    const registered = Object.keys(imagesCache[p.path]?.images || {}).length;
-                                    const total = p.signals?.image_count;
-                                    if (imagesCache[p.path]?.loading || imagesCache[p.path]?.error) return null;
-                                    if (typeof total !== "number" || total <= registered || registered === 0) return null;
-                                    return (
-                                      <p className="text-[11px] text-yellow-500 border-l-2 border-yellow-500/50 pl-2">
-                                        This page has {total} images, but only {registered} {registered === 1 ? "is" : "are"}{" "}
-                                        editable here — the other {total - registered} {total - registered === 1 ? "is" : "are"}{" "}
-                                        still plain <code>&lt;img&gt;</code> tags in the Next.js code. Wrap them in{" "}
-                                        <code>&lt;EditableImg&gt;</code> too (see nextjs-bridge/README.md) to bring them in.
-                                      </p>
-                                    );
-                                  })()}
-                                  {imagesCache[p.path]?.loading ? (
-                                    <Loader2 size={14} className="animate-spin text-muted-foreground" />
-                                  ) : imagesCache[p.path]?.error ? (
-                                    <p className="text-[11px] text-yellow-500 border-l-2 border-yellow-500/50 pl-2">
-                                      {imagesCache[p.path].error}
-                                    </p>
-                                  ) : Object.keys(imagesCache[p.path]?.images || {}).length === 0 ? (
-                                    <p className="text-[11px] text-muted-foreground">
-                                      No editable images found yet — wrap this page's images in{" "}
-                                      <code>&lt;EditableImg&gt;</code> (see nextjs-bridge/README.md).
-                                      {typeof p.signals?.image_count === "number" && p.signals.image_count > 0 &&
-                                        ` This page has ${p.signals.image_count} image(s) that could be.`}
-                                    </p>
-                                  ) : (
-                                  Object.entries(imagesCache[p.path].images).map(([key, img]) => (
-                                    <div key={key} className="flex gap-2 items-start rounded-md border border-border/40 p-2">
-                                      {img?.src && (
-                                        <img src={resolveImageUrl(img.src)} alt=""
-                                          className="w-14 h-14 object-cover rounded border border-border/40 flex-shrink-0 bg-muted/20"
-                                          onError={(e) => { e.currentTarget.style.visibility = "hidden"; }} />
-                                      )}
-                                      <div className="flex-1 min-w-0 space-y-1.5">
-                                        <span className="text-[11px] font-mono text-muted-foreground">{key}</span>
-                                        <Textarea rows={2} className="text-xs"
-                                          value={(imageDrafts[p.path] || {})[key] ?? ""}
-                                          onChange={(e) => setImageDrafts((d) => ({
-                                            ...d, [p.path]: { ...d[p.path], [key]: e.target.value } }))}
-                                          placeholder="Alt text…" />
-                                        <div className="flex justify-end gap-2">
+                                      {moveResults[p.path].redirect_snippet && (
+                                        <>
+                                          <pre className="text-[10px] bg-muted/30 rounded p-2 overflow-x-auto whitespace-pre-wrap">
+                                            {moveResults[p.path].redirect_snippet}
+                                          </pre>
                                           <Button variant="outline" size="sm" className="h-6 text-[10px]"
-                                            disabled={generatingImage !== null || !img?.src}
-                                            onClick={() => generateImageAlt(p.path, key, img.src)}>
-                                            {generatingImage === `${p.path}:${key}`
-                                              ? <Loader2 size={10} className="mr-1 animate-spin" />
-                                              : <Sparkles size={10} className="mr-1" />}
-                                            Generate with AI
+                                            onClick={() => copySnippet(moveResults[p.path].redirect_snippet)}>
+                                            <Copy size={10} className="mr-1" />Copy snippet
                                           </Button>
-                                          <Button size="sm" className="h-6 text-[10px]"
-                                            disabled={savingImage === `${p.path}:${key}`}
-                                            onClick={() => saveImageAlt(p.path, key)}>
-                                            {savingImage === `${p.path}:${key}`
-                                              ? <Loader2 size={10} className="mr-1 animate-spin" />
-                                              : <Save size={10} className="mr-1" />}
-                                            Save
-                                          </Button>
-                                        </div>
-                                      </div>
+                                        </>
+                                      )}
                                     </div>
-                                  ))
                                   )}
                                 </div>
                               )}
+
+                              <div className="border-t pt-2.5 space-y-1">
+                                <p className="text-xs font-medium flex items-center gap-1.5">
+                                  <FileText size={11} />Page copy &amp; images
+                                </p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  Registered text blocks and image alt text are edited in the site's content editor, as change sets.
+                                </p>
+                                <div className="flex flex-wrap gap-3 text-[11px]">
+                                  <Link className="text-primary hover:underline" to={`/sites/${siteId}/content?tab=blocks`}>Edit blocks</Link>
+                                  <Link className="text-primary hover:underline" to={`/sites/${siteId}/content?tab=images`}>Edit image alt text</Link>
+                                  <Link className="text-primary hover:underline" to={`/sites/${siteId}/content?tab=metadata&route=${encodeURIComponent(p.path)}`}>Full metadata editor (robots, JSON-LD)</Link>
+                                </div>
+                              </div>
                             </div>
                           )}
                         </TableCell>

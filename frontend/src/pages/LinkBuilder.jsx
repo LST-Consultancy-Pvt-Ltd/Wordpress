@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
@@ -14,8 +15,9 @@ import {
 } from "../components/ui/table";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import {
-  getSites, suggestInternalLinks, getInternalLinkSuggestions, linkBuilderInsert,
+  getSites, suggestInternalLinks, getInternalLinkSuggestions,
   generateOutreachAngles, subscribeToTask, getAnchorDistribution,
   getLiveBacklinks, getCompetitorGap,
 } from "../lib/api";
@@ -142,22 +144,6 @@ export default function LinkBuilder() {
     } catch (e) { toast.error(e.response?.data?.detail || "Scan failed"); setScanning(false); }
   };
 
-  const handleInsert = async (s) => {
-    setApplying(prev => ({ ...prev, [s.id]: true }));
-    try {
-      await linkBuilderInsert(selectedSite, {
-        post_id: s.source_post_id,
-        target_post_id: s.target_post_id,
-        anchor_text: s.anchor_text,
-        target_url: s.target_url || `/?p=${s.target_post_id}`,
-      });
-      setInternalSuggestions(prev => prev.map(x => x.id === s.id ? { ...x, applied: true } : x));
-      toast.success("Link inserted successfully!");
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to insert link");
-    } finally { setApplying(prev => ({ ...prev, [s.id]: false })); }
-  };
-
   const handleGenerateOutreach = async () => {
     setGeneratingOutreach(true);
     try {
@@ -205,10 +191,10 @@ export default function LinkBuilder() {
         <TabsContent value="internal">
           <div className="flex justify-between items-center mb-4">
             <p className="text-sm text-muted-foreground">{internalSuggestions.length} suggestions</p>
-            <Button className="btn-primary" size="sm" onClick={handleScan} disabled={scanning || !selectedSite}>
+            <GatedButton minRole="editor" className="btn-primary" size="sm" onClick={handleScan} disabled={scanning || !selectedSite}>
               {scanning ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
               Scan for Opportunities
-            </Button>
+            </GatedButton>
           </div>
           {loadingInternal ? (
             <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-primary" /></div>
@@ -242,7 +228,7 @@ export default function LinkBuilder() {
                           </td>
                           <td className="py-2.5 px-4 text-sm max-w-[180px]">
                             <p className="truncate">{s.target_post_title}</p>
-                            <span className="text-xs text-muted-foreground">#{s.target_post_id}</span>
+                            <span className="text-xs text-muted-foreground">{s.target_content_id || s.target_post_id || ""}</span>
                           </td>
                           <td className="py-2.5 pl-2">
                             {s.applied ? (
@@ -250,11 +236,13 @@ export default function LinkBuilder() {
                                 <CheckCircle2 size={10} className="mr-1" /> Applied
                               </Badge>
                             ) : (
-                              <Button size="sm" variant="outline" className="text-xs h-7"
-                                onClick={() => handleInsert(s)} disabled={applying[s.id]}>
-                                {applying[s.id] ? <Loader2 size={11} className="animate-spin mr-1" /> : null}
-                                Insert
-                              </Button>
+                              <Link
+                                to={`/sites/${selectedSite}/content`}
+                                className="text-xs text-primary hover:underline whitespace-nowrap"
+                                title="Add the link in the content editor; saving creates a change set"
+                              >
+                                Edit in content editor
+                              </Link>
                             )}
                           </td>
                         </tr>
@@ -269,11 +257,11 @@ export default function LinkBuilder() {
 
         <TabsContent value="outreach">
           <div className="flex justify-end mb-4">
-            <Button className="btn-primary" size="sm" onClick={handleGenerateOutreach}
+            <GatedButton minRole="editor" className="btn-primary" size="sm" onClick={handleGenerateOutreach}
               disabled={generatingOutreach || !selectedSite}>
               {generatingOutreach ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
               Generate Outreach Angles
-            </Button>
+            </GatedButton>
           </div>
           {outreachAngles.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">

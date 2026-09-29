@@ -2,7 +2,19 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
-import Sites from "./pages/Sites";
+import SitesList from "./pages/sites/SitesList";
+import SiteWizard from "./pages/sites/SiteWizard";
+import SiteDetail from "./pages/sites/SiteDetail";
+import SiteInventory from "./pages/sites/SiteInventory";
+import SiteContent from "./pages/sites/SiteContent";
+import SiteCode from "./pages/sites/SiteCode";
+import SiteOperations from "./pages/sites/SiteOperations";
+import SiteBackups from "./pages/sites/SiteBackups";
+import ChangeSetList from "./pages/changesets/ChangeSetList";
+import ChangeSetDetail from "./pages/changesets/ChangeSetDetail";
+import Audit from "./pages/Audit";
+import RequireRole from "./components/RequireRole";
+import { dropStaleSessionKeys, getToken } from "./lib/session";
 import AICommand from "./pages/AICommand";
 import SEO from "./pages/SEO";
 import OnPageSEO from "./pages/OnPageSEO";
@@ -48,9 +60,11 @@ import CompanyProfile from "./pages/CompanyProfile";
 import OutreachApprovals from "./pages/OutreachApprovals";
 import "./App.css";
 
-function AuthGuard({ children }) {
-  const token = localStorage.getItem("wp_token");
-  if (!token) return <Navigate to="/login" replace />;
+// Sessions stored by older builds under other key names are discarded; users sign in again.
+dropStaleSessionKeys();
+
+export function AuthGuard({ children }) {
+  if (!getToken()) return <Navigate to="/login" replace />;
   return children;
 }
 
@@ -64,7 +78,17 @@ function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/" element={<AuthGuard><Layout /></AuthGuard>}>
             <Route index element={<Dashboard />} />
-            <Route path="sites" element={<Sites />} />
+            <Route path="sites" element={<SitesList />} />
+            <Route path="sites/new" element={<RequireRole min="admin" page><SiteWizard /></RequireRole>} />
+            <Route path="sites/:id" element={<SiteDetail />} />
+            <Route path="sites/:id/inventory" element={<SiteInventory />} />
+            <Route path="sites/:id/content" element={<SiteContent />} />
+            <Route path="sites/:id/code" element={<SiteCode />} />
+            <Route path="sites/:id/operations" element={<SiteOperations />} />
+            <Route path="sites/:id/backups" element={<SiteBackups />} />
+            <Route path="changesets" element={<ChangeSetList />} />
+            <Route path="changesets/:id" element={<ChangeSetDetail />} />
+            <Route path="audit" element={<Audit />} />
             <Route path="ai-command" element={<AICommand />} />
             <Route path="seo" element={<SEO />} />
             <Route path="onpage-seo" element={<OnPageSEO />} />
