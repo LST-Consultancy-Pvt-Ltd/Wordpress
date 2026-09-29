@@ -90,17 +90,117 @@ Phase 1 changes no data and no routes. To roll back, revert the phase-1 commit.
 To lift the freeze without reverting, set `AUTOMATION_WRITES_FROZEN=0` on the
 backend and restart.
 
-## Decisions needed before phase 2/3
+## Decisions taken (defaults; revisit any of them)
 
-1. **Target sites:** repository path(s) on the VPS, App vs Pages Router, content
-   source (MDX in repo, JSON, DB, headless CMS), how they are deployed today
-   (compose file / service names), reverse proxy (Traefik / Caddy / nginx), and
-   whether a staging environment exists.
-2. **Bridge mode:** sidecar agent container (recommended; it keeps write
-   capability out of the public Next.js process) vs an in-app App Router route.
-3. **Frontend stack:** keep React/CRACO and refactor in place (less risk) vs
-   rebuild on Next.js/Vite (the brief allows either).
-4. **Roles:** add a `deployer` role between `editor` and `admin`?
-5. **Features to drop rather than port:** A/B title tests, newsletter-from-posts,
-   calendar scheduling, programmatic page push, social-from-post, and so on. Each
-   ported feature becomes a change-set producer, so every one kept adds phase 6 work.
+The user asked for every phase to run without pausing, so each open decision took
+the recommended default. All of them are recorded in `endpoint-plan.md`:
+
+- **Bridge placement:** the sidecar agent is the primary mode. The in-app App Router mode shares the same core.
+- **Frontend:** refactored in place, with no stack change.
+- **Roles:** a new `deployer` role sits between editor and admin.
+- **Features dropped rather than ported:** CMS users, plugins, themes, commerce, forms,
+  comments, media library, menus, CMS backups, taxonomies, A/B title tests, calendar
+  scheduling, translation, automatic interlink editing, bulk publish, EXIF/WebP rewriting,
+  crawl auto-fix, plugin downloads, and generated featured-image upload (protocol v1 has
+  no binary asset operation).
+- **Sites** are shared across the team, not filtered per user.
+- **Target-site specifics** (repository paths, compose services, validation commands,
+  proxy, staging) are explicit bridge configuration marked TODO in
+  `automation-bridge/automation-bridge.config.example.json`.
+
+## Phase 2: Protocol and bridge agent
+
+- `protocol/automation-bridge-v1.md` covers HMAC signing, scopes, rotation, idempotency,
+  capabilities, inventory, content, typed operations, plan/apply/verify/rollback, jobs,
+  Docker profiles, backups and audit, plus the §15 clarifications. Signing vectors are in
+  `protocol/signing-test-vectors.json`.
+- `automation-bridge/` is a TypeScript package with three parts: a sidecar server, an
+  in-app route, and site runtime helpers (`withAutomationMetadata`, editable blocks,
+  JSON-LD, redirects, revalidation). It also serves OpenAPI, and ships a Dockerfile
+  (uid 10001, tini, healthcheck) and a sample Next.js 15 site with a compose file.
+- Tests: 154 vitest tests (13 unit files, plus HTTP integration against the real sidecar).
+  `npm run test:docker` builds the sample site and the bridge, applies `metadata.set`,
+  checks the rendered `<title>` changed, rolls it back and checks again. The bridge agent
+  ran this and reported it passing.
+- The `nextjs-bridge/` prototype was deleted.
+
+## Phase 3: Control-plane core
+
+- **Models:** `models/sites.py` defines ManagedSite, SiteConnection, the BridgeAgent
+  snapshot, ChangeSet, SitePolicy, and the deployment and backup requests.
+- **Bridge client:** `providers/bridge_client.py` does the signing, retries only for
+  idempotent calls, maps errors (a bridge 401/403 becomes a 502 with a `BRIDGE_*` code),
+  negotiates the protocol, and re-checks DNS on every request.
+- **Onboarding:** `routers/sites.py` enforces the HTTPS/SSRF URL policy
+  (`core/url_policy.py`) and strict encrypted secrets (`core/secrets.py`, which refuses
+  to work without `ENCRYPTION_KEY`). It also handles the handshake, write verification
+  by probe revision, write enablement (typed confirmation, verified within 24 h),
+  rotate/replace/revoke and policy.
+- **Access:** `core/router.py` applies a baseline policy to every `/api` route. It
+  requires authentication except on an explicit public list, and editor or higher for
+  mutations. Streams use task-bound tokens, and the audit trail is in `core/audit.py`.
+- **Data migration:** `backend/migrations/m001_managed_sites.py`, described below.
+
+### Data migration commands
+
+```bash
+cd backend
+python -m migrations.m001_managed_sites plan                       # dry run: what changes, which fields are dropped
+python -m migrations.m001_managed_sites apply --backup-manifest /path/to/premigration-<db>-<ts>.manifest.json
+python -m migrations.m001_managed_sites rollback                   # restores originals from the archive (before finalize)
+python -m migrations.m001_managed_sites finalize --confirm-finalize # irreversible: drops archive + legacy caches
+```
+
+Status: the migration is implemented and tested against a disposable MongoDB. It has
+**not been run against production** because there is no access from this workstation.
+Every migrated site comes up as `unverified` with writes disabled, and an admin must
+reconnect it with a new bridge key; old credentials are never migrated.
+
+### Mongo volume rename (run once on the VPS, before first `up` with the new compose file)
+
+```bash
+docker compose down
+docker volume create <project>_sa_mongo_data
+docker run --rm -v <project>_wp_mongo_data:/from -v <project>_sa_mongo_data:/to alpine sh -c 'cp -a /from/. /to/'
+docker compose up -d        # verify, then later: docker volume rm <project>_wp_mongo_data
+```
+
+`DB_NAME` can stay as it is. Renaming it also needs a `mongodump`/`mongorestore`.
+
+## Phase 4: Change-set workflow
+
+`core/changesets.py` implements plan → validate/preview → submit → approve → apply →
+verify → revision → rollback. The rules it enforces:
+
+- Approvals are tied to the diff hash, and editing a change set discards them.
+- Self-approval is refused on production.
+- Code changes need a passing validation of the same diff before they can be submitted.
+- Transitions use an optimistic status check, so a change set can't be applied twice.
+- The revision is recorded before the status changes.
+- The bridge re-checks the diff hash and base revision. `VERIFY_FAILED` and
+  `CONFLICT_REVISION` both come back with recovery instructions.
+
+Every producer now creates change sets: on-page SEO meta and move-page, schema,
+canonical, blog and auto-blog generation, autopilot, content refresh, programmatic
+pages, reclamation redirects and the AI agent.
+
+## Phase 5: Docker/VPS operations
+
+`routers/operations.py` accepts only profile names from the browser. It gates deploy,
+rollback and restore by role and by typed confirmation on production, reports
+`rolled_back` together with recovery instructions, and requires the backup id plus the
+site name for a real restore. The bridge implements `compose-recreate` with automatic
+rollback. Its tests use a fake executor; **it has not been run against a real Docker
+daemon**.
+
+## Phase 6: Feature migration and deletion
+
+- 132 routes removed and 49 added (388 → 306), listed in `inventory/route-changes.json`.
+- Removed code: the legacy provider, nine routers, the PHP plugin tree, the CMS models,
+  scheduled publish, the dev-tool auth shims and old test reports.
+- Historical docs moved to `migration/history/`.
+- `db.content_items` replaces the post and page caches, filled by
+  `POST /sites/{id}/content/sync`.
+- Compose, images and the volume have neutral names, and the backend image runs as
+  non-root.
+
