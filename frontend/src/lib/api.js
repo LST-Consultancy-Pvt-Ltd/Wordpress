@@ -132,8 +132,9 @@ export const getContentItems = (id, collection, params) =>
   api.get(`/sites/${id}/content/${encodeURIComponent(collection)}/items`, { params });
 export const getContentItem = (id, collection, slug) =>
   api.get(`/sites/${id}/content/${encodeURIComponent(collection)}/items/${encodeURIComponent(slug)}`);
-/** File read (capability `files.read`). Response: `{root, path, content, sha256}`. */
-export const getSiteFile = (id, root, path) => api.get(`/sites/${id}/files`, { params: { root, path } });
+/** File read (capability `files.read`; roots of kind code/assets). → `{root, path, content, sha256, bytes}` */
+export const getSiteFile = (id, root, path) =>
+  api.get(`/sites/${id}/files/${encodeURIComponent(root)}`, { params: { path } });
 export const getRevisions = (id, params) => api.get(`/sites/${id}/revisions`, { params });
 export const getRevision = (id, rid) => api.get(`/sites/${id}/revisions/${rid}`);
 export const getOpsStatus = (id) => api.get(`/sites/${id}/ops/status`);
