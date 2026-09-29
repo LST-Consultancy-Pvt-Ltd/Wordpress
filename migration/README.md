@@ -204,3 +204,102 @@ daemon**.
 - Compose, images and the volume have neutral names, and the backend image runs as
   non-root.
 
+## Phase 7: Hardening and release
+
+### Security review
+
+The review was an adversarial, read-only pass over the backend and the bridge. It
+found 15 issues, and every one of them is fixed with a regression test:
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | critical | Validation and preview ran proposed code with a read-scope key or an editor role, in a scratch tree that could read the key store | Deployer role and `write` scope required. Jobs refuse to run as the bridge user unless `run_as` (or explicit `allow_same_user`) is set. Scratch trees live outside `state_dir`, `node_modules` is copied, and output is redacted |
+| 2 | high | SSRF through editor-, model- and site-supplied URLs, with the responses reflected back | `core/safe_fetch.py`: `is_global` only, DNS pinning, per-hop redirect checks, body caps, and a guard hook on every fetching client |
+| 3 | high | Bridge deny globs were case-sensitive, and symlinks were checked lexically | `nocase` matching, plus a realpath allow/deny check |
+| 4 | medium | Self-approval by editing someone else's change set | An authors set (creator, editors, submitter) is enforced |
+| 5 | medium | CGNAT and metadata ranges were missing from the IP check; DNS rebinding | `ip.is_global`, and bridge connections pinned to the vetted IP |
+| 6 | medium | A client could pick `source` to trigger auto-apply | The server sets `source=manual` |
+| 7 | medium | Re-plan could overwrite an in-flight apply | Compare-and-swap on the status |
+| 8 | medium | Binary files had identical diffs, so approvals didn't cover their content | The approval hash includes per-file sha256, and bridge diff lines carry the hashes |
+| 9 | medium | Rate limiter trusted `X-Forwarded-For`; no idle eviction | `TRUSTED_PROXY_IPS`, eviction, and a per-account login throttle |
+| 10 | low | Nonce cache lived only in memory | Persisted under `state_dir/nonces` |
+| 11 | low | Executable MDX was only flagged | Rejected unless the collection sets `allow_executable_mdx` |
+| 12 | low | AI HTML preview was rendered in the app DOM | Sandboxed iframe |
+| 13 | low | First-admin registration race | Atomic bootstrap marker |
+| 14 | low | Migrated internal URLs reached the audit fetchers | Validated in `transform`; rejected URLs are kept only as `legacy_url` |
+| 15 | low | Unbounded bridge and upstream response reads | Streamed with a cap, or the body is cancelled |
+
+Earlier fixes from this phase: public-only `base_url`, a 4 MiB request body limit,
+unauthenticated legacy routes closed by the baseline policy, the dev auth shims removed,
+the backend image running as a non-root user, and a per-site daily AI budget.
+
+### Test evidence (final run on this workstation)
+
+| Suite | Result |
+|---|---|
+| `scripts/tests` (reference scanner) | 38 passed |
+| `backend/tests`: unit, control-plane integration against the fake bridge, end-to-end against the **real** bridge sidecar, migration, freeze and budget, evidence rules | 164 passed |
+| `automation-bridge`: vitest unit and HTTP integration | 170 passed; typecheck and lint clean; `npm audit` shows 0 vulnerabilities |
+| `automation-bridge`: `npm run test:docker` (sample Next.js site + bridge in Docker: apply metadata, rendered `<title>` changes, roll back) | passed, re-run after the security fixes (11/11 checks) |
+| `frontend`: jest unit | 54 passed |
+| `frontend`: Playwright E2E (Chromium, mocked API) | 10 passed |
+| `frontend`: `CI=true` production build | passes |
+| Backend image | builds, runs as uid 10001, `/api/health` ok, anonymous requests get 401 |
+| Legacy reference scan | **0 references in 0 files**; baseline empty |
+
+Not run: load tests; a real Docker-daemon deploy through the bridge (only the fake
+executor); the production data migration and backup (no access from here).
+
+### Removed surface (summary)
+
+- **Backend:** the legacy provider module, 9 routers (users/plugins/themes, media and
+  comments, forms and commerce, plugin downloads, CMS backups and redirects, the prototype
+  content bridge router, CMS content CRUD, CMS-meta auto-SEO, image EXIF/WebP), the CMS
+  site and request models, scheduled publish, `main.py` and the dev auth shims.
+  132 routes in total; see `inventory/route-changes.json`.
+- **Other trees:** the PHP plugin tree (`.tmp_plugin/`), the `nextjs-bridge/` prototype,
+  old test reports and helper scripts.
+- **Frontend:** 17 pages, the apply-mode sheet/hook, and every related route, nav entry and
+  API export. The product is renamed and the session keys are neutral.
+- **Deploy:** images, the volume, the compose defaults and the env are all neutral;
+  `ENCRYPTION_KEY` is required.
+
+### VPS / Docker setup
+
+1. **Back up**, using the Phase 1 commands, and copy the archive off the host.
+2. **Rename the volume** with the copy step under Phase 3.
+3. **Set** `ENCRYPTION_KEY`, `JWT_SECRET_KEY` and `DB_NAME`, plus `TRUSTED_PROXY_IPS`
+   if you're behind a reverse proxy. Then run `docker compose up -d`.
+4. **Migrate the data:** `docker compose exec backend python -m migrations.m001_managed_sites plan`,
+   then `apply --backup-manifest …`.
+5. **For each Next.js site:**
+   - Add the bridge sidecar, using `automation-bridge/examples/sample-site/docker-compose.yml`
+     as the template.
+   - Fill in `automation-bridge.config.json`: the roots, collections, validation steps
+     with `run_as`, and the Docker profile behind a socket proxy.
+   - Generate `BRIDGE_BOOTSTRAP_KEY_ID/SECRET` and `BRIDGE_REVALIDATE_SECRET`.
+   - Opt pages in with `withAutomationMetadata` and the editable components.
+6. **Connect.** Either join the control plane to the bridges' private network
+   (`docker-compose.bridges.yml`) or publish each bridge behind an authenticated HTTPS
+   route. Then go to **Sites → Connect site** in the UI, verify write access, and enable
+   writes.
+7. **Lift the freeze** (`AUTOMATION_WRITES_FROZEN=0`) only after policies are set.
+8. **Finalize** the migration (`finalize --confirm-finalize`) once everything is verified.
+   This is irreversible.
+
+### Rollback
+
+- **Code:** the `pre-nextjs-migration` tag.
+- **Data:** before finalize, run `m001 rollback`. After finalize, restore the Phase 1
+  backup.
+- **Sites:** every bridge change is a revision that can be rolled back from the change-set
+  view or `POST /revisions/{id}/rollback`.
+
+### Decisions still needed from you
+
+1. Target-site specifics: repository paths, content sources, compose files and services,
+   the proxy, and staging.
+2. Whether any of the dropped features should come back as change-set producers.
+3. The auto-apply policy per site. The default is off, and frozen until lifted.
+4. The validation sandbox user (`run_as`) on each VPS.
+5. A load-test and staged-rollout plan, which needs a staging environment.
