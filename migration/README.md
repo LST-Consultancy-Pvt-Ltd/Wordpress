@@ -303,3 +303,24 @@ executor); the production data migration and backup (no access from here).
 3. The auto-apply policy per site. The default is off, and frozen until lifted.
 4. The validation sandbox user (`run_as`) on each VPS.
 5. A load-test and staged-rollout plan, which needs a staging environment.
+
+## Production deployment: 2026-09-29 (srv707772)
+
+| Step | Result |
+|---|---|
+| Backup | `/root/backups/site-autopilot/premigration-<db>-20260929T164823Z.*`: encrypted, decrypt-verified and checksummed; 23 collections. The passphrase is in `.backup-pass`, root-only. An off-host copy is in the local `backups/` directory, which git ignores |
+| Images | built on the VPS from `5b36b38` and `2fda2b9` (backend) as `site-autopilot-{backend,frontend}`; nothing published to a registry |
+| Cutover | new Compose project `site-autopilot` in `/docker/site-autopilot`, on the same ports 3007 and 8002. Volume copied to `site-autopilot_sa_mongo_data` (518 MB) |
+| Health | `/api/health` ok, writes frozen; anonymous requests get 401; UI serves "Site Autopilot"; backend uid 10001; reachable externally |
+| Data migration | `m001 apply`: 2 sites migrated, credential fields purged, onboarding fields kept; `sites_premigration_archive` holds the originals until finalize |
+
+Rollback, until `finalize`:
+
+```bash
+cd /docker/site-autopilot && docker compose -p site-autopilot down   # keeps its volume
+cd /docker/wordpress-manager && docker compose start                 # old stack + untouched old volume
+```
+
+Still open: reconnect both sites with bridge keys once bridges are installed. The
+first site's legacy CMS and the Next.js site both come up `unverified`. Then remove the
+old stack and volume, and run `finalize`, once you're satisfied.
