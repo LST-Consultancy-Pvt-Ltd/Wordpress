@@ -23,6 +23,22 @@ if (config.enableHealthCheck) {
 }
 
 let webpackConfig = {
+  jest: {
+    configure: (jestConfig) => ({
+      ...jestConfig,
+      moduleNameMapper: {
+        ...(jestConfig.moduleNameMapper || {}),
+        "^@/(.*)$": "<rootDir>/src/$1",
+        // axios ships ESM by default; jest (CRA) needs the CommonJS build.
+        "^axios$": "axios/dist/node/axios.cjs",
+        // jest 27 does not read package "exports"; point at the CommonJS builds.
+        "^react-router-dom$": "<rootDir>/node_modules/react-router-dom/dist/index.js",
+        "^react-router$": "<rootDir>/node_modules/react-router/dist/development/index.js",
+        "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js",
+      },
+      testPathIgnorePatterns: ["/node_modules/", "<rootDir>/e2e/"],
+    }),
+  },
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],

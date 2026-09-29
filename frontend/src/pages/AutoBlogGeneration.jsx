@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Bot, Loader2, Play, Eye, Edit2, Trash2, CheckCircle2,
-  Settings2, Image, Search, Sparkles, FileText, ExternalLink
+  Bot, Loader2, Play, Eye, Trash2, Settings2, FileText, GitPullRequest,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -10,7 +10,6 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Badge } from "../components/ui/badge";
-import { Switch } from "../components/ui/switch";
 import { Slider } from "../components/ui/slider";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -20,23 +19,32 @@ import {
 } from "../components/ui/dialog";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { Separator } from "../components/ui/separator";
-import { getSites, generateAutoBlogs } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
+import {
+  apiErrorMessage, listItems, getSites, getContentCollections, generateAutoBlogs,
+} from "../lib/api";
+import { extractChangeSet, notifyChangeSetCreated } from "../lib/changesets";
+import { hasCapability, writeBlockedReason } from "../lib/capabilities";
 import SSEProgressDrawer, { useSSETask } from "../components/SSEProgressDrawer";
 import { toast } from "sonner";
 
 const WRITING_STYLES = ["Professional", "Casual", "Academic", "Conversational", "Persuasive", "Storytelling"];
-const POST_STATUSES = ["draft", "publish"];
 const TONES = ["Professional", "Conversational", "Technical"];
 const AUDIENCES = ["SMB", "Enterprise", "Tech", "Non-tech", "Consumer", "Startup Founders", "Marketers", "Developers"];
 const COUNTRIES = ["Global", "United States", "United Kingdom", "Canada", "Australia", "India", "Germany", "France", "UAE", "Singapore", "Japan"];
+const DEFAULT_COLLECTION = "__default__";
 
 export default function AutoBlogGeneration() {
+  const navigate = useNavigate();
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState("");
+  const [collections, setCollections] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [generatedPosts, setGeneratedPosts] = useState([]);
+  const [changesetId, setChangesetId] = useState(null);
   const [previewPost, setPreviewPost] = useState(null);
   const { tasks, startTask, dismissTask } = useSSETask();
+  const handledTasks = useRef(new Set());
 
   // Config
   const [config, setConfig] = useState({
@@ -44,10 +52,7 @@ export default function AutoBlogGeneration() {
     keywords: "",
     num_posts: 3,
     writing_style: "Professional",
-    post_status: "draft",
-    auto_image: true,
-    auto_seo: true,
-    // Blog Generation Engine inputs
+    collection: DEFAULT_COLLECTION,
     target_country: "Global",
     target_audience: "SMB",
     primary_color: "#0A66C2",
@@ -58,38 +63,80 @@ export default function AutoBlogGeneration() {
     word_count_max: 2000,
   });
 
+  const site = sites.find((s) => s.id === selectedSite) || null;
+  const generateBlocked = writeBlockedReason(site, "content.write");
+  const canReadContent = hasCapability(site, "content.read");
+
   useEffect(() => {
-    getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+    getSites().then((r) => {
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
+
+  // Content collections for the target picker (optional; backend picks a default otherwise).
+  useEffect(() => {
+    setCollections([]);
+    setConfig((c) => ({ ...c, collection: DEFAULT_COLLECTION }));
+    if (!selectedSite || !canReadContent) return undefined;
+    let cancelled = false;
+    getContentCollections(selectedSite)
+      .then((r) => { if (!cancelled) setCollections(listItems(r.data)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [selectedSite, canReadContent]);
+
+  // When a generation task finishes, pick up its change set and proposed posts.
+  useEffect(() => {
+    tasks.forEach((t) => {
+      if (t.status !== "complete" || handledTasks.current.has(t.id)) return;
+      handledTasks.current.add(t.id);
+      const final = [...t.events].reverse().find((e) => e.type === "complete" || e.type === "done");
+      const data = final?.data || {};
+      if (Array.isArray(data.posts) && data.posts.length) {
+        setGeneratedPosts((prev) => [...data.posts, ...prev]);
+      }
+      const cs = extractChangeSet(data);
+      if (cs?.id) setChangesetId(cs.id);
+      notifyChangeSetCreated(cs, navigate, {
+        title: cs ? `Change set created with ${data.posts?.length || 0} draft post(s)` : undefined,
+      });
+    });
+  }, [tasks, navigate]);
 
   const handleGenerate = async () => {
     if (!config.topic.trim()) { toast.error("Enter a topic"); return; }
     if (!selectedSite) { toast.error("Select a site"); return; }
     setGenerating(true);
     try {
-      const r = await generateAutoBlogs(selectedSite, {
-        ...config,
-        keywords: config.keywords.split(",").map(k => k.trim()).filter(Boolean),
-      });
+      const { collection, ...rest } = config;
+      const payload = {
+        ...rest,
+        keywords: config.keywords.split(",").map((k) => k.trim()).filter(Boolean),
+      };
+      if (collection && collection !== DEFAULT_COLLECTION) payload.collection = collection;
+      const r = await generateAutoBlogs(selectedSite, payload);
       if (r.data?.task_id) {
-        startTask(r.data.task_id, `Generating ${config.num_posts} blog posts`);
-        toast.success("Blog generation started! Check progress below.");
+        startTask(r.data.task_id, `Drafting ${config.num_posts} blog posts`);
+        toast.success("Generation started — a draft change set will be created when it finishes.");
       }
-      if (r.data?.posts) {
-        setGeneratedPosts(prev => [...r.data.posts, ...prev]);
-        toast.success(`Generated ${r.data.posts.length} posts`);
+      const cs = extractChangeSet(r.data);
+      if (cs) {
+        setChangesetId(cs.id);
+        notifyChangeSetCreated(cs, navigate);
+      }
+      if (Array.isArray(r.data?.posts)) {
+        setGeneratedPosts((prev) => [...r.data.posts, ...prev]);
       }
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Generation failed");
+      toast.error(apiErrorMessage(e, "Generation failed"));
     } finally { setGenerating(false); }
   };
 
   const handleDelete = (idx) => {
-    setGeneratedPosts(prev => prev.filter((_, i) => i !== idx));
-    toast.info("Post removed");
+    setGeneratedPosts((prev) => prev.filter((_, i) => i !== idx));
+    toast.info("Removed from this list (the change set is unchanged)");
   };
 
   return (
@@ -99,12 +146,14 @@ export default function AutoBlogGeneration() {
           <h1 className="text-3xl font-heading font-bold flex items-center gap-3">
             <Bot className="text-primary" /> Auto Blog Generation
           </h1>
-          <p className="text-muted-foreground mt-1">Generate SEO-optimized blog posts with AI</p>
+          <p className="text-muted-foreground mt-1">
+            Draft SEO-optimized blog posts with AI. Drafts are proposed as one change set for review — nothing is published automatically.
+          </p>
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-[220px]"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-[220px]" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>
-            {sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name || s.url}</SelectItem>)}
+            {sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name || s.base_url}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -117,21 +166,23 @@ export default function AutoBlogGeneration() {
           </CardHeader>
           <CardContent className="space-y-5">
             <div className="space-y-2">
-              <Label>Topic / Niche</Label>
+              <Label htmlFor="abg-topic">Topic / Niche</Label>
               <Textarea
-                placeholder="e.g., Best practices for remote work productivity in 2024"
+                id="abg-topic"
+                placeholder="e.g., Best practices for remote work productivity"
                 value={config.topic}
-                onChange={(e) => setConfig(c => ({ ...c, topic: e.target.value }))}
+                onChange={(e) => setConfig((c) => ({ ...c, topic: e.target.value }))}
                 rows={3}
               />
             </div>
 
             <div className="space-y-2">
-              <Label>Target Keywords (comma-separated)</Label>
+              <Label htmlFor="abg-keywords">Target Keywords (comma-separated)</Label>
               <Input
+                id="abg-keywords"
                 placeholder="e.g., remote work, productivity tips, home office"
                 value={config.keywords}
-                onChange={(e) => setConfig(c => ({ ...c, keywords: e.target.value }))}
+                onChange={(e) => setConfig((c) => ({ ...c, keywords: e.target.value }))}
               />
             </div>
 
@@ -139,29 +190,45 @@ export default function AutoBlogGeneration() {
               <Label>Number of Posts: {config.num_posts}</Label>
               <Slider
                 value={[config.num_posts]}
-                onValueChange={([v]) => setConfig(c => ({ ...c, num_posts: v }))}
+                onValueChange={([v]) => setConfig((c) => ({ ...c, num_posts: v }))}
                 min={1}
                 max={10}
                 step={1}
+                aria-label="Number of posts"
               />
             </div>
 
+            {canReadContent && collections.length > 0 && (
+              <div className="space-y-2">
+                <Label>Target Collection</Label>
+                <Select value={config.collection} onValueChange={(v) => setConfig((c) => ({ ...c, collection: v }))}>
+                  <SelectTrigger aria-label="Target collection"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={DEFAULT_COLLECTION}>Default collection</SelectItem>
+                    {collections.map((col) => (
+                      <SelectItem key={col.id} value={col.id}>{col.label || col.id}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label>Writing Style</Label>
-              <Select value={config.writing_style} onValueChange={(v) => setConfig(c => ({ ...c, writing_style: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={config.writing_style} onValueChange={(v) => setConfig((c) => ({ ...c, writing_style: v }))}>
+                <SelectTrigger aria-label="Writing style"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {WRITING_STYLES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {WRITING_STYLES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
               <Label>Tone</Label>
-              <Select value={config.tone} onValueChange={(v) => setConfig(c => ({ ...c, tone: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={config.tone} onValueChange={(v) => setConfig((c) => ({ ...c, tone: v }))}>
+                <SelectTrigger aria-label="Tone"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {TONES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                  {TONES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -169,63 +236,68 @@ export default function AutoBlogGeneration() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Target Country</Label>
-                <Select value={config.target_country} onValueChange={(v) => setConfig(c => ({ ...c, target_country: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={config.target_country} onValueChange={(v) => setConfig((c) => ({ ...c, target_country: v }))}>
+                  <SelectTrigger aria-label="Target country"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {COUNTRIES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {COUNTRIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label>Target Audience</Label>
-                <Select value={config.target_audience} onValueChange={(v) => setConfig(c => ({ ...c, target_audience: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select value={config.target_audience} onValueChange={(v) => setConfig((c) => ({ ...c, target_audience: v }))}>
+                  <SelectTrigger aria-label="Target audience"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {AUDIENCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    {AUDIENCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Brand / Company Name</Label>
+              <Label htmlFor="abg-brand">Brand / Company Name</Label>
               <Input
+                id="abg-brand"
                 placeholder="e.g., Acme Inc."
                 value={config.brand_name}
-                onChange={(e) => setConfig(c => ({ ...c, brand_name: e.target.value }))}
+                onChange={(e) => setConfig((c) => ({ ...c, brand_name: e.target.value }))}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>Primary Color</Label>
+                <Label htmlFor="abg-primary">Primary Color</Label>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
+                    aria-label="Primary color picker"
                     value={config.primary_color}
-                    onChange={(e) => setConfig(c => ({ ...c, primary_color: e.target.value }))}
+                    onChange={(e) => setConfig((c) => ({ ...c, primary_color: e.target.value }))}
                     className="w-10 h-9 rounded border cursor-pointer flex-shrink-0"
                   />
                   <Input
+                    id="abg-primary"
                     value={config.primary_color}
-                    onChange={(e) => setConfig(c => ({ ...c, primary_color: e.target.value }))}
+                    onChange={(e) => setConfig((c) => ({ ...c, primary_color: e.target.value }))}
                     placeholder="#0A66C2"
                     className="font-mono text-xs"
                   />
                 </div>
               </div>
               <div className="space-y-2">
-                <Label>Secondary <span className="text-xs text-muted-foreground">(optional)</span></Label>
+                <Label htmlFor="abg-secondary">Secondary <span className="text-xs text-muted-foreground">(optional)</span></Label>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
+                    aria-label="Secondary color picker"
                     value={config.secondary_color || "#ffffff"}
-                    onChange={(e) => setConfig(c => ({ ...c, secondary_color: e.target.value }))}
+                    onChange={(e) => setConfig((c) => ({ ...c, secondary_color: e.target.value }))}
                     className="w-10 h-9 rounded border cursor-pointer flex-shrink-0"
                   />
                   <Input
+                    id="abg-secondary"
                     value={config.secondary_color}
-                    onChange={(e) => setConfig(c => ({ ...c, secondary_color: e.target.value }))}
+                    onChange={(e) => setConfig((c) => ({ ...c, secondary_color: e.target.value }))}
                     placeholder="(optional)"
                     className="font-mono text-xs"
                   />
@@ -237,47 +309,32 @@ export default function AutoBlogGeneration() {
               <Label>Word Count: {config.word_count_min}–{config.word_count_max}</Label>
               <Slider
                 value={[config.word_count_min, config.word_count_max]}
-                onValueChange={([min, max]) => setConfig(c => ({ ...c, word_count_min: min, word_count_max: max }))}
+                onValueChange={([min, max]) => setConfig((c) => ({ ...c, word_count_min: min, word_count_max: max }))}
                 min={500}
                 max={4000}
                 step={100}
                 minStepsBetweenThumbs={2}
+                aria-label="Word count range"
               />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Post Status</Label>
-              <Select value={config.post_status} onValueChange={(v) => setConfig(c => ({ ...c, post_status: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {POST_STATUSES.map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
             </div>
 
             <Separator />
 
-            <div className="flex items-center justify-between">
-              <Label htmlFor="auto-image" className="text-sm">Auto-generate images</Label>
-              <Switch
-                id="auto-image"
-                checked={config.auto_image}
-                onCheckedChange={(v) => setConfig(c => ({ ...c, auto_image: v }))}
-              />
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Posts are saved as drafts in a change set. Review, validate and submit it for approval in Change Sets.
+            </p>
 
-            <div className="flex items-center justify-between">
-              <Label htmlFor="auto-seo" className="text-sm">Auto-optimize SEO</Label>
-              <Switch
-                id="auto-seo"
-                checked={config.auto_seo}
-                onCheckedChange={(v) => setConfig(c => ({ ...c, auto_seo: v }))}
-              />
-            </div>
-
-            <Button className="w-full" onClick={handleGenerate} disabled={generating || !config.topic.trim()}>
-              {generating ? <><Loader2 size={14} className="animate-spin mr-2" /> Generating...</> : <><Play size={14} className="mr-2" /> Generate Posts</>}
-            </Button>
+            <GatedButton
+              minRole="editor"
+              blocked={generateBlocked}
+              className="w-full"
+              onClick={handleGenerate}
+              disabled={generating || !config.topic.trim()}
+            >
+              {generating
+                ? <><Loader2 size={14} className="animate-spin mr-2" /> Generating...</>
+                : <><Play size={14} className="mr-2" /> Create change set</>}
+            </GatedButton>
           </CardContent>
         </Card>
 
@@ -286,11 +343,18 @@ export default function AutoBlogGeneration() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <FileText size={16} /> Generated Posts
+                <FileText size={16} /> Proposed Posts
                 {generatedPosts.length > 0 && (
                   <Badge variant="outline" className="ml-auto">{generatedPosts.length} posts</Badge>
                 )}
               </CardTitle>
+              {changesetId && (
+                <Button asChild variant="outline" size="sm" className="w-fit mt-2">
+                  <Link to={`/changesets/${changesetId}`}>
+                    <GitPullRequest size={14} className="mr-2" aria-hidden="true" /> Review change set
+                  </Link>
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               {generatedPosts.length > 0 ? (
@@ -306,10 +370,11 @@ export default function AutoBlogGeneration() {
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium text-sm truncate">{post.title}</h4>
                           <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                            {post.excerpt || post.content?.replace(/<[^>]+>/g, "").slice(0, 120) + "..."}
+                            {post.excerpt || `${(post.content || post.body || "").replace(/<[^>]+>/g, "").slice(0, 120)}...`}
                           </p>
                           <div className="flex gap-2 mt-2">
-                            <Badge variant="outline" className="text-xs capitalize">{post.status || "draft"}</Badge>
+                            <Badge variant="outline" className="text-xs capitalize">{post.status || "proposed"}</Badge>
+                            {post.slug && <Badge variant="outline" className="text-xs font-mono">{post.slug}</Badge>}
                             {post.word_count && <Badge variant="outline" className="text-xs">{post.word_count} words</Badge>}
                             {post.seo_score && (
                               <Badge variant="outline" className={`text-xs ${post.seo_score >= 80 ? "text-emerald-500" : post.seo_score >= 60 ? "text-yellow-500" : "text-red-500"}`}>
@@ -319,15 +384,10 @@ export default function AutoBlogGeneration() {
                           </div>
                         </div>
                         <div className="flex gap-1 shrink-0">
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setPreviewPost(post)} title="Preview">
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => setPreviewPost(post)} title="Preview" aria-label={`Preview ${post.title || "post"}`}>
                             <Eye size={14} />
                           </Button>
-                          {post.url && (
-                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0" asChild title="Open in WordPress">
-                              <a href={post.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} /></a>
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500" onClick={() => handleDelete(i)} title="Remove">
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-red-500" onClick={() => handleDelete(i)} title="Remove from list" aria-label={`Remove ${post.title || "post"} from list`}>
                             <Trash2 size={14} />
                           </Button>
                         </div>
@@ -338,8 +398,8 @@ export default function AutoBlogGeneration() {
               ) : (
                 <div className="text-center text-muted-foreground py-16">
                   <Bot size={32} className="mx-auto mb-3 opacity-40" />
-                  <p>Configure your settings and generate blog posts</p>
-                  <p className="text-xs mt-1">Posts will appear here once generated</p>
+                  <p>Configure your settings and create a change set of draft posts</p>
+                  <p className="text-xs mt-1">Proposed posts will appear here once generated</p>
                 </div>
               )}
             </CardContent>
@@ -354,10 +414,14 @@ export default function AutoBlogGeneration() {
             <DialogTitle>{previewPost?.title}</DialogTitle>
           </DialogHeader>
           <ScrollArea className="h-[60vh]">
-            <div
-              className="prose prose-invert max-w-none p-4"
-              dangerouslySetInnerHTML={{ __html: previewPost?.content || "" }}
-            />
+            {previewPost?.content ? (
+              <div
+                className="prose prose-invert max-w-none p-4"
+                dangerouslySetInnerHTML={{ __html: previewPost.content }}
+              />
+            ) : (
+              <pre className="whitespace-pre-wrap text-sm p-4 font-sans">{previewPost?.body || ""}</pre>
+            )}
           </ScrollArea>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPreviewPost(null)}>Close</Button>

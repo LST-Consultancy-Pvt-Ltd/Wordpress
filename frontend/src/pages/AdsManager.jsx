@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -212,12 +213,12 @@ function MetaAdsTab() {
           </div>
           <div className="flex gap-2">
             {!connected
-              ? <Button onClick={handleConnect} disabled={connectLoading} size="sm" className="gap-1.5">
+              ? <GatedButton minRole="editor" onClick={handleConnect} disabled={connectLoading} size="sm" className="gap-1.5">
                   {connectLoading ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />} Connect
-                </Button>
-              : <Button onClick={handleDisconnect} variant="destructive" size="sm" className="gap-1.5">
+                </GatedButton>
+              : <GatedButton minRole="editor" onClick={handleDisconnect} variant="destructive" size="sm" className="gap-1.5">
                   <XCircle size={14} /> Disconnect
-                </Button>
+                </GatedButton>
             }
           </div>
         </CardContent>
@@ -265,10 +266,10 @@ function MetaAdsTab() {
                       <td className="py-3 pr-4">
                         <div className="flex gap-1">
                           {c.status === "ACTIVE"
-                            ? <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("pause", c.id)} title="Pause"><Pause size={13}/></Button>
-                            : <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("resume", c.id)} title="Resume"><Play size={13}/></Button>
+                            ? <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("pause", c.id)} title="Pause"><Pause size={13}/></GatedButton>
+                            : <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("resume", c.id)} title="Resume"><Play size={13}/></GatedButton>
                           }
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:text-red-300" onClick={() => handleCampaignAction("delete", c.id)} title="Delete"><Trash2 size={13}/></Button>
+                          <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:text-red-300" onClick={() => handleCampaignAction("delete", c.id)} title="Delete"><Trash2 size={13}/></GatedButton>
                         </div>
                       </td>
                     </tr>
@@ -328,10 +329,10 @@ function MetaAdsTab() {
                 className="bg-muted/30 border-border/50" />
             </div>
           </div>
-          <Button onClick={handleGenerate} disabled={generating} className="gap-1.5">
+          <GatedButton minRole="editor" onClick={handleGenerate} disabled={generating} className="gap-1.5">
             {generating ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
             {generating ? "Generating..." : "Generate with AI"}
-          </Button>
+          </GatedButton>
 
           {/* Preview Cards */}
           <AnimatePresence>
@@ -368,11 +369,11 @@ function MetaAdsTab() {
                     );
                   })}
                 </div>
-                <Button onClick={handleLaunch} disabled={launching || approved.length === 0 || !connected}
+                <GatedButton minRole="editor" onClick={handleLaunch} disabled={launching || approved.length === 0 || !connected}
                   className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
                   {launching ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                   Launch {approved.length} Approved Ad{approved.length !== 1 ? "s" : ""}
-                </Button>
+                </GatedButton>
               </motion.div>
             )}
           </AnimatePresence>
@@ -413,9 +414,9 @@ function MetaAdsTab() {
               </motion.div>
             )}
           </AnimatePresence>
-          <Button size="sm" onClick={handleSaveAutopilot} disabled={savingAutopilot} className="gap-1.5">
+          <GatedButton minRole="editor" size="sm" onClick={handleSaveAutopilot} disabled={savingAutopilot} className="gap-1.5">
             {savingAutopilot ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Save Settings
-          </Button>
+          </GatedButton>
         </CardContent>
       </Card>
     </div>
@@ -573,9 +574,9 @@ function GoogleAdsTab() {
                   {oauthLoading ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
                   Connect with Google OAuth
                 </Button>
-              : <Button onClick={() => { setConnected(false); setCampaigns([]); }} variant="destructive" size="sm" className="gap-1.5">
+              : <GatedButton minRole="editor" onClick={() => { setConnected(false); setCampaigns([]); }} variant="destructive" size="sm" className="gap-1.5">
                   <XCircle size={14} /> Disconnect
-                </Button>
+                </GatedButton>
             }
           </div>
         </CardContent>
@@ -591,10 +592,10 @@ function GoogleAdsTab() {
             <Button variant="ghost" size="sm" onClick={loadCampaigns} disabled={loadingCampaigns || !connected} className="gap-1.5">
               {loadingCampaigns ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Refresh
             </Button>
-            <Button variant="outline" size="sm" onClick={handleBidSuggestions} disabled={loadingBids || !connected} className="gap-1.5">
+            <GatedButton minRole="editor" variant="outline" size="sm" onClick={handleBidSuggestions} disabled={loadingBids || !connected} className="gap-1.5">
               {loadingBids ? <Loader2 size={14} className="animate-spin" /> : <TrendingUp size={14} />}
               {loadingBids ? "Analyzing..." : "Bid Suggestions"}
-            </Button>
+            </GatedButton>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -630,10 +631,10 @@ function GoogleAdsTab() {
                       <td className="py-3 pr-4">
                         <div className="flex gap-1">
                           {c.status === "ENABLED"
-                            ? <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("pause", c.id)} title="Pause"><Pause size={13}/></Button>
-                            : <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("resume", c.id)} title="Resume"><Play size={13}/></Button>
+                            ? <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("pause", c.id)} title="Pause"><Pause size={13}/></GatedButton>
+                            : <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7" onClick={() => handleCampaignAction("resume", c.id)} title="Resume"><Play size={13}/></GatedButton>
                           }
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:text-red-300" onClick={() => handleCampaignAction("delete", c.id)} title="Delete"><Trash2 size={13}/></Button>
+                          <GatedButton minRole="editor" size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:text-red-300" onClick={() => handleCampaignAction("delete", c.id)} title="Delete"><Trash2 size={13}/></GatedButton>
                         </div>
                       </td>
                     </tr>
@@ -713,10 +714,10 @@ function GoogleAdsTab() {
                 className="bg-muted/30 border-border/50" />
             </div>
           </div>
-          <Button onClick={handleGenerate} disabled={generating} className="gap-1.5">
+          <GatedButton minRole="editor" onClick={handleGenerate} disabled={generating} className="gap-1.5">
             {generating ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
             {generating ? "Generating..." : "Generate with AI"}
-          </Button>
+          </GatedButton>
 
           {/* Preview */}
           <AnimatePresence>
@@ -766,11 +767,11 @@ function GoogleAdsTab() {
                     );
                   })}
                 </div>
-                <Button onClick={handleLaunch} disabled={launching || approved.length === 0 || !connected}
+                <GatedButton minRole="editor" onClick={handleLaunch} disabled={launching || approved.length === 0 || !connected}
                   className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
                   {launching ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                   Launch {approved.length} Ad Group{approved.length !== 1 ? "s" : ""}
-                </Button>
+                </GatedButton>
               </motion.div>
             )}
           </AnimatePresence>
@@ -814,10 +815,10 @@ function GoogleAdsTab() {
                             <td className="py-3 pr-4">{fmt.money(t.cost)}</td>
                             <td className="py-3 pr-4">
                               <div className="flex gap-1">
-                                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-red-400 hover:text-red-300"
+                                <GatedButton minRole="editor" size="sm" variant="ghost" className="h-7 text-xs gap-1 text-red-400 hover:text-red-300"
                                   onClick={() => handleNegativeKw(t.search_term, t.campaign_id)}>
                                   <XCircle size={12} /> Negative KW
-                                </Button>
+                                </GatedButton>
                               </div>
                             </td>
                           </tr>

@@ -6,16 +6,19 @@ import {
   Zap, Smartphone, MapPin, Share2, ShieldCheck, Unlink, LineChart, Activity, ClipboardCheck,
 } from "lucide-react";
 import { Card, CardContent } from "../components/ui/card";
-import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Switch } from "../components/ui/switch";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { useNavigate } from "react-router-dom";
 import {
   getSites, scanOnPageSEO, getOnPageSummary, getOnPageCategory, getOnPageHistory,
   listOnPagePages, setPageMeta, clearPageMeta, setFocusKeyword, clearFocusKeyword,
-  getNextjsSnippets, exportOnPageAudit, subscribeToTask, nextjsBridgeHealth,
+  getOnPageSnippets, exportOnPageAudit, subscribeToTask, getSiteHealth, apiErrorMessage,
 } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
+import { extractChangeSet, notifyChangeSetCreated } from "../lib/changesets";
+import { writeBlockedReason } from "../lib/capabilities";
 import { toast } from "sonner";
 import { cn } from "../lib/utils";
 import { scoreChip } from "../components/onpage/shared";
@@ -52,6 +55,7 @@ const CATEGORY_ICONS = {
 };
 
 export default function OnPageSEO() {
+  const navigate = useNavigate();
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState("");
   const [summary, setSummary] = useState(null);
@@ -68,11 +72,11 @@ export default function OnPageSEO() {
   const [maxPages, setMaxPages] = useState("25");
   const [checkLinks, setCheckLinks] = useState(true);
   const [measureCwv, setMeasureCwv] = useState(false);
-  const [bridgeStatus, setBridgeStatus] = useState(null); // { loading, ok, canWrite, error }
+  const [bridgeStatus, setBridgeStatus] = useState(null); // { loading, ok, status, error }
 
   useEffect(() => {
     getSites()
-      .then((r) => { setSites(r.data); if (r.data.length) setSelectedSite(r.data[0].id); })
+      .then((r) => { const list = Array.isArray(r.data) ? r.data : r.data?.items || []; setSites(list); if (list.length) setSelectedSite(list[0].id); })
       .catch(() => toast.error("Could not load your sites"));
   }, []);
 
@@ -82,18 +86,18 @@ export default function OnPageSEO() {
   // can tell you — a 401/timeout there looks identical to "nothing to edit
   // yet" everywhere else in the UI, so it gets its own explicit check.
   useEffect(() => {
-    if (!selectedSite || site?.platform !== "nextjs") { setBridgeStatus(null); return; }
+    if (!selectedSite) { setBridgeStatus(null); return; }
     let cancelled = false;
     setBridgeStatus({ loading: true });
-    nextjsBridgeHealth(selectedSite)
-      .then((r) => { if (!cancelled) setBridgeStatus({ loading: false, ok: true, ...r.data }); })
+    getSiteHealth(selectedSite)
+      .then((r) => { if (!cancelled) setBridgeStatus({ loading: false, ok: r.data?.status !== "down", status: r.data?.status }); })
       .catch((e) => {
         if (!cancelled) {
-          setBridgeStatus({ loading: false, ok: false, error: e.response?.data?.detail || "Bridge unreachable" });
+          setBridgeStatus({ loading: false, ok: false, error: apiErrorMessage(e, "Bridge unreachable") });
         }
       });
     return () => { cancelled = true; };
-  }, [selectedSite, site?.platform]);
+  }, [selectedSite]);
 
   const loadAll = useCallback(async () => {
     if (!selectedSite) return;
@@ -136,15 +140,15 @@ export default function OnPageSEO() {
       const r = await getOnPageCategory(selectedSite, key);
       setCategoryCache((c) => ({ ...c, [key]: r.data }));
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not load that section");
+      toast.error(apiErrorMessage(e) || "Could not load that section");
     } finally { setCatLoading(false); }
   }, [selectedSite, categoryCache]);
 
   const openCode = useCallback(async () => {
     setView("code");
     if (snippets) return;
-    try { const r = await getNextjsSnippets(selectedSite); setSnippets(r.data); }
-    catch (e) { toast.error(e.response?.data?.detail || "Could not build the snippets"); }
+    try { const r = await getOnPageSnippets(selectedSite); setSnippets(r.data); }
+    catch (e) { toast.error(apiErrorMessage(e) || "Could not build the snippets"); }
   }, [selectedSite, snippets]);
 
   const handleScan = async () => {
@@ -178,37 +182,32 @@ export default function OnPageSEO() {
       });
     } catch (e) {
       setScanning(false); setProgress("");
-      toast.error(e.response?.data?.detail || "Could not start the audit");
+      toast.error(apiErrorMessage(e) || "Could not start the audit");
     }
   };
 
+  // Metadata edits never write to the site directly: each save creates a
+  // change set (metadata.set / metadata.clear) that is reviewed and applied
+  // in Change Sets.
   const handleSaveMeta = async (body) => {
     const r = await setPageMeta(selectedSite, body);
-    await loadPages();
-    const rs = r.data?.rescored;
-    const unsupported = r.data?.unsupported_fields || [];
-    if (unsupported.length) {
-      toast.warning(
-        `Saved ${(r.data.applied_fields || []).join(", ") || "nothing"} — this bridge cannot store ` +
-        `${unsupported.join(", ")}. Use the Fix code tab for those.`
-      );
-    } else if (rs?.score != null) {
-      toast.success(`Saved — ${body.path} now scores ${rs.score}/100 live`);
-    } else if (rs?.error) {
-      toast.warning(`Saved, but the live page could not be re-checked: ${rs.error}`);
-    } else {
-      toast.success(`Saved meta for ${body.path}`);
+    notifyChangeSetCreated(extractChangeSet(r.data), navigate);
+    if (r.data?.opted_in === false) {
+      toast.warning(`${body.path} has not opted in to metadata overrides`, {
+        description: "The change set can be applied, but the override won't take effect until the route uses withAutomationMetadata.",
+      });
     }
+    await loadPages();
     return r;
   };
 
   const handleClearMeta = async (path) => {
     try {
-      await clearPageMeta(selectedSite, path);
+      const r = await clearPageMeta(selectedSite, path);
+      notifyChangeSetCreated(extractChangeSet(r.data), navigate);
       await loadPages();
-      toast.success("Cleared — the page's own metadata applies again");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not clear the override");
+      toast.error(apiErrorMessage(e, "Could not create the change set"));
     }
   };
 
@@ -230,7 +229,7 @@ export default function OnPageSEO() {
       await loadPages();
       toast.success("Focus keyword cleared");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Could not clear the keyword");
+      toast.error(apiErrorMessage(e) || "Could not clear the keyword");
     }
   };
 
@@ -246,7 +245,7 @@ export default function OnPageSEO() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Nothing to export yet — run an audit first");
+      toast.error(apiErrorMessage(e) || "Nothing to export yet — run an audit first");
     }
   };
 
@@ -259,22 +258,19 @@ export default function OnPageSEO() {
         <div>
           <h1 className="page-title flex items-center gap-2 mb-1"><Gauge size={24} />On-Page SEO</h1>
           <p className="text-muted-foreground text-sm">
-            Every SEO area, scored from the rendered HTML of your live pages — so it works the same on
-            Next.js, WordPress or any other stack.
-            {site && <span className="ml-1 font-mono text-xs">{site.url}</span>}
+            Every SEO area, scored from the rendered HTML of your live pages. Fixes become change sets.
+            {site && <span className="ml-1 font-mono text-xs">{site.base_url}</span>}
           </p>
-          {site?.platform === "nextjs" && bridgeStatus && (
+          {bridgeStatus && (
             <p className="text-xs mt-1 flex items-center gap-1.5">
               {bridgeStatus.loading ? (
                 <span className="text-muted-foreground flex items-center gap-1">
-                  <Loader2 size={11} className="animate-spin" />Checking SEO Bridge connection…
+                  <Loader2 size={11} className="animate-spin" />Checking bridge connection…
                 </span>
               ) : bridgeStatus.ok ? (
-                <span className={cn(bridgeStatus.canWrite === false ? "text-yellow-500" : "text-emerald-500")}>
-                  ● Bridge connected
-                  {bridgeStatus.canWrite === false && " — content directory is not writable"}
-                  {typeof bridgeStatus.postCount === "number" && bridgeStatus.canWrite !== false &&
-                    ` · ${bridgeStatus.postCount} post(s)`}
+                <span className={cn(bridgeStatus.status === "degraded" || !site?.writes_enabled ? "text-yellow-500" : "text-emerald-500")}>
+                  ● Bridge {bridgeStatus.status === "degraded" ? "degraded" : "connected"}
+                  {!site?.writes_enabled && " — read-only (change sets can be created but not applied)"}
                 </span>
               ) : (
                 <span className="text-red-400">● Bridge not reachable — {bridgeStatus.error}</span>
@@ -283,11 +279,11 @@ export default function OnPageSEO() {
           )}
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-56"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-56" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>
             {sites.map((s) => (
               <SelectItem key={s.id} value={s.id}>
-                {s.name}{s.platform && s.platform !== "wordpress" ? ` · ${s.platform}` : ""}
+                {s.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -321,12 +317,12 @@ export default function OnPageSEO() {
               <span className="text-muted-foreground ml-1">(PageSpeed, ~40s per URL)</span>
             </Label>
           </div>
-          <Button className="h-8 text-xs ml-auto" onClick={handleScan}
+          <GatedButton minRole="editor" className="h-8 text-xs ml-auto" onClick={handleScan}
                   disabled={scanning || !selectedSite}>
             {scanning
               ? <><Loader2 size={12} className="mr-1.5 animate-spin" />Auditing…</>
               : <><ScanLine size={12} className="mr-1.5" />Run full audit</>}
-          </Button>
+          </GatedButton>
         </CardContent>
       </Card>
 
@@ -418,10 +414,9 @@ export default function OnPageSEO() {
                          onSaveMeta={handleSaveMeta} onClearMeta={handleClearMeta}
                          onSaveKeyword={handleSaveKeyword} onClearKeyword={handleClearKeyword}
                          onReload={loadPages} siteId={selectedSite}
-                         platform={site?.platform} siteUrl={site?.url} />
+                         siteBaseUrl={site?.base_url} writeBlocked={writeBlockedReason(site, "metadata.write")} />
           ) : view === "code" ? (
-            <SnippetsPanel snippets={snippets?.snippets} note={snippets?.note}
-                           platform={snippets?.platform} />
+            <SnippetsPanel snippets={snippets?.snippets} note={snippets?.note} siteId={selectedSite} />
           ) : catLoading && !activeCategory ? (
             <Card><CardContent className="py-16 text-center">
               <Loader2 size={20} className="animate-spin mx-auto text-muted-foreground" />

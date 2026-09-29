@@ -1,14 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Building2, Save, Loader2, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
-import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
-import { getSites, getCompanyProfile, updateCompanyProfile } from "../lib/api";
+import { getSites, getCompanyProfile, updateCompanyProfile, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 const EMPTY = { business_name: "", address: "", phone: "", website: "", description: "", verified: false };
 
@@ -20,11 +20,15 @@ export default function CompanyProfile() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    getSites().then(r => { setSites(r.data); if (r.data.length > 0) setSelectedSite(r.data[0].id); }).catch(() => {});
+    getSites().then(r => {
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
+    }).catch(() => {});
   }, []);
-  useEffect(() => { if (selectedSite) load(); }, [selectedSite]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await getCompanyProfile(selectedSite);
@@ -38,7 +42,9 @@ export default function CompanyProfile() {
       });
     } catch { setForm(EMPTY); }
     finally { setLoading(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => { load(); }, [load]);
 
   const save = async (verify) => {
     setSaving(true);
@@ -49,7 +55,7 @@ export default function CompanyProfile() {
       setForm(prev => ({ ...prev, verified: r.data.verified }));
       toast.success(verify ? "Profile verified — Local Citations and other features will now use these facts" : "Profile saved");
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to save");
+      toast.error(apiErrorMessage(e, "Failed to save"));
     } finally { setSaving(false); }
   };
 
@@ -64,7 +70,7 @@ export default function CompanyProfile() {
           </p>
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
@@ -107,12 +113,12 @@ export default function CompanyProfile() {
                 <Input id="cp-desc" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <Button variant="outline" disabled={saving} onClick={() => save(undefined)}>
+                <GatedButton minRole="editor" variant="outline" disabled={saving || !selectedSite} onClick={() => save(undefined)}>
                   {saving ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}Save Draft
-                </Button>
-                <Button disabled={saving || !form.business_name || !form.address || !form.phone} onClick={() => save(true)}>
-                  <ShieldCheck size={14} className="mr-1.5" />Save & Verify
-                </Button>
+                </GatedButton>
+                <GatedButton minRole="editor" disabled={saving || !selectedSite || !form.business_name || !form.address || !form.phone} onClick={() => save(true)}>
+                  <ShieldCheck size={14} className="mr-1.5" />Save &amp; Verify
+                </GatedButton>
               </div>
             </>
           )}

@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   RefreshCw,
@@ -10,7 +11,9 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
-  Search
+  Search,
+  Eye,
+  GitPullRequest,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -30,10 +33,26 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { getSites, getContentRefreshItems, scanForRefresh, refreshContent, refreshContentDryRun } from "../lib/api";
-import ImpactBadge from "../components/ImpactBadge";
-import ManualApplySheet from "../components/ManualApplySheet";
-import { useApplyMode } from "../hooks/useApplyMode";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import {
+  getSites,
+  getContentRefreshItems,
+  scanForRefresh,
+  refreshContent,
+  refreshContentDryRun,
+  listItems,
+  apiErrorMessage,
+} from "../lib/api";
+import { extractChangeSet, notifyChangeSetCreated } from "../lib/changesets";
+import { writeBlockedReason } from "../lib/capabilities";
+import GatedButton from "../components/sa/GatedButton";
 import { toast } from "sonner";
 
 export default function ContentRefresh() {
@@ -43,95 +62,82 @@ export default function ContentRefresh() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [refreshing, setRefreshing] = useState({});
-  const [lastRefreshImpact, setLastRefreshImpact] = useState(null);
-
-  // Apply Mode
-  const { isManual } = useApplyMode();
-  const [manualSheet, setManualSheet] = useState({ open: false, title: "", wpAdminUrl: "", fields: [], instructions: "" });
-  const openManualSheet = (config) => setManualSheet({ open: true, ...config });
-  const closeManualSheet = () => setManualSheet((prev) => ({ ...prev, open: false }));
+  const [previewing, setPreviewing] = useState({});
+  const [preview, setPreview] = useState(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    loadSites();
+    getSites()
+      .then((response) => {
+        const list = listItems(response.data);
+        setSites(list);
+        if (list.length > 0) setSelectedSite(list[0].id);
+      })
+      .catch(() => toast.error("Failed to load sites"));
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) {
-      loadItems();
-    }
-  }, [selectedSite]);
-
-  const loadSites = async () => {
-    try {
-      const response = await getSites();
-      setSites(response.data);
-      if (response.data.length > 0) {
-        setSelectedSite(response.data[0].id);
-      }
-    } catch (error) {
-      toast.error("Failed to load sites");
-    }
-  };
-
-  const loadItems = async () => {
+  const loadItems = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const response = await getContentRefreshItems(selectedSite);
-      setItems(response.data);
-    } catch (error) {
-      console.error("Failed to load items");
+      setItems(listItems(response.data));
+    } catch {
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadItems();
+  }, [loadItems]);
+
+  const site = sites.find((s) => s.id === selectedSite) || null;
+  const writeBlocked = writeBlockedReason(site, "content.write");
 
   const handleScan = async () => {
     setScanning(true);
     try {
       const response = await scanForRefresh(selectedSite);
-      setItems(response.data.items);
-      toast.success(`Found ${response.data.items_found} items needing refresh`);
+      setItems(listItems(response.data?.items));
+      toast.success(`Found ${response.data?.items_found ?? 0} items needing refresh`);
     } catch (error) {
-      toast.error("Failed to scan content");
+      toast.error(apiErrorMessage(error, "Failed to scan content"));
     } finally {
       setScanning(false);
     }
   };
 
-  const handleRefresh = async (itemId) => {
-    const siteData = sites.find((s) => s.id === selectedSite);
-    const siteUrl = siteData?.url || "";
-    const item = items.find((i) => i.id === itemId);
-    if (isManual) {
-      setRefreshing({ ...refreshing, [itemId]: true });
-      try {
-        const r = await refreshContentDryRun(selectedSite, itemId);
-        openManualSheet({
-          title: "AI Refresh Content",
-          wpAdminUrl: `${siteUrl}/wp-admin/post.php?post=${r.data.wp_id || item?.wp_id}&action=edit`,
-          fields: [
-            { label: "Post Title", value: r.data.post_title || item?.title || "", type: "text" },
-            { label: "Refreshed Content (HTML)", value: r.data.new_content || "", type: "html" },
-          ],
-          instructions: "Replace the existing content in the WordPress editor for this post with the refreshed version below.",
-        });
-      } catch (error) {
-        toast.error(error.response?.data?.detail || "Failed to get refreshed content");
-      } finally {
-        setRefreshing({ ...refreshing, [itemId]: false });
-      }
-      return;
+  const handlePreview = async (item) => {
+    setPreviewing((prev) => ({ ...prev, [item.id]: true }));
+    try {
+      const r = await refreshContentDryRun(selectedSite, item.id);
+      setPreview({
+        item,
+        title: r.data?.post_title || item.title || "",
+        content: r.data?.new_content || "",
+      });
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "Failed to preview refreshed content"));
+    } finally {
+      setPreviewing((prev) => ({ ...prev, [item.id]: false }));
     }
-    setRefreshing({ ...refreshing, [itemId]: true });
+  };
+
+  const handleRefresh = async (itemId) => {
+    setRefreshing((prev) => ({ ...prev, [itemId]: true }));
     try {
       const r = await refreshContent(selectedSite, itemId);
-      setLastRefreshImpact(r.data?.impact_estimate || null);
-      toast.success("Content refreshed with AI!");
+      notifyChangeSetCreated(extractChangeSet(r.data), navigate, {
+        title: "Change set created → review in Change Sets",
+      });
+      setPreview(null);
       loadItems();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Failed to refresh content");
+      toast.error(apiErrorMessage(error, "Failed to create change set"));
     } finally {
-      setRefreshing({ ...refreshing, [itemId]: false });
+      setRefreshing((prev) => ({ ...prev, [itemId]: false }));
     }
   };
 
@@ -174,13 +180,13 @@ export default function ContentRefresh() {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.1 }}
           >
-            Keep your content fresh and up-to-date with AI
+            Find outdated content and propose AI refreshes as draft change sets for review
           </motion.p>
         </div>
 
         <div className="flex items-center gap-3">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-[200px]" data-testid="site-select">
+            <SelectTrigger className="w-[200px]" data-testid="site-select" aria-label="Site">
               <SelectValue placeholder="Select a site" />
             </SelectTrigger>
             <SelectContent>
@@ -192,7 +198,8 @@ export default function ContentRefresh() {
             </SelectContent>
           </Select>
 
-          <Button
+          <GatedButton
+            minRole="editor"
             className="btn-primary"
             onClick={handleScan}
             disabled={!selectedSite || scanning}
@@ -204,7 +211,7 @@ export default function ContentRefresh() {
               <Search size={16} className="mr-2" />
             )}
             Scan Content
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -277,16 +284,6 @@ export default function ContentRefresh() {
             </motion.div>
           </div>
 
-          {lastRefreshImpact && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-6"
-            >
-              <ImpactBadge impact={lastRefreshImpact} />
-            </motion.div>
-          )}
-
           {/* Content Table */}
           <Card className="content-card">
             <CardHeader>
@@ -333,7 +330,7 @@ export default function ContentRefresh() {
                                 rel="noopener noreferrer"
                                 className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 mt-1"
                               >
-                                View <ExternalLink size={10} />
+                                View <ExternalLink size={10} aria-hidden="true" />
                               </a>
                             )}
                           </div>
@@ -353,22 +350,43 @@ export default function ContentRefresh() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            className="btn-primary"
-                            onClick={() => handleRefresh(item.id)}
-                            disabled={refreshing[item.id] || item.status === "refreshed"}
-                            data-testid={`refresh-${item.id}`}
-                          >
-                            {refreshing[item.id] ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <>
-                                <Sparkles size={14} className="mr-1" />
-                                Refresh
-                              </>
-                            )}
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            <GatedButton
+                              minRole="editor"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePreview(item)}
+                              disabled={!!previewing[item.id]}
+                              data-testid={`preview-${item.id}`}
+                            >
+                              {previewing[item.id] ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <>
+                                  <Eye size={14} className="mr-1" aria-hidden="true" />
+                                  Preview
+                                </>
+                              )}
+                            </GatedButton>
+                            <GatedButton
+                              minRole="editor"
+                              blocked={writeBlocked}
+                              size="sm"
+                              className="btn-primary"
+                              onClick={() => handleRefresh(item.id)}
+                              disabled={!!refreshing[item.id] || item.status === "refreshed"}
+                              data-testid={`refresh-${item.id}`}
+                            >
+                              {refreshing[item.id] ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <>
+                                  <GitPullRequest size={14} className="mr-1" aria-hidden="true" />
+                                  Create change set
+                                </>
+                              )}
+                            </GatedButton>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -413,9 +431,9 @@ export default function ContentRefresh() {
                     <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
                       <Sparkles size={24} className="text-primary" />
                     </div>
-                    <h4 className="font-medium mb-1">3. Refresh</h4>
+                    <h4 className="font-medium mb-1">3. Propose</h4>
                     <p className="text-sm text-muted-foreground">
-                      AI rewrites and updates content while maintaining the original message
+                      AI rewrites the content and saves it as a draft change set; nothing changes on the site until it is reviewed, approved and applied in Change Sets
                     </p>
                   </div>
                 </div>
@@ -425,14 +443,42 @@ export default function ContentRefresh() {
         </>
       )}
 
-      <ManualApplySheet
-        open={manualSheet.open}
-        onClose={closeManualSheet}
-        title={manualSheet.title}
-        wpAdminUrl={manualSheet.wpAdminUrl}
-        fields={manualSheet.fields}
-        instructions={manualSheet.instructions}
-      />
+      <Dialog open={!!preview} onOpenChange={(open) => { if (!open) setPreview(null); }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Refresh preview</DialogTitle>
+            <DialogDescription>
+              Dry run for “{preview?.title}”. Nothing has been changed. Create a change set to propose this version for review.
+            </DialogDescription>
+          </DialogHeader>
+          <pre
+            className="bg-muted/30 border border-border/40 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap max-h-[50vh] overflow-y-auto"
+            tabIndex={0}
+            aria-label="Refreshed content preview"
+          >
+            {preview?.content || "The preview returned no content."}
+          </pre>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreview(null)}>Close</Button>
+            {preview?.item && (
+              <GatedButton
+                minRole="editor"
+                blocked={writeBlocked}
+                className="btn-primary"
+                onClick={() => handleRefresh(preview.item.id)}
+                disabled={!!refreshing[preview.item.id] || preview.item.status === "refreshed"}
+              >
+                {refreshing[preview.item.id] ? (
+                  <Loader2 size={14} className="mr-1 animate-spin" />
+                ) : (
+                  <GitPullRequest size={14} className="mr-1" aria-hidden="true" />
+                )}
+                Create change set
+              </GatedButton>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

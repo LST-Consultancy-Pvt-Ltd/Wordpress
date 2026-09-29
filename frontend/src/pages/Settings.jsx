@@ -1,8 +1,8 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import {
-  Settings as SettingsIcon, Save, Loader2, Globe, Key, Eye, EyeOff,
-  BarChart3, Search, Clock, Trash2, Plus, RefreshCw, CheckCircle, Users, ShieldCheck,
+  Save, Loader2, Globe, Key, Eye, EyeOff,
+  BarChart3, Clock, Trash2, Plus, RefreshCw, CheckCircle, Users, ShieldCheck,
   PenLine, Pencil
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -22,7 +22,11 @@ import {
   DialogHeader, DialogTitle, DialogTrigger,
 } from "../components/ui/dialog";
 import { getSites, getSettings, updateSettings, getJobs, createJob, deleteJob, getUsers, updateUserRole, register,
-  getWritingStyles, createWritingStyle, updateWritingStyle, deleteWritingStyle, testDataForSEO } from "../lib/api";
+  getWritingStyles, createWritingStyle, updateWritingStyle, deleteWritingStyle, testDataForSEO,
+  listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
+import { useRole } from "../hooks/useRole";
+import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, requiresRoleMessage } from "../lib/roles";
 import { Textarea } from "../components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "../components/ui/alert-dialog";
 import { toast } from "sonner";
@@ -30,8 +34,11 @@ import { toast } from "sonner";
 const JOB_TYPE_LABELS = {
   content_freshness: "Content Freshness Scan",
   seo_health: "SEO Health Check",
-  scheduled_publish: "Scheduled Publish",
 };
+
+const EMPTY_JOB = { job_type: "content_freshness", cron_expression: "0 2 * * 1" };
+const EMPTY_INVITE = { email: "", full_name: "", role: "viewer", password: "" };
+const MIN_PASSWORD = 10;
 
 export default function Settings() {
   const [sites, setSites] = useState([]);
@@ -39,12 +46,11 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showClaudeKey, setShowClaudeKey] = useState(false);
-  const [showAppPassword, setShowAppPassword] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [creatingJob, setCreatingJob] = useState(false);
-  const [newJob, setNewJob] = useState({ job_type: "content_freshness", cron_expression: "0 2 * * 1", post_id: "" });
+  const [newJob, setNewJob] = useState(EMPTY_JOB);
 
   // Writing Styles state
   const [styles, setStyles] = useState([]);
@@ -59,11 +65,13 @@ export default function Settings() {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviting, setInviting] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: "", full_name: "", role: "editor", password: "" });
+  const [inviteForm, setInviteForm] = useState(EMPTY_INVITE);
+  const [inviteError, setInviteError] = useState("");
 
-  // Determine current user role from localStorage
-  const currentUserRole = (() => { try { return JSON.parse(localStorage.getItem("wp_user") || "{}").role || "admin"; } catch { return "admin"; } })();
-  const isAdmin = currentUserRole === "admin";
+  // Current user role comes from the session via useRole.
+  const { role: currentUserRole, can, user: currentUser } = useRole();
+  const isAdmin = can("admin");
+  const isEditor = can("editor");
 
   const [formData, setFormData] = useState({
     openai_api_key: "",
@@ -94,34 +102,32 @@ export default function Settings() {
   const [dfsTestResult, setDfsTestResult] = useState(null);
   const [dfsTesting, setDfsTesting] = useState(false);
 
-  useEffect(() => { loadSites(); if (isAdmin) loadUsers(); loadStyles(); }, []);
-  useEffect(() => { if (selectedSite) { loadSettings(); loadJobs(); } }, [selectedSite]);
-
-  const loadSites = async () => {
+  const loadSites = useCallback(async () => {
     try {
       const r = await getSites();
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     } catch { toast.error("Failed to load sites"); }
-  };
+  }, []);
 
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
       const r = await getUsers();
-      setUsers(r.data || []);
-    } catch { /* viewer — silently ignore */ }
+      setUsers(listItems(r.data));
+    } catch { /* not permitted — silently ignore */ }
     finally { setLoadingUsers(false); }
-  };
+  }, []);
 
-  const loadStyles = async () => {
+  const loadStyles = useCallback(async () => {
     setLoadingStyles(true);
     try {
       const r = await getWritingStyles();
-      setStyles(r.data || []);
+      setStyles(listItems(r.data));
     } catch { /* ignore */ }
     finally { setLoadingStyles(false); }
-  };
+  }, []);
 
   const openNewStyleDialog = () => {
     setEditingStyle(null);
@@ -165,30 +171,36 @@ export default function Settings() {
   };
 
   const handleRoleChange = async (userId, newRole) => {
+    if (!isAdmin) return;
     try {
       await updateUserRole(userId, newRole);
       setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role: newRole } : u));
       toast.success("Role updated");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to update role");
+      toast.error(apiErrorMessage(err, "Failed to update role"));
     }
   };
 
   const handleInvite = async (e) => {
     e.preventDefault();
+    if (inviteForm.password.length < MIN_PASSWORD) {
+      setInviteError(`Temporary password must be at least ${MIN_PASSWORD} characters`);
+      return;
+    }
+    setInviteError("");
     setInviting(true);
     try {
       await register(inviteForm);
-      toast.success(`Invited ${inviteForm.email}`);
+      toast.success(`Invited ${inviteForm.email} as ${ROLE_LABELS[inviteForm.role] || inviteForm.role}`);
       setInviteOpen(false);
-      setInviteForm({ email: "", full_name: "", role: "editor", password: "" });
+      setInviteForm(EMPTY_INVITE);
       loadUsers();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to invite user");
+      toast.error(apiErrorMessage(err, "Failed to invite user"));
     } finally { setInviting(false); }
   };
 
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       const r = await getSettings();
       if (r.data) {
@@ -220,16 +232,21 @@ export default function Settings() {
         });
       }
     } catch { toast.error("Failed to load settings"); }
-  };
+  }, []);
 
-  const loadJobs = async () => {
+  const loadJobs = useCallback(async () => {
+    if (!selectedSite) return;
     setLoadingJobs(true);
     try {
       const r = await getJobs(selectedSite);
-      setJobs(r.data || []);
+      setJobs(listItems(r.data));
     } catch { setJobs([]); }
     finally { setLoadingJobs(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => { loadSites(); loadStyles(); }, [loadSites, loadStyles]);
+  useEffect(() => { if (isAdmin) loadUsers(); }, [isAdmin, loadUsers]);
+  useEffect(() => { if (selectedSite) { loadSettings(); loadJobs(); } }, [selectedSite, loadSettings, loadJobs]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -261,7 +278,7 @@ export default function Settings() {
       await updateSettings(payload);
       toast.success("Settings saved!");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to save settings");
+      toast.error(apiErrorMessage(err, "Failed to save settings"));
     } finally { setSaving(false); }
   };
 
@@ -269,13 +286,13 @@ export default function Settings() {
     e.preventDefault();
     setCreatingJob(true);
     try {
-      await createJob({ site_id: selectedSite, ...newJob, post_id: newJob.post_id || undefined });
+      await createJob({ site_id: selectedSite, ...newJob });
       toast.success("Scheduled job created!");
       setJobDialogOpen(false);
-      setNewJob({ job_type: "content_freshness", cron_expression: "0 2 * * 1", post_id: "" });
+      setNewJob(EMPTY_JOB);
       loadJobs();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to create job");
+      toast.error(apiErrorMessage(err, "Failed to create job"));
     } finally { setCreatingJob(false); }
   };
 
@@ -315,10 +332,10 @@ export default function Settings() {
         <form onSubmit={handleSave} className="space-y-6">
           {/* Sticky save bar */}
           <div className="sticky top-0 z-10 flex justify-end py-2 px-0 bg-background/80 backdrop-blur border-b border-border mb-2 -mx-1 px-1">
-            <Button type="submit" className="btn-primary" disabled={saving || !selectedSite} data-testid="save-settings-btn">
+            <GatedButton minRole="editor" type="submit" className="btn-primary" disabled={saving || !selectedSite} data-testid="save-settings-btn">
               {saving ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Save size={16} className="mr-2" />}
               Save Settings
-            </Button>
+            </GatedButton>
           </div>
           {/* API Configuration */}
           <Card className="content-card">
@@ -342,7 +359,8 @@ export default function Settings() {
                   />
                   <Button type="button" variant="ghost" size="sm"
                     className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                    onClick={() => setShowApiKey(!showApiKey)}>
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    aria-label={showApiKey ? "Hide OpenAI API key" : "Show OpenAI API key"}>
                     {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
                   </Button>
                 </div>
@@ -361,7 +379,8 @@ export default function Settings() {
                   />
                   <Button type="button" variant="ghost" size="sm"
                     className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                    onClick={() => setShowClaudeKey(!showClaudeKey)}>
+                    onClick={() => setShowClaudeKey(!showClaudeKey)}
+                    aria-label={showClaudeKey ? "Hide Anthropic API key" : "Show Anthropic API key"}>
                     {showClaudeKey ? <EyeOff size={14} /> : <Eye size={14} />}
                   </Button>
                 </div>
@@ -431,7 +450,7 @@ export default function Settings() {
                       setDfsTestResult(r.data);
                       if (r.data?.connected) toast.success(`Connected! Credits: $${r.data.credits_usd}`);
                       else toast.error('Connection failed');
-                    } catch (e) { toast.error(e.response?.data?.detail || 'Test failed'); setDfsTestResult({ connected: false }); }
+                    } catch (e) { toast.error(apiErrorMessage(e, 'Test failed')); setDfsTestResult({ connected: false }); }
                     finally { setDfsTesting(false); }
                   }}>
                   {dfsTesting ? <Loader2 size={14} className="mr-1 animate-spin" /> : null}
@@ -635,7 +654,7 @@ export default function Settings() {
               <CardTitle className="font-heading flex items-center gap-2">
                 <Key size={18} className="text-primary" />Integrations
               </CardTitle>
-              <CardDescription>Third-party services for social media, email and e-commerce</CardDescription>
+              <CardDescription>Third-party services for social media and email</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -682,9 +701,6 @@ export default function Settings() {
                 />
                 <p className="text-xs text-muted-foreground">Required for Social Media — Facebook/Instagram auto-post</p>
               </div>
-              <p className="text-xs text-muted-foreground pt-2 border-t border-border/30">
-                WooCommerce Consumer Key &amp; Secret are configured per-site in the Sites page.
-              </p>
             </CardContent>
           </Card>
 
@@ -770,7 +786,7 @@ export default function Settings() {
                   className="w-[120px]"
                   data-testid="refresh-days-input"
                 />
-                <p className="text-xs text-muted-foreground">Posts older than this will be flagged for refresh</p>
+                <p className="text-xs text-muted-foreground">Content items older than this will be flagged for refresh</p>
               </div>
             </CardContent>
           </Card>
@@ -791,14 +807,14 @@ export default function Settings() {
                   <CardDescription>Automated tasks that run on a schedule for this site</CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={loadJobs} disabled={loadingJobs}>
+                  <Button variant="ghost" size="sm" onClick={loadJobs} disabled={loadingJobs} aria-label="Refresh scheduled jobs">
                     <RefreshCw size={14} className={loadingJobs ? "animate-spin" : ""} />
                   </Button>
                   <Dialog open={jobDialogOpen} onOpenChange={setJobDialogOpen}>
                     <DialogTrigger asChild>
-                      <Button size="sm" className="btn-primary" data-testid="create-job-btn">
+                      <GatedButton minRole="editor" size="sm" className="btn-primary" data-testid="create-job-btn">
                         <Plus size={14} className="mr-1" />Add Job
-                      </Button>
+                      </GatedButton>
                     </DialogTrigger>
                     <DialogContent className="sm:max-w-[500px]">
                       <DialogHeader>
@@ -808,21 +824,22 @@ export default function Settings() {
                       <form onSubmit={handleCreateJob}>
                         <div className="space-y-4 py-4">
                           <div className="space-y-2">
-                            <Label>Job Type</Label>
+                            <Label htmlFor="job-type">Job Type</Label>
                             <Select value={newJob.job_type} onValueChange={(v) => setNewJob({ ...newJob, job_type: v })}>
-                              <SelectTrigger data-testid="job-type-select">
+                              <SelectTrigger id="job-type" data-testid="job-type-select">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="content_freshness">Content Freshness Scan</SelectItem>
-                                <SelectItem value="seo_health">SEO Health Check</SelectItem>
-                                <SelectItem value="scheduled_publish">Scheduled Publish</SelectItem>
+                                {Object.entries(JOB_TYPE_LABELS).map(([value, label]) => (
+                                  <SelectItem key={value} value={value}>{label}</SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                           </div>
                           <div className="space-y-2">
-                            <Label>Cron Expression</Label>
+                            <Label htmlFor="cron-expression">Cron Expression</Label>
                             <Input
+                              id="cron-expression"
                               placeholder="0 2 * * 1"
                               value={newJob.cron_expression}
                               onChange={(e) => setNewJob({ ...newJob, cron_expression: e.target.value })}
@@ -835,17 +852,6 @@ export default function Settings() {
                               <code className="text-primary">0 12 1 * *</code> (1st of month)
                             </p>
                           </div>
-                          {newJob.job_type === "scheduled_publish" && (
-                            <div className="space-y-2">
-                              <Label>Post/Page ID (WordPress)</Label>
-                              <Input
-                                placeholder="e.g., 42"
-                                value={newJob.post_id}
-                                onChange={(e) => setNewJob({ ...newJob, post_id: e.target.value })}
-                                data-testid="post-id-input"
-                              />
-                            </div>
-                          )}
                         </div>
                         <DialogFooter>
                           <Button type="button" variant="outline" onClick={() => setJobDialogOpen(false)}>Cancel</Button>
@@ -901,13 +907,15 @@ export default function Settings() {
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
+                          <GatedButton
+                            minRole="editor"
                             variant="ghost" size="sm"
                             className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
                             onClick={() => handleDeleteJob(job.id)}
+                            aria-label={`Delete ${JOB_TYPE_LABELS[job.job_type] || job.job_type} job`}
                           >
                             <Trash2 size={14} />
-                          </Button>
+                          </GatedButton>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -919,128 +927,179 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Team Members Section — admin only */}
-      {isAdmin && (
-        <div className="mt-8">
-          <Card className="content-card">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="font-heading flex items-center gap-2">
-                    <Users size={18} className="text-primary" />Team Members
-                  </CardTitle>
-                  <CardDescription>Manage user roles and invite new team members</CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={loadUsers} disabled={loadingUsers}>
+      {/* Team Members & roles */}
+      <div className="mt-8">
+        <Card className="content-card" data-testid="team-members-card">
+          <CardHeader>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <CardTitle className="font-heading flex items-center gap-2">
+                  <Users size={18} className="text-primary" />Team Members &amp; Roles
+                </CardTitle>
+                <CardDescription>
+                  You are signed in as{" "}
+                  <span className="font-medium text-foreground" data-testid="current-user-role">
+                    {ROLE_LABELS[currentUserRole] || currentUserRole}
+                  </span>
+                  {currentUser?.email ? ` (${currentUser.email})` : ""}. Only admins can invite users or change roles.
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                {isAdmin && (
+                  <Button variant="ghost" size="sm" onClick={loadUsers} disabled={loadingUsers} aria-label="Refresh team members">
                     <RefreshCw size={14} className={loadingUsers ? "animate-spin" : ""} />
                   </Button>
-                  <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-                    <DialogTrigger asChild>
-                      <Button size="sm" className="btn-primary">
-                        <Plus size={14} className="mr-1" />Invite User
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="sm:max-w-[420px]">
-                      <DialogHeader>
-                        <DialogTitle>Invite Team Member</DialogTitle>
-                        <DialogDescription>Create an account with a temporary password. Share credentials securely.</DialogDescription>
-                      </DialogHeader>
-                      <form onSubmit={handleInvite}>
-                        <div className="space-y-4 py-4">
-                          <div className="space-y-2">
-                            <Label>Email</Label>
-                            <Input type="email" required placeholder="jane@example.com"
-                              value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Full Name</Label>
-                            <Input placeholder="Jane Doe"
-                              value={inviteForm.full_name} onChange={(e) => setInviteForm({ ...inviteForm, full_name: e.target.value })} />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Temporary Password</Label>
-                            <Input type="password" required placeholder="At least 8 characters"
-                              value={inviteForm.password} onChange={(e) => setInviteForm({ ...inviteForm, password: e.target.value })} />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Role</Label>
-                            <Select value={inviteForm.role} onValueChange={(v) => setInviteForm({ ...inviteForm, role: v })}>
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="admin">Admin</SelectItem>
-                                <SelectItem value="editor">Editor</SelectItem>
-                                <SelectItem value="viewer">Viewer</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                )}
+                <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteError(""); }}>
+                  <DialogTrigger asChild>
+                    <GatedButton minRole="admin" size="sm" className="btn-primary" data-testid="invite-user-btn">
+                      <Plus size={14} className="mr-1" />Invite User
+                    </GatedButton>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-[460px]">
+                    <DialogHeader>
+                      <DialogTitle>Invite Team Member</DialogTitle>
+                      <DialogDescription>Create an account with a temporary password. Share credentials securely.</DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleInvite}>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="invite-email">Email</Label>
+                          <Input id="invite-email" type="email" required placeholder="jane@example.com"
+                            value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} />
                         </div>
-                        <DialogFooter>
-                          <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
-                          <Button type="submit" className="btn-primary" disabled={inviting}>
-                            {inviting ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}Invite
-                          </Button>
-                        </DialogFooter>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-                </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="invite-name">Full Name</Label>
+                          <Input id="invite-name" placeholder="Jane Doe"
+                            value={inviteForm.full_name} onChange={(e) => setInviteForm({ ...inviteForm, full_name: e.target.value })} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="invite-password">Temporary Password</Label>
+                          <Input id="invite-password" type="password" required minLength={MIN_PASSWORD}
+                            placeholder={`At least ${MIN_PASSWORD} characters`}
+                            aria-invalid={inviteError ? "true" : undefined}
+                            aria-describedby={inviteError ? "invite-password-error" : undefined}
+                            className={inviteError ? "border-red-500" : ""}
+                            value={inviteForm.password} onChange={(e) => setInviteForm({ ...inviteForm, password: e.target.value })} />
+                          {inviteError && <p id="invite-password-error" className="text-xs text-red-500">{inviteError}</p>}
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="invite-role">Role</Label>
+                          <Select value={inviteForm.role} onValueChange={(v) => setInviteForm({ ...inviteForm, role: v })}>
+                            <SelectTrigger id="invite-role" data-testid="invite-role-select"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {ROLES.map((r) => (
+                                <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">{ROLE_DESCRIPTIONS[inviteForm.role]}</p>
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
+                        <Button type="submit" className="btn-primary" disabled={inviting}>
+                          {inviting ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}Invite
+                        </Button>
+                      </DialogFooter>
+                    </form>
+                  </DialogContent>
+                </Dialog>
               </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              {loadingUsers ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 size={24} className="animate-spin text-primary" />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Role reference */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="role-reference">
+              {ROLES.map((r) => (
+                <div
+                  key={r}
+                  className={`p-3 rounded-lg border ${r === currentUserRole ? "border-primary/50 bg-primary/5" : "border-border/40 bg-muted/20"}`}
+                >
+                  <p className="text-sm font-medium flex items-center gap-1.5">
+                    {r === "admin" && <ShieldCheck size={13} className="text-primary" aria-hidden="true" />}
+                    {ROLE_LABELS[r]}
+                    {r === currentUserRole && <Badge variant="outline" className="ml-auto text-[10px]">You</Badge>}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">{ROLE_DESCRIPTIONS[r]}</p>
                 </div>
-              ) : users.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Users size={40} className="text-muted-foreground/30 mb-3" />
-                  <p className="text-muted-foreground text-sm">No users found.</p>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Full Name</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Joined</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users.map((user) => (
+              ))}
+            </div>
+
+            {!isAdmin ? (
+              <p className="text-sm text-muted-foreground" data-testid="team-admin-only-note">
+                {requiresRoleMessage("admin")} to view the team list, invite users or change roles.
+              </p>
+            ) : loadingUsers ? (
+              <div className="flex items-center justify-center py-8" role="status" aria-label="Loading team members">
+                <Loader2 size={24} className="animate-spin text-primary" />
+              </div>
+            ) : users.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Users size={40} className="text-muted-foreground/30 mb-3" />
+                <p className="text-muted-foreground text-sm">No users found.</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Full Name</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Joined</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((user) => {
+                    const isSelf = currentUser?.id ? user.id === currentUser.id : user.email === currentUser?.email;
+                    const selectId = `role-select-${user.id}`;
+                    return (
                       <TableRow key={user.id}>
                         <TableCell className="font-medium">{user.email}</TableCell>
                         <TableCell className="text-muted-foreground">{user.full_name || "—"}</TableCell>
                         <TableCell>
-                          <Select value={user.role || "viewer"} onValueChange={(v) => handleRoleChange(user.id, v)}>
-                            <SelectTrigger className="w-28 h-7 text-xs">
+                          <label htmlFor={selectId} className="sr-only">Role for {user.email}</label>
+                          <Select
+                            value={ROLES.includes(user.role) ? user.role : "viewer"}
+                            onValueChange={(v) => handleRoleChange(user.id, v)}
+                            disabled={isSelf}
+                          >
+                            <SelectTrigger
+                              id={selectId}
+                              className="w-32 h-7 text-xs"
+                              title={isSelf ? "You cannot change your own role" : undefined}
+                              data-testid="user-role-select"
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="admin">
-                                <span className="flex items-center gap-1"><ShieldCheck size={12} className="text-primary" />Admin</span>
-                              </SelectItem>
-                              <SelectItem value="editor">Editor</SelectItem>
-                              <SelectItem value="viewer">Viewer</SelectItem>
+                              {ROLES.map((r) => (
+                                <SelectItem key={r} value={r}>
+                                  <span className="flex items-center gap-1">
+                                    {r === "admin" && <ShieldCheck size={12} className="text-primary" />}
+                                    {ROLE_LABELS[r]}
+                                  </span>
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
+                          {isSelf && <p className="text-[11px] text-muted-foreground mt-1">You cannot change your own role</p>}
                         </TableCell>
                         <TableCell className="text-muted-foreground text-sm">
                           {user.created_at ? new Date(user.created_at).toLocaleDateString() : "—"}
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Writing Style Profiles — editor + admin */}
-      {(isAdmin || currentUserRole === "editor") && (
+      {/* Writing Style Profiles — editor and above */}
+      {isEditor && (
         <div className="mt-6">
           <Card className="border border-border/50 shadow-card bg-card/80 backdrop-blur rounded-2xl">
             <CardHeader className="pb-4">

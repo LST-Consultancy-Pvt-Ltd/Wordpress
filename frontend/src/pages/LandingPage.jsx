@@ -4,45 +4,45 @@ import {
   ArrowRight,
   Bot,
   CheckCircle2,
-  Gauge,
-  Globe,
+  DatabaseBackup,
+  GitPullRequest,
   Play,
-  Search,
-  Sparkles,
-  Target,
+  Plug,
+  Rocket,
+  ScrollText,
   Zap,
 } from "lucide-react";
 
 const featureCards = [
   {
-    icon: Sparkles,
-    title: "AI command center",
-    description: "Run multi-step WordPress tasks from one command box and monitor execution in real time.",
+    icon: Plug,
+    title: "Bridge agent connections",
+    description: "Connect Next.js sites through a lightweight bridge agent with signed requests, per-site credentials and read-only mode by default.",
   },
   {
-    icon: Search,
-    title: "SEO intelligence",
-    description: "Track rankings, audit technical SEO, and prioritize fixes with impact-focused recommendations.",
-  },
-  {
-    icon: Globe,
-    title: "Multi-site control",
-    description: "Connect multiple WordPress sites and operate everything from one fast, unified workspace.",
-  },
-  {
-    icon: Target,
-    title: "Autopilot campaigns",
-    description: "Launch content refreshes, backlink workflows, and publishing queues on repeatable schedules.",
-  },
-  {
-    icon: Gauge,
-    title: "Health and uptime",
-    description: "Watch site health, plugin risks, and critical incidents before they become outages.",
+    icon: GitPullRequest,
+    title: "Reviewable change sets",
+    description: "Every content, metadata, redirect or file edit becomes a change set you can plan, validate, diff and preview before it ships.",
   },
   {
     icon: CheckCircle2,
-    title: "Human approvals",
-    description: "Switch between automatic and manual apply modes to keep high-risk changes under review.",
+    title: "Role-based approvals",
+    description: "Editors propose, deployers approve and apply. Nothing reaches a production site without the right person signing off.",
+  },
+  {
+    icon: Rocket,
+    title: "Deployments and rollbacks",
+    description: "Trigger deployments per environment, follow their progress and roll back an applied change or deployment in one step.",
+  },
+  {
+    icon: DatabaseBackup,
+    title: "Backups and restore",
+    description: "Take backups before risky changes and restore content or files when something needs to be undone.",
+  },
+  {
+    icon: ScrollText,
+    title: "Full audit trail",
+    description: "Every proposal, approval, apply and credential change is recorded with who did it, when, and the bridge correlation id.",
   },
 ];
 
@@ -55,7 +55,7 @@ export default function LandingPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 text-white">
               <Zap size={16} />
             </div>
-            <span className="font-heading text-sm font-bold">WP Autopilot</span>
+            <span className="font-heading text-sm font-bold">Site Autopilot</span>
           </div>
 
           <div className="ml-8 hidden items-center gap-1 md:flex">
@@ -103,7 +103,7 @@ export default function LandingPage() {
               transition={{ duration: 0.5 }}
               className="font-heading text-5xl font-extrabold leading-[0.95] tracking-[-0.03em] text-zinc-900 sm:text-7xl lg:text-8xl"
             >
-              Manage WordPress like an AI operations team.
+              Automate your Next.js sites without losing control.
             </motion.h1>
 
             <motion.p
@@ -112,7 +112,7 @@ export default function LandingPage() {
               transition={{ delay: 0.1, duration: 0.45 }}
               className="mx-auto mt-7 max-w-2xl text-base text-zinc-600 sm:text-lg"
             >
-              Connect sites, run SEO workflows, ship content, and monitor health from one precision dashboard.
+              Site Autopilot is the Next.js automation platform: connect sites through a bridge agent, turn every edit into a reviewable change set, and ship through approvals, deployments, backups and a complete audit trail.
             </motion.p>
 
             <motion.div
@@ -141,10 +141,10 @@ export default function LandingPage() {
         <section id="preview" className="px-4 pb-16 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-6xl">
             <div className="mb-3 flex justify-center">
-              <button className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white">
-                <Play size={12} />
+              <span className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 text-xs font-semibold text-white">
+                <Play size={12} aria-hidden="true" />
                 Product walkthrough
-              </button>
+              </span>
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-950 p-4 shadow-[0_25px_80px_rgba(17,17,17,0.20)] md:p-6">
@@ -154,20 +154,20 @@ export default function LandingPage() {
                     <div className="flex h-7 w-7 items-center justify-center rounded-md bg-indigo-500/20 text-indigo-300">
                       <Zap size={14} />
                     </div>
-                    <p className="font-heading text-xs font-bold text-white">WP Autopilot</p>
+                    <p className="font-heading text-xs font-bold text-white">Site Autopilot</p>
                   </div>
 
                   <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Core</p>
                   <div className="space-y-1 text-xs">
                     <div className="rounded-md bg-indigo-500/15 px-2 py-1 text-indigo-300">Dashboard</div>
                     <div className="rounded-md px-2 py-1 text-zinc-500">Sites</div>
-                    <div className="rounded-md px-2 py-1 text-zinc-500">AI Command</div>
+                    <div className="rounded-md px-2 py-1 text-zinc-500">Change sets</div>
                   </div>
 
-                  <p className="mb-1 mt-4 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">SEO</p>
+                  <p className="mb-1 mt-4 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Operations</p>
                   <div className="space-y-1 text-xs">
-                    <div className="rounded-md px-2 py-1 text-zinc-500">Keyword tracking</div>
-                    <div className="rounded-md px-2 py-1 text-zinc-500">Site speed</div>
+                    <div className="rounded-md px-2 py-1 text-zinc-500">Deployments</div>
+                    <div className="rounded-md px-2 py-1 text-zinc-500">Audit log</div>
                   </div>
                 </aside>
 
@@ -175,10 +175,10 @@ export default function LandingPage() {
                   <h3 className="font-heading text-sm font-bold text-white">Dashboard</h3>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     {[
-                      ["24", "Sites"],
-                      ["1,482", "Pages"],
-                      ["93", "Tasks"],
-                      ["99.9%", "Uptime"],
+                      ["12", "Connected sites"],
+                      ["4", "Awaiting approval"],
+                      ["38", "Applied this week"],
+                      ["0", "Failed deploys"],
                     ].map(([value, label]) => (
                       <div key={label} className="rounded-md border border-white/10 bg-white/5 p-2.5">
                         <p className="font-heading text-sm font-bold text-white">{value}</p>
@@ -191,12 +191,12 @@ export default function LandingPage() {
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Recent actions</p>
                     <div className="mt-2 space-y-2 text-[11px]">
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span>SEO audit complete</span>
-                        <span className="text-emerald-400">OK</span>
+                        <span>Change set applied to production</span>
+                        <span className="text-emerald-400">Applied</span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span>New post scheduled</span>
-                        <span className="text-indigo-300">Queued</span>
+                        <span>Metadata update submitted</span>
+                        <span className="text-indigo-300">Pending approval</span>
                       </div>
                     </div>
                   </div>
@@ -204,19 +204,19 @@ export default function LandingPage() {
 
                 <div className="bg-zinc-950 p-4 md:p-5">
                   <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-indigo-300">
-                    <Bot size={12} />
+                    <Bot size={12} aria-hidden="true" />
                     AI command
                   </p>
                   <div className="mt-2 rounded-md border border-indigo-400/25 bg-indigo-500/10 p-3 text-xs text-zinc-300">
-                    Generate a content refresh plan for all pages with CTR below 1.5%.
+                    Propose meta description fixes for every blog route with a CTR below 1.5%.
                   </div>
                   <div className="mt-2 rounded-md border border-white/10 bg-white/5 p-3">
                     <p className="font-mono text-[11px] leading-5 text-zinc-500">
-                      scanning pages...
+                      reading routes via bridge...
                       <br />
-                      collecting SEO metrics...
+                      planning 42 metadata.set operations...
                       <br />
-                      <span className="text-emerald-400">complete: 42 recommendations ready</span>
+                      <span className="text-emerald-400">change set ready for review</span>
                     </p>
                   </div>
                 </div>
@@ -229,7 +229,7 @@ export default function LandingPage() {
           <div className="mx-auto max-w-6xl">
             <p className="text-center text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">Platform capabilities</p>
             <h2 className="mt-3 text-center font-heading text-4xl font-extrabold tracking-[-0.03em] text-zinc-900 sm:text-5xl">
-              Built for technical growth teams
+              Built for teams that ship Next.js sites
             </h2>
 
             <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -257,10 +257,10 @@ export default function LandingPage() {
           <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 text-center md:flex-row md:text-left">
             <div>
               <h3 className="font-heading text-3xl font-extrabold tracking-[-0.03em] text-zinc-900">
-                Ready to automate your WordPress operations?
+                Ready to put your Next.js sites on autopilot?
               </h3>
               <p className="mt-2 max-w-2xl text-sm text-zinc-600">
-                Start with one site, then scale into a complete AI-managed publishing and SEO workflow.
+                Start with one site in read-only mode, then enable writes when your approval workflow is in place.
               </p>
             </div>
             <Link

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Copy, Check, Code2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui/card";
 import { Button } from "../ui/button";
@@ -9,7 +10,7 @@ import { Badge } from "../ui/badge";
  *  redirects from next.config, canonical and noindex from the page's own
  *  generateMetadata(). Rather than offer inputs that would silently do
  *  nothing, the findings are turned into the code to paste. */
-export default function SnippetsPanel({ snippets, note, platform }) {
+export default function SnippetsPanel({ snippets, note, siteId }) {
   const [copied, setCopied] = useState("");
 
   const copy = async (key, code) => {
@@ -41,8 +42,14 @@ export default function SnippetsPanel({ snippets, note, platform }) {
         <CardContent className="py-3">
           <p className="text-xs text-blue-400">
             Everything below is generated from this site's own audit, pre-filled with its URL and
-            findings. These are the surfaces that live in your {platform === "nextjs" ? "Next.js repo" : "codebase"}
-            {" "}rather than in the SEO Bridge, so they need a commit — the bridge cannot reach them.
+            findings. These surfaces live in your Next.js source (e.g. <code>app/robots.ts</code>,{" "}
+            <code>app/sitemap.ts</code>, <code>next.config</code>), so they change through a code change set.
+            {siteId && (
+              <>
+                {" "}Paste a snippet into the{" "}
+                <Link to={`/sites/${siteId}/code`} className="underline">Code workspace</Link> to propose it.
+              </>
+            )}
           </p>
         </CardContent>
       </Card>

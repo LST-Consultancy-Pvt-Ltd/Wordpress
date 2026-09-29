@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Smartphone, ScanLine, Loader2, AlertCircle, CheckCircle2, RefreshCw, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -8,7 +8,8 @@ import { Progress } from "../components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "../components/ui/accordion";
 import { toast } from "sonner";
-import { getSites, checkMobileUsability, getMobileCheckResults, subscribeToTask } from "../lib/api";
+import { getSites, checkMobileUsability, getMobileCheckResults, subscribeToTask, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
 const ScoreCircle = ({ score }) => {
   const color = score == null ? "text-muted-foreground" : score >= 90 ? "text-emerald-500" : score >= 50 ? "text-yellow-500" : "text-red-500";
@@ -29,23 +30,25 @@ export default function MobileChecker() {
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data || []);
-      if (r.data?.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadResults();
-  }, [selectedSite]); // eslint-disable-line
-
-  const loadResults = async () => {
+  const loadResults = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await getMobileCheckResults(selectedSite);
       setData(r.data);
     } catch { setData(null); }
     finally { setLoading(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadResults();
+  }, [loadResults]);
 
   const handleCheck = async () => {
     setChecking(true);
@@ -66,7 +69,7 @@ export default function MobileChecker() {
         }
       });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Failed to start check");
+      toast.error(apiErrorMessage(e, "Failed to start check"));
       setChecking(false);
     }
   };
@@ -82,16 +85,16 @@ export default function MobileChecker() {
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-44"><SelectValue placeholder="Select site" /></SelectTrigger>
+            <SelectTrigger className="w-44" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={loadResults} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={loadResults} disabled={loading || !selectedSite} aria-label="Reload results">
             <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
           </Button>
-          <Button className="btn-primary" size="sm" onClick={handleCheck} disabled={checking || !selectedSite}>
+          <GatedButton minRole="editor" className="btn-primary" size="sm" onClick={handleCheck} disabled={checking || !selectedSite}>
             {checking ? <Loader2 size={14} className="mr-1 animate-spin" /> : <ScanLine size={14} className="mr-1" />}
             {checking ? "Checking…" : "Run Check"}
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -118,7 +121,7 @@ export default function MobileChecker() {
                 <CardTitle className="text-sm font-medium flex items-center justify-between gap-2">
                   <a href={result.url} target="_blank" rel="noopener noreferrer"
                     className="truncate hover:text-primary flex items-center gap-1">
-                    <ExternalLink size={12} className="shrink-0" />
+                    <ExternalLink size={12} className="shrink-0" aria-hidden="true" />
                     <span className="truncate">{result.url}</span>
                   </a>
                 </CardTitle>

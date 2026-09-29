@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
@@ -252,9 +253,9 @@ export default function KeywordAnalysis() {
         </div>
         <div className="flex items-center gap-2">
           {result && (
-            <Button variant="outline" size="sm" onClick={exportCSV}>
+            <GatedButton minRole="editor" variant="outline" size="sm" onClick={exportCSV}>
               <Download size={14} className="mr-1" /> Export CSV
-            </Button>
+            </GatedButton>
           )}
           <Select value={selectedSite} onValueChange={setSelectedSite}>
             <SelectTrigger className="w-[220px]"><SelectValue placeholder="Select site" /></SelectTrigger>
@@ -276,9 +277,9 @@ export default function KeywordAnalysis() {
               onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
               className="flex-1"
             />
-            <Button onClick={handleAnalyze} disabled={analyzing || !url.trim()}>
+            <GatedButton minRole="editor" onClick={handleAnalyze} disabled={analyzing || !url.trim()}>
               {analyzing ? <><Loader2 size={14} className="animate-spin mr-2" /> Analyzing...</> : <><Search size={14} className="mr-2" /> Analyze</>}
-            </Button>
+            </GatedButton>
           </div>
         </CardContent>
       </Card>

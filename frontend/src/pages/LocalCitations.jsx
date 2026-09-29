@@ -1,3 +1,4 @@
+import GatedButton from "../components/sa/GatedButton";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { MapPin, Check, X, AlertTriangle, Loader2, RefreshCw, Building, Copy } from "lucide-react";
@@ -110,9 +111,9 @@ export default function LocalCitations() {
             <Input placeholder="Website" value={auditForm.website} onChange={e => setAuditForm(p => ({ ...p, website: e.target.value }))} />
             <Input placeholder="Niche" value={auditForm.niche} onChange={e => setAuditForm(p => ({ ...p, niche: e.target.value }))} />
             <Input placeholder="City" value={auditForm.city} onChange={e => setAuditForm(p => ({ ...p, city: e.target.value }))} />
-            <Button className="w-full" onClick={handleAudit} disabled={auditing || !selectedSite}>
+            <GatedButton minRole="editor" className="w-full" onClick={handleAudit} disabled={auditing || !selectedSite}>
               {auditing ? <><Loader2 size={14} className="mr-2 animate-spin" />Auditing…</> : <><MapPin size={14} className="mr-2" />Run Audit</>}
-            </Button>
+            </GatedButton>
           </CardContent>
         </Card>
 
@@ -183,9 +184,9 @@ export default function LocalCitations() {
             <Input placeholder="Phone" value={napForm.phone} onChange={e => setNapForm(p => ({ ...p, phone: e.target.value }))} />
             <Input placeholder="Website" value={napForm.website} onChange={e => setNapForm(p => ({ ...p, website: e.target.value }))} />
           </div>
-          <Button className="mt-3" onClick={handleUpdateNAP} disabled={savingNAP}>
+          <GatedButton minRole="editor" className="mt-3" onClick={handleUpdateNAP} disabled={savingNAP}>
             {savingNAP ? <><Loader2 size={14} className="mr-2 animate-spin" />Saving…</> : "Save Canonical NAP"}
-          </Button>
+          </GatedButton>
         </CardContent>
       </Card>
 

@@ -1,20 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Layers, Plus, Trash2, Globe, Loader2, RefreshCw, Upload, MapPin, Wrench, CheckCircle2, ExternalLink
+  Layers, Plus, Trash2, Loader2, RefreshCw, GitPullRequest, MapPin, Wrench, CheckCircle2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
 import { Badge } from "../components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Checkbox } from "../components/ui/checkbox";
 import { toast } from "sonner";
+import GatedButton from "../components/sa/GatedButton";
+import { useRole } from "../hooks/useRole";
+import { extractChangeSet, notifyChangeSetCreated } from "../lib/changesets";
+import { writeBlockedReason } from "../lib/capabilities";
 import {
-  getSites, generateProgrammaticPages, listProgrammaticPages,
+  apiErrorMessage, listItems, getSites, generateProgrammaticPages, listProgrammaticPages,
   pushProgrammaticPages, deleteProgrammaticPage, subscribeToTask
 } from "../lib/api";
 
@@ -85,38 +88,18 @@ const CITIES = [
   { city: "Durham", state: "NC", population: 278993 },
 ];
 
-const SSEProgressDrawer = ({ label, onDone }) => {
-  const [msg, setMsg] = useState("Processing...");
-  const [pct, setPct] = useState(0);
-
-  useEffect(() => {
-    // Animate progress while active
-    const interval = setInterval(() => {
-      setPct(prev => prev < 90 ? prev + 5 : prev);
-    }, 1200);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <div className="fixed bottom-4 right-4 z-50 w-80 bg-card border rounded-xl shadow-2xl p-4">
-      <p className="text-sm font-medium mb-2">{label}</p>
-      <div className="w-full bg-muted rounded-full h-2 mb-2">
-        <div className="bg-primary h-2 rounded-full transition-all duration-700" style={{ width: `${pct}%` }} />
-      </div>
-      <p className="text-xs text-muted-foreground">{msg}</p>
-    </div>
-  );
-};
-
 const useSSETask = () => {
   const [active, setActive] = useState(false);
   const [label, setLabel] = useState("");
-  const [cancel, setCancel] = useState(null);
+  const cancelRef = useRef(null);
+
+  useEffect(() => () => { cancelRef.current?.(); }, []);
 
   const startTask = (taskId, lbl, onDone) => {
     setLabel(lbl);
     setActive(true);
-    const unsub = subscribeToTask(taskId, (evt) => {
+    cancelRef.current?.();
+    cancelRef.current = subscribeToTask(taskId, (evt) => {
       if (evt.type === "status") {
         if (evt.data?.status === "completed") {
           setActive(false);
@@ -135,7 +118,6 @@ const useSSETask = () => {
         toast.error(evt.data?.message || "Task failed");
       }
     });
-    setCancel(() => unsub);
   };
 
   return { active, label, startTask };
@@ -148,6 +130,11 @@ export default function ProgrammaticSEO() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState([]);
   const { active: taskActive, label: taskLabel, startTask } = useSSETask();
+  const navigate = useNavigate();
+  const { can } = useRole();
+  const canEdit = can("editor");
+  const site = sites.find(s => s.id === selectedSite) || null;
+  const pushBlocked = writeBlockedReason(site, "content.write");
 
   // Service table state
   const [services, setServices] = useState([
@@ -161,23 +148,26 @@ export default function ProgrammaticSEO() {
 
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadPages();
-  }, [selectedSite]);
-
-  const loadPages = async () => {
+  const loadPages = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await listProgrammaticPages(selectedSite);
-      setPages(r.data);
+      setPages(listItems(r.data));
     } catch { setPages([]); }
     finally { setLoading(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    setSelected([]);
+    loadPages();
+  }, [loadPages]);
 
   const handleAddService = () => {
     if (!newService.name.trim()) return;
@@ -213,21 +203,28 @@ export default function ProgrammaticSEO() {
         loadPages();
       });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Generation failed");
+      toast.error(apiErrorMessage(e, "Generation failed"));
     }
   };
 
   const handlePush = async () => {
-    if (!selected.length) return toast.error("Select pages to push");
+    if (!selected.length) return toast.error("Select pages to include");
     try {
       const r = await pushProgrammaticPages(selectedSite, { page_ids: selected });
-      startTask(r.data.task_id, "Pushing to WordPress...", () => {
-        toast.success("Pages pushed to WordPress!");
+      const cs = extractChangeSet(r.data);
+      if (cs || !r.data?.task_id) {
+        notifyChangeSetCreated(cs, navigate, { title: `Change set created with ${selected.length} page(s)` });
+        setSelected([]);
+        loadPages();
+        return;
+      }
+      startTask(r.data.task_id, "Creating change set...", (result) => {
+        notifyChangeSetCreated(extractChangeSet(result?.result || result), navigate);
         setSelected([]);
         loadPages();
       });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Push failed");
+      toast.error(apiErrorMessage(e, "Could not create change set"));
     }
   };
 
@@ -246,10 +243,10 @@ export default function ProgrammaticSEO() {
       <div className="page-header">
         <div>
           <h1 className="page-title flex items-center gap-2"><Layers size={24} />Programmatic SEO</h1>
-          <p className="page-description">Generate Service × City landing pages at scale and push to WordPress</p>
+          <p className="page-description">Generate Service × City landing pages at scale and propose them as a content change set for review</p>
         </div>
         <Select value={selectedSite} onValueChange={setSelectedSite}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Select site" /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
           <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
@@ -275,16 +272,16 @@ export default function ProgrammaticSEO() {
                       <p className="text-xs text-muted-foreground truncate">{s.description || "—"}</p>
                       <p className="text-xs text-primary">{s.pricing || "—"}</p>
                     </div>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" onClick={() => setServices(prev => prev.filter((_, j) => j !== i))}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" aria-label={`Remove service ${s.name}`} onClick={() => setServices(prev => prev.filter((_, j) => j !== i))}>
                       <Trash2 size={12} />
                     </Button>
                   </div>
                 ))}
                 <div className="border-t pt-3 space-y-2">
-                  <Input placeholder="Service name *" value={newService.name} onChange={e => setNewService(p => ({ ...p, name: e.target.value }))} />
-                  <Input placeholder="Short description" value={newService.description} onChange={e => setNewService(p => ({ ...p, description: e.target.value }))} />
-                  <Input placeholder="Pricing (e.g. Starting at $99)" value={newService.pricing} onChange={e => setNewService(p => ({ ...p, pricing: e.target.value }))} />
-                  <Input placeholder="Features (comma-separated)" value={newService.features} onChange={e => setNewService(p => ({ ...p, features: e.target.value }))} />
+                  <Input aria-label="Service name" placeholder="Service name *" value={newService.name} onChange={e => setNewService(p => ({ ...p, name: e.target.value }))} />
+                  <Input aria-label="Short description" placeholder="Short description" value={newService.description} onChange={e => setNewService(p => ({ ...p, description: e.target.value }))} />
+                  <Input aria-label="Pricing" placeholder="Pricing (e.g. Starting at $99)" value={newService.pricing} onChange={e => setNewService(p => ({ ...p, pricing: e.target.value }))} />
+                  <Input aria-label="Features" placeholder="Features (comma-separated)" value={newService.features} onChange={e => setNewService(p => ({ ...p, features: e.target.value }))} />
                   <Button size="sm" onClick={handleAddService} className="w-full"><Plus size={14} className="mr-1" />Add Service</Button>
                 </div>
               </CardContent>
@@ -302,14 +299,14 @@ export default function ProgrammaticSEO() {
                       <p className="font-medium text-sm">{l.city}{l.state ? `, ${l.state}` : ""}</p>
                       <p className="text-xs text-muted-foreground">{l.local_keywords?.slice(0,2).join(", ") || "—"}</p>
                     </div>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" onClick={() => setLocations(prev => prev.filter((_, j) => j !== i))}>
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" aria-label={`Remove location ${l.city}`} onClick={() => setLocations(prev => prev.filter((_, j) => j !== i))}>
                       <Trash2 size={12} />
                     </Button>
                   </div>
                 ))}
                 <div className="border-t pt-3 space-y-2">
                   <Select value={newLocation.cityKey} onValueChange={val => setNewLocation(p => ({ ...p, cityKey: val }))}>
-                    <SelectTrigger><SelectValue placeholder="Select a city..." /></SelectTrigger>
+                    <SelectTrigger aria-label="City"><SelectValue placeholder="Select a city..." /></SelectTrigger>
                     <SelectContent className="max-h-60">
                       {CITIES.map(c => (
                         <SelectItem key={`${c.city}-${c.state}`} value={`${c.city}, ${c.state}`}>
@@ -318,7 +315,7 @@ export default function ProgrammaticSEO() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <Input placeholder="Local keywords (comma-separated, optional)" value={newLocation.local_keywords} onChange={e => setNewLocation(p => ({ ...p, local_keywords: e.target.value }))} />
+                  <Input aria-label="Local keywords" placeholder="Local keywords (comma-separated, optional)" value={newLocation.local_keywords} onChange={e => setNewLocation(p => ({ ...p, local_keywords: e.target.value }))} />
                   <Button size="sm" onClick={handleAddLocation} className="w-full"><Plus size={14} className="mr-1" />Add Location</Button>
                 </div>
               </CardContent>
@@ -333,9 +330,9 @@ export default function ProgrammaticSEO() {
                   <p className="text-sm text-muted-foreground">{services.length} services × {locations.length} cities = <strong>{services.length * locations.length} landing pages</strong></p>
                   <p className="text-xs text-muted-foreground mt-1">URL pattern: /[service]-in-[city]/ • Includes schema JSON-LD, FAQs, CTAs</p>
                 </div>
-                <Button onClick={handleGenerate} disabled={!selectedSite || taskActive}>
+                <GatedButton minRole="editor" onClick={handleGenerate} disabled={!selectedSite || taskActive}>
                   {taskActive ? <><Loader2 size={14} className="mr-2 animate-spin" />Generating...</> : <><Layers size={14} className="mr-2" />Generate All Pages</>}
-                </Button>
+                </GatedButton>
               </div>
             </CardContent>
           </Card>
@@ -346,12 +343,12 @@ export default function ProgrammaticSEO() {
             <CardHeader className="flex flex-row items-center justify-between pb-3">
               <CardTitle className="text-base">Generated Pages</CardTitle>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={loadPages} disabled={loading}>
+                <Button variant="outline" size="sm" onClick={loadPages} disabled={loading} aria-label="Refresh pages">
                   <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
                 </Button>
-                <Button size="sm" onClick={handlePush} disabled={!selected.length || taskActive}>
-                  <Upload size={14} className="mr-2" />Push {selected.length || ""} to WP
-                </Button>
+                <GatedButton minRole="editor" blocked={pushBlocked} size="sm" onClick={handlePush} disabled={!selected.length || taskActive}>
+                  <GitPullRequest size={14} className="mr-2" />Create change set{selected.length ? ` (${selected.length})` : ""}
+                </GatedButton>
               </div>
             </CardHeader>
             <CardContent>
@@ -361,41 +358,33 @@ export default function ProgrammaticSEO() {
                 <p className="text-center py-8 text-muted-foreground">No pages generated yet. Set up tables and click Generate.</p>
               ) : (
                 <div className="space-y-2">
-                  {pages.map(p => {
-                    const site = sites.find(s => s.id === selectedSite);
-                    const pageUrl = p.wp_url || (site?.url ? `${site.url.replace(/\/$/, "")}/${p.url_slug}/` : null);
-                    return (
+                  {pages.map(p => (
                     <div key={p.id} className="flex items-center gap-3 p-3 rounded-lg border hover:bg-muted/30">
-                      <Checkbox checked={selected.includes(p.id)} onCheckedChange={() => toggleSelect(p.id)} />
+                      <Checkbox
+                        checked={selected.includes(p.id)}
+                        onCheckedChange={() => toggleSelect(p.id)}
+                        aria-label={`Select ${p.title}`}
+                      />
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-sm truncate">{p.title}</p>
-                        {pageUrl ? (
-                          <a
-                            href={pageUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-primary font-mono hover:underline inline-flex items-center gap-1"
-                          >
-                            {p.url_slug}
-                            <ExternalLink size={10} />
-                          </a>
-                        ) : (
-                          <p className="text-xs text-muted-foreground font-mono">{p.url_slug}</p>
-                        )}
+                        <p className="text-xs text-muted-foreground font-mono">/{String(p.url_slug || p.slug || "").replace(/^\/+|\/+$/g, "")}</p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        {p.pushed_to_wp ? (
-                          <Badge className="bg-emerald-500/10 text-emerald-500 text-xs"><CheckCircle2 size={10} className="mr-1" />Pushed</Badge>
+                        {p.changeset_id ? (
+                          <Link to={`/changesets/${p.changeset_id}`} aria-label={`Open change set for ${p.title}`}>
+                            <Badge className="bg-emerald-500/10 text-emerald-500 text-xs"><CheckCircle2 size={10} className="mr-1" />In change set</Badge>
+                          </Link>
                         ) : (
-                          <Badge variant="outline" className="text-xs">Draft</Badge>
+                          <Badge variant="outline" className="text-xs">Not proposed</Badge>
                         )}
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" onClick={() => handleDelete(p.id)}>
-                          <Trash2 size={12} />
-                        </Button>
+                        {canEdit && (
+                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive" aria-label={`Delete ${p.title}`} onClick={() => handleDelete(p.id)}>
+                            <Trash2 size={12} />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    );
-                  })}
+                  ))}
                 </div>
               )}
             </CardContent>

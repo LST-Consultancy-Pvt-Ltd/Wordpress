@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../ui
 import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
-import { CheckRow, ScoreRing, scoreChip, scoreTone, fmtMs, sevChip } from "./shared";
+import { CheckRow, ScoreRing, scoreChip, fmtMs } from "./shared";
 import { cn } from "../../lib/utils";
 
 const BAND_TONE = {

@@ -1,14 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Copy,
   ScanLine,
   Loader2,
-  Sparkles,
   RefreshCw,
   ExternalLink,
   CheckCircle2,
   FileText,
+  PencilLine,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -29,12 +30,28 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { Progress } from "../components/ui/progress";
-import { getSites, scanDuplicateContent, getDuplicateContent, fixDuplicateContent, fixDuplicateContentDryRun } from "../lib/api";
-import ImpactBadge from "../components/ImpactBadge";
+import { getSites, scanDuplicateContent, getDuplicateContent, listItems, apiErrorMessage } from "../lib/api";
 import SSEProgressDrawer, { useSSETask } from "../components/SSEProgressDrawer";
-import ManualApplySheet from "../components/ManualApplySheet";
-import { useApplyMode } from "../hooks/useApplyMode";
+import GatedButton from "../components/sa/GatedButton";
 import { toast } from "sonner";
+
+/** Title cell: links to the public page when the scan reported its URL. */
+function PageTitle({ title, fallback, url }) {
+  const label = title || fallback;
+  if (!url) return <span className="text-sm font-medium truncate block">{label}</span>;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="hover:text-primary flex items-center gap-1 text-sm font-medium truncate"
+    >
+      {label}
+      <ExternalLink size={11} className="shrink-0 opacity-60" aria-hidden="true" />
+      <span className="sr-only">(opens live page in a new tab)</span>
+    </a>
+  );
+}
 
 function SimilarityBadge({ score, type }) {
   const pct = Math.round(score * 100);
@@ -64,136 +81,62 @@ export default function DuplicateContent() {
   const [sites, setSites] = useState([]);
   const [selectedSite, setSelectedSite] = useState("");
   const [results, setResults] = useState([]);
-  const [lastFixImpact, setLastFixImpact] = useState(null);
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [fixing, setFixing] = useState({});
-  const pollRef = useRef(null);
+  const timerRef = useRef(null);
 
   const { tasks, startTask, dismissTask } = useSSETask();
 
-  // Apply Mode
-  const { isManual } = useApplyMode();
-  const [manualSheet, setManualSheet] = useState({ open: false, title: "", wpAdminUrl: "", fields: [], instructions: "" });
-  const openManualSheet = (config) => setManualSheet({ open: true, ...config });
-  const closeManualSheet = () => setManualSheet((prev) => ({ ...prev, open: false }));
-
-  useEffect(() => { loadSites(); }, []);
   useEffect(() => {
-    if (selectedSite) loadResults();
-  }, [selectedSite]); // eslint-disable-line
+    getSites()
+      .then((r) => {
+        const list = listItems(r.data);
+        setSites(list);
+        if (list.length > 0) setSelectedSite(list[0].id);
+      })
+      .catch(() => toast.error("Failed to load sites"));
+  }, []);
 
-  // Clean up polling on unmount
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
-
-  const loadSites = async () => {
-    try {
-      const r = await getSites();
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
-    } catch {
-      toast.error("Failed to load sites");
-    }
-  };
-
-  const loadResults = async () => {
+  const loadResults = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await getDuplicateContent(selectedSite);
-      setResults(r.data || []);
+      setResults(listItems(r.data));
     } catch {
       toast.error("Failed to load duplicate content results");
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadResults();
+  }, [loadResults]);
+
+  // Clean up the pending reload on unmount
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   const handleScan = async () => {
     if (!selectedSite) return;
     setScanning(true);
     try {
       const r = await scanDuplicateContent(selectedSite);
-      const taskId = r.data.task_id;
-      startTask(taskId, "Scanning for duplicate content");
-
-      // Poll until the SSE task finishes, then reload results
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => {
-        setFixing((prev) => {
-          // hack: read tasks via ref — we use setResults as a trigger instead
-          return prev;
-        });
-      }, 500);
-
-      // Simple approach: wait for the "complete" event by watching task status
-      const checkDone = () => {
-        // tasks state update is async; we store taskId and reload after a fixed delay
-      };
-      checkDone();
-      // Reload results after a delay allowing the scan to complete for small sites,
-      // and after each SSE complete event handled by the drawer's onComplete callback
-      setTimeout(async () => {
+      startTask(r.data.task_id, "Scanning for duplicate content");
+      // Reload results after a short delay; the progress drawer shows live status.
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(async () => {
+        timerRef.current = null;
         await loadResults();
         setScanning(false);
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
       }, 3000);
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to start scan");
+      toast.error(apiErrorMessage(err, "Failed to start scan"));
       setScanning(false);
     }
   };
 
-  const handleFix = async (item) => {
-    const siteData = sites.find((s) => s.id === selectedSite);
-    const siteUrl = siteData?.url || "";
-    if (isManual) {
-      setFixing((prev) => ({ ...prev, [item.id]: true }));
-      try {
-        const r = await fixDuplicateContentDryRun(selectedSite, item.id);
-        openManualSheet({
-          title: "AI Fix Duplicate Content",
-          wpAdminUrl: `${siteUrl}/wp-admin/post.php?post=${r.data.wp_id || item.wp_id}&action=edit`,
-          fields: [
-            { label: "Original Title", value: item.title_a || item.title || "", type: "text" },
-            { label: "New Rewritten Title", value: r.data.new_title || "", type: "text" },
-            { label: "New Rewritten Content (HTML)", value: r.data.new_content || "", type: "html" },
-          ],
-          instructions: "Replace the post title and paste the new content into the WordPress editor for this post.",
-        });
-      } catch (err) {
-        toast.error(err.response?.data?.detail || "AI rewrite failed.");
-      } finally {
-        setFixing((prev) => ({ ...prev, [item.id]: false }));
-      }
-      return;
-    }
-    setFixing((prev) => ({ ...prev, [item.id]: true }));
-    try {
-      const r = await fixDuplicateContent(selectedSite, item.id);
-      toast.success(`Rewritten: "${r.data.new_title}"`);
-      setLastFixImpact(r.data?.impact_estimate || {
-        traffic_change: "+3–7%",
-        ranking_impact: "Reduced content overlap",
-        ctr_change: "+1%",
-        confidence: "medium",
-      });
-      // Mark resolved in local state
-      setResults((prev) =>
-        prev.map((res) =>
-          res.id === item.id ? { ...res, resolved: true } : res
-        )
-      );
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "AI rewrite failed. Try again.");
-    } finally {
-      setFixing((prev) => ({ ...prev, [item.id]: false }));
-    }
-  };
-
-  const selectedSiteData = sites.find((s) => s.id === selectedSite);
+  const contentEditorUrl = `/sites/${selectedSite}/content`;
 
   const unresolvedResults = results.filter((r) => !r.resolved);
   const contentCount = unresolvedResults.filter((r) => r.type === "content").length;
@@ -215,16 +158,16 @@ export default function DuplicateContent() {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
         >
-          Detect near-duplicate and exact-duplicate content across your site and rewrite it with AI
+          Detect near-duplicate and exact-duplicate content across your site. Results are read-only — rewrite a page in the content editor, which creates a change set for review.
         </motion.p>
       </div>
 
       {/* Controls */}
       <div className="flex flex-wrap items-end gap-4 mb-6">
         <div>
-          <p className="text-sm text-muted-foreground mb-1.5">Select Site</p>
+          <p id="dup-site-label" className="text-sm text-muted-foreground mb-1.5">Select Site</p>
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-[240px]" data-testid="site-select">
+            <SelectTrigger className="w-[240px]" data-testid="site-select" aria-labelledby="dup-site-label">
               <SelectValue placeholder="Select a site" />
             </SelectTrigger>
             <SelectContent>
@@ -235,7 +178,8 @@ export default function DuplicateContent() {
           </Select>
         </div>
 
-        <Button
+        <GatedButton
+          minRole="editor"
           onClick={handleScan}
           disabled={!selectedSite || scanning}
           className="btn-primary"
@@ -245,7 +189,7 @@ export default function DuplicateContent() {
             ? <Loader2 size={15} className="mr-2 animate-spin" />
             : <ScanLine size={15} className="mr-2" />}
           Scan for Duplicates
-        </Button>
+        </GatedButton>
 
         <Button
           variant="outline"
@@ -254,6 +198,7 @@ export default function DuplicateContent() {
           disabled={!selectedSite || loading}
           data-testid="refresh-btn"
           title="Refresh results"
+          aria-label="Refresh results"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </Button>
@@ -275,16 +220,6 @@ export default function DuplicateContent() {
             </Card>
           ))}
         </div>
-      )}
-
-      {lastFixImpact && (
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="mb-6"
-        >
-          <ImpactBadge impact={lastFixImpact} />
-        </motion.div>
       )}
 
       {/* Results table */}
@@ -319,84 +254,50 @@ export default function DuplicateContent() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Post A</TableHead>
-                  <TableHead>Post B (to rewrite)</TableHead>
+                  <TableHead>Page A</TableHead>
+                  <TableHead>Page B (to rewrite)</TableHead>
                   <TableHead>Similarity</TableHead>
                   <TableHead>Detected</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {results.map((item) => {
-                  const editUrlA = selectedSiteData
-                    ? `${selectedSiteData.url.replace(/\/$/, "")}/wp-admin/post.php?post=${item.post_a_id}&action=edit`
-                    : null;
-                  const editUrlB = selectedSiteData
-                    ? `${selectedSiteData.url.replace(/\/$/, "")}/wp-admin/post.php?post=${item.post_b_id}&action=edit`
-                    : null;
-
-                  return (
-                    <TableRow
-                      key={item.id}
-                      className={item.resolved ? "opacity-50" : ""}
-                    >
-                      <TableCell className="max-w-[180px]">
-                        <a
-                          href={editUrlA}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:text-primary flex items-center gap-1 text-sm font-medium truncate"
-                        >
-                          {item.post_a_title || `#${item.post_a_id}`}
-                          <ExternalLink size={11} className="shrink-0 opacity-60" />
-                        </a>
-                      </TableCell>
-                      <TableCell className="max-w-[180px]">
-                        <a
-                          href={editUrlB}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="hover:text-primary flex items-center gap-1 text-sm font-medium truncate"
-                        >
-                          {item.post_b_title || `#${item.post_b_id}`}
-                          <ExternalLink size={11} className="shrink-0 opacity-60" />
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <SimilarityBadge score={item.similarity_score} type={item.type} />
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                        {item.detected_at
-                          ? new Date(item.detected_at).toLocaleString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.resolved ? (
-                          <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
-                            <CheckCircle2 size={11} className="mr-1" />
-                            Resolved
-                          </Badge>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleFix(item)}
-                            disabled={!!fixing[item.id]}
-                            className="h-8 text-xs"
-                            data-testid={`fix-${item.id}`}
-                          >
-                            {fixing[item.id] ? (
-                              <Loader2 size={13} className="mr-1.5 animate-spin" />
-                            ) : (
-                              <Sparkles size={13} className="mr-1.5 text-primary" />
-                            )}
-                            Rewrite with AI
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {results.map((item) => (
+                  <TableRow
+                    key={item.id}
+                    className={item.resolved ? "opacity-50" : ""}
+                  >
+                    <TableCell className="max-w-[180px]">
+                      <PageTitle title={item.post_a_title} fallback={`#${item.post_a_id}`} url={item.post_a_url} />
+                    </TableCell>
+                    <TableCell className="max-w-[180px]">
+                      <PageTitle title={item.post_b_title} fallback={`#${item.post_b_id}`} url={item.post_b_url} />
+                    </TableCell>
+                    <TableCell>
+                      <SimilarityBadge score={item.similarity_score} type={item.type} />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                      {item.detected_at
+                        ? new Date(item.detected_at).toLocaleString()
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {item.resolved ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20">
+                          <CheckCircle2 size={11} className="mr-1" />
+                          Resolved
+                        </Badge>
+                      ) : (
+                        <Button asChild size="sm" variant="outline" className="h-8 text-xs">
+                          <Link to={contentEditorUrl} data-testid={`edit-${item.id}`}>
+                            <PencilLine size={13} className="mr-1.5 text-primary" aria-hidden="true" />
+                            Open in editor
+                          </Link>
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
           )}
@@ -404,15 +305,6 @@ export default function DuplicateContent() {
       </Card>
 
       <SSEProgressDrawer tasks={tasks} dismissTask={dismissTask} />
-
-      <ManualApplySheet
-        open={manualSheet.open}
-        onClose={closeManualSheet}
-        title={manualSheet.title}
-        wpAdminUrl={manualSheet.wpAdminUrl}
-        fields={manualSheet.fields}
-        instructions={manualSheet.instructions}
-      />
     </div>
   );
 }

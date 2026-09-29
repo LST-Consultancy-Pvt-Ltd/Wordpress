@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../co
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { login } from "../lib/api";
+import { login, apiErrorMessage } from "../lib/api";
+import { setSession } from "../lib/session";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -31,12 +32,11 @@ export default function Login() {
     setLoading(true);
     try {
       const res = await login(form);
-      localStorage.setItem("wp_token", res.data.access_token);
-      localStorage.setItem("wp_user", JSON.stringify(res.data.user));
+      setSession(res.data.access_token, res.data.user);
       toast.success(`Welcome back, ${res.data.user.email}!`);
       navigate("/");
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Login failed");
+      toast.error(apiErrorMessage(err, "Login failed"));
     } finally {
       setLoading(false);
     }
@@ -56,8 +56,8 @@ export default function Login() {
               <Zap size={26} className="text-primary" />
             </div>
             <div>
-              <h1 className="font-heading font-bold text-xl text-foreground">WP Autopilot</h1>
-              <p className="text-xs text-muted-foreground">AI Website Manager</p>
+              <h1 className="font-heading font-bold text-xl text-foreground">Site Autopilot</h1>
+              <p className="text-xs text-muted-foreground">Next.js automation platform</p>
             </div>
           </div>
         </div>
@@ -101,6 +101,7 @@ export default function Login() {
                     size="sm"
                     className="absolute right-0 top-0 h-full px-3"
                     onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
                     {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
                   </Button>

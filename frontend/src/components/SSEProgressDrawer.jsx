@@ -5,8 +5,8 @@ import { Button } from "./ui/button";
 import { Progress } from "./ui/progress";
 import { Badge } from "./ui/badge";
 import { ScrollArea } from "./ui/scroll-area";
-
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+import { getTask } from "../lib/api";
+import { openTaskStream, TERMINAL_EVENT_TYPES } from "../lib/stream";
 
 export function useSSETask() {
   const [tasks, setTasks] = useState([]);
@@ -23,10 +23,39 @@ export function useSSETask() {
     };
     setTasks((prev) => [...prev, task]);
 
-    const source = new EventSource(`${BACKEND_URL}/api/stream/${taskId}`);
-    sourceRefs.current[taskId] = source;
+    const markLost = () =>
+      getTask(taskId)
+        .then(({ data: taskStatus }) => {
+          setTasks((prev) =>
+            prev.map((t) => {
+              if (t.id !== taskId) return t;
+              if (taskStatus?.status === "completed") {
+                return { ...t, status: "complete", percent: 100, latestMessage: taskStatus.progress?.message ?? "Completed" };
+              }
+              return { ...t, status: "error", latestMessage: "Connection lost" };
+            })
+          );
+        })
+        .catch(() => {
+          setTasks((prev) =>
+            prev.map((t) => (t.id === taskId ? { ...t, status: "error", latestMessage: "Connection lost" } : t))
+          );
+        });
 
-    source.onmessage = (e) => {
+    openTaskStream(taskId)
+      .then((source) => {
+        sourceRefs.current[taskId] = source;
+        source.onmessage = (e) => handleEvent(source, e);
+        source.onerror = () => {
+          source.close();
+          delete sourceRefs.current[taskId];
+          // Long-running tasks may finish after the stream times out.
+          markLost();
+        };
+      })
+      .catch(markLost);
+
+    function handleEvent(source, e) {
       try {
         const event = JSON.parse(e.data);
         setTasks((prev) =>
@@ -50,7 +79,7 @@ export function useSSETask() {
               status = "error";
               latestMessage = event.data?.message ?? "An error occurred";
             } else if (event.type === "assistant_message") {
-              latestMessage = event.data?.content?.slice(0, 80) + "..." ?? latestMessage;
+              latestMessage = event.data?.content ? `${event.data.content.slice(0, 80)}...` : latestMessage;
             } else if (event.type === "tool_call") {
               latestMessage = `Tool: ${event.data?.tool}`;
             }
@@ -59,41 +88,16 @@ export function useSSETask() {
           })
         );
 
-        if (event.type === "done" || event.type === "complete" || event.type === "error" || event.type === "timeout") {
+        if (TERMINAL_EVENT_TYPES.includes(event.type)) {
           source.close();
           delete sourceRefs.current[taskId];
         }
       } catch {
         // ignore parse errors
       }
-    };
+    }
 
-    source.onerror = () => {
-      source.close();
-      delete sourceRefs.current[taskId];
-      // Before showing "Connection lost", check if the task actually completed
-      // (long-running tasks may finish after the SSE stream times out).
-      fetch(`${BACKEND_URL}/api/tasks/${taskId}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((taskStatus) => {
-          setTasks((prev) =>
-            prev.map((t) => {
-              if (t.id !== taskId) return t;
-              if (taskStatus?.status === "completed") {
-                return { ...t, status: "complete", percent: 100, latestMessage: taskStatus.progress?.message ?? "Completed" };
-              }
-              return { ...t, status: "error", latestMessage: "Connection lost" };
-            })
-          );
-        })
-        .catch(() => {
-          setTasks((prev) =>
-            prev.map((t) => (t.id === taskId ? { ...t, status: "error", latestMessage: "Connection lost" } : t))
-          );
-        });
-    };
-
-    return source;
+    return taskId;
   }, []);
 
   const dismissTask = useCallback((taskId) => {
@@ -168,11 +172,13 @@ function TaskCard({ task, onDismiss }) {
           size="sm"
           className="h-6 w-6 p-0"
           onClick={() => setExpanded(!expanded)}
+          aria-label={expanded ? "Collapse task log" : "Expand task log"}
+          aria-expanded={expanded}
         >
           {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
         </Button>
         {(task.status === "complete" || task.status === "error") && (
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => onDismiss(task.id)}>
+          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => onDismiss(task.id)} aria-label="Dismiss task">
             <X size={12} />
           </Button>
         )}

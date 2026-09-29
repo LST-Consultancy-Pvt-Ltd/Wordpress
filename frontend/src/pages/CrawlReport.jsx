@@ -1,18 +1,37 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Bug, Play, Loader2, RefreshCw, CheckCircle2, AlertTriangle,
-  XCircle, Info, Wrench, ChevronDown, ChevronRight
+  XCircle, Info, Wrench, ChevronDown, ChevronRight, ExternalLink
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
-import { getSites, triggerCrawl, getLatestCrawl, fixCrawlIssue, fixCrawlIssueDryRun, subscribeToTask } from "../lib/api";
+import { getSites, triggerCrawl, getLatestCrawl, subscribeToTask, listItems, apiErrorMessage } from "../lib/api";
+import GatedButton from "../components/sa/GatedButton";
 
-import ManualApplySheet from "../components/ManualApplySheet";
-import { useApplyMode } from "../hooks/useApplyMode";
+const METADATA_ISSUES = new Set(["missing_meta", "duplicate_title"]);
+
+/** Route path ("/blog/post") of an absolute or relative URL. */
+function routeOf(url) {
+  if (!url) return "/";
+  try {
+    return new URL(url, "http://placeholder.local").pathname || "/";
+  } catch {
+    return "/";
+  }
+}
+
+/** Editor link for an issue: metadata issues → metadata editor, others → content editor. */
+function editorLinkFor(siteId, issue) {
+  if (METADATA_ISSUES.has(issue?.issue_type)) {
+    return `/sites/${siteId}/content?tab=metadata&route=${encodeURIComponent(routeOf(issue?.url))}`;
+  }
+  return `/sites/${siteId}/content`;
+}
 
 const SeverityBadge = ({ severity }) => {
   const map = {
@@ -54,28 +73,19 @@ export default function CrawlReport() {
   const [loading, setLoading] = useState(false);
   const [crawling, setCrawling] = useState(false);
   const [crawlProgress, setCrawlProgress] = useState("");
-  const [fixing, setFixing] = useState({});
   const [expanded, setExpanded] = useState({});
   const [filterType, setFilterType] = useState("all");
 
-  // Apply Mode
-  const { isManual } = useApplyMode();
-  const [manualSheet, setManualSheet] = useState({ open: false, title: "", wpAdminUrl: "", fields: [], instructions: "" });
-  const openManualSheet = (config) => setManualSheet({ open: true, ...config });
-  const closeManualSheet = () => setManualSheet((prev) => ({ ...prev, open: false }));
-
   useEffect(() => {
     getSites().then(r => {
-      setSites(r.data);
-      if (r.data.length > 0) setSelectedSite(r.data[0].id);
+      const list = listItems(r.data);
+      setSites(list);
+      if (list.length > 0) setSelectedSite(list[0].id);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (selectedSite) loadReport();
-  }, [selectedSite]);
-
-  const loadReport = async () => {
+  const loadReport = useCallback(async () => {
+    if (!selectedSite) return;
     setLoading(true);
     try {
       const r = await getLatestCrawl(selectedSite);
@@ -83,7 +93,11 @@ export default function CrawlReport() {
     } catch {
       setReport(null);
     } finally { setLoading(false); }
-  };
+  }, [selectedSite]);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
 
   const handleCrawl = async () => {
     setCrawling(true);
@@ -107,62 +121,9 @@ export default function CrawlReport() {
         }
       });
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Crawl failed");
+      toast.error(apiErrorMessage(e, "Crawl failed"));
       setCrawling(false); setCrawlProgress("");
     }
-  };
-
-  const handleFix = async (issueId) => {
-    const issue = (report?.issues || []).find(i => i.id === issueId);
-    const siteData = sites.find((s) => s.id === selectedSite);
-    const siteUrl = siteData?.url || "";
-    if (isManual) {
-      setFixing(prev => ({ ...prev, [issueId]: true }));
-      try {
-        // Attempt dry run to get fix payload; fall back to static fields if endpoint doesn't support it
-        let fixPayload = null;
-        try {
-          const r = await fixCrawlIssueDryRun(selectedSite, issueId);
-          fixPayload = r.data;
-        } catch { /* ignore dry_run errors, use issue data */ }
-
-        const issueInstructions = {
-          broken_link: "Edit the source post/page in WordPress and remove or fix the broken link.",
-          missing_meta: "In the WordPress editor for this post/page, find the SEO plugin panel (Yoast/RankMath) and fill in the missing meta title and description.",
-          duplicate_title: "Rename the title of one of the posts to make it unique.",
-          no_alt_text: "In Media Library, find each image and paste an alt text.",
-          thin_content: "Edit the post in WordPress and expand the content to at least 300 words.",
-        };
-
-        openManualSheet({
-          title: `Fix Crawl Issue — ${issue?.issue_type?.replace(/_/g, " ") || issueId}`,
-          wpAdminUrl: issue?.wp_id
-            ? `${siteUrl}/wp-admin/post.php?post=${issue.wp_id}&action=edit`
-            : `${siteUrl}/wp-admin/`,
-          fields: [
-            { label: "Issue Type", value: issue?.issue_type || "", type: "text" },
-            { label: "Affected URL", value: issue?.url || "", type: "url" },
-            { label: "Recommended Fix", value: fixPayload?.recommendation || issue?.description || "", type: "text" },
-            ...(fixPayload?.new_title ? [{ label: "New Title", value: fixPayload.new_title, type: "text" }] : []),
-            ...(fixPayload?.new_meta ? [{ label: "New Meta Description", value: fixPayload.new_meta, type: "text" }] : []),
-          ],
-          instructions: issueInstructions[issue?.issue_type] || "Review the issue and apply the fix in WordPress.",
-        });
-      } catch (e) {
-        toast.error(e.response?.data?.detail || "Failed to get fix details");
-      } finally {
-        setFixing(prev => ({ ...prev, [issueId]: false }));
-      }
-      return;
-    }
-    setFixing(prev => ({ ...prev, [issueId]: true }));
-    try {
-      const r = await fixCrawlIssue(selectedSite, issueId);
-      toast.success(r.data.message || "Fix applied!");
-      loadReport();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Fix failed");
-    } finally { setFixing(prev => ({ ...prev, [issueId]: false })); }
   };
 
   const toggleExpand = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
@@ -180,17 +141,17 @@ export default function CrawlReport() {
           <motion.h1 className="page-title" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
             Crawl Report
           </motion.h1>
-          <p className="page-description">Automated site audit: broken links, missing meta, thin content and more</p>
+          <p className="page-description">Automated site audit: broken links, missing meta, thin content and more. Issues are read-only here — fix them in the site's editors, which create change sets for review.</p>
         </div>
         <div className="flex gap-2 items-center">
           <Select value={selectedSite} onValueChange={setSelectedSite}>
-            <SelectTrigger className="w-44"><SelectValue placeholder="Select site" /></SelectTrigger>
+            <SelectTrigger className="w-44" aria-label="Site"><SelectValue placeholder="Select site" /></SelectTrigger>
             <SelectContent>{sites.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
           </Select>
-          <Button className="btn-primary" onClick={handleCrawl} disabled={crawling || !selectedSite}>
+          <GatedButton minRole="editor" className="btn-primary" onClick={handleCrawl} disabled={crawling || !selectedSite}>
             {crawling ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Play size={14} className="mr-2" />}
             Run Crawl
-          </Button>
+          </GatedButton>
         </div>
       </div>
 
@@ -257,7 +218,7 @@ export default function CrawlReport() {
                   <Badge variant="secondary">{filteredIssues.length}</Badge>
                 </CardTitle>
                 <Select value={filterType} onValueChange={setFilterType}>
-                  <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="w-44 h-8 text-xs" aria-label="Filter by issue type"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Types</SelectItem>
                     {issueTypes.map(t => (
@@ -278,7 +239,8 @@ export default function CrawlReport() {
                   {filteredIssues.map((issue) => (
                     <div key={issue.id}
                       className={`rounded-lg border transition-colors ${issue.fixed ? "border-emerald-500/20 bg-emerald-500/5" : "border-border/40 bg-muted/10"}`}>
-                      <button className="w-full flex items-center gap-3 p-3 text-left"
+                      <button type="button" className="w-full flex items-center gap-3 p-3 text-left"
+                        aria-expanded={!!expanded[issue.id]}
                         onClick={() => toggleExpand(issue.id)}>
                         <IssueIcon type={issue.issue_type} />
                         <div className="flex-1 min-w-0">
@@ -300,11 +262,11 @@ export default function CrawlReport() {
                             {issue.recommended_fix}
                           </p>
                           {!issue.fixed && (
-                            <Button size="sm" variant="outline" className="text-xs h-7"
-                              onClick={() => handleFix(issue.id)} disabled={fixing[issue.id]}>
-                              {fixing[issue.id]
-                                ? <><Loader2 size={10} className="mr-1 animate-spin" /> Fixing…</>
-                                : <><Wrench size={10} className="mr-1" /> Fix with AI</>}
+                            <Button asChild size="sm" variant="outline" className="text-xs h-7">
+                              <Link to={editorLinkFor(selectedSite, issue)}>
+                                <ExternalLink size={10} className="mr-1" aria-hidden="true" />
+                                {METADATA_ISSUES.has(issue.issue_type) ? "Edit metadata" : "Open in editor"}
+                              </Link>
                             </Button>
                           )}
                         </motion.div>
@@ -322,14 +284,6 @@ export default function CrawlReport() {
         </div>
       )}
 
-      <ManualApplySheet
-        open={manualSheet.open}
-        onClose={closeManualSheet}
-        title={manualSheet.title}
-        wpAdminUrl={manualSheet.wpAdminUrl}
-        fields={manualSheet.fields}
-        instructions={manualSheet.instructions}
-      />
     </div>
   );
 }

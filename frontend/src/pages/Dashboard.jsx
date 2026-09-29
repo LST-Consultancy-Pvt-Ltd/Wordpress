@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import {
   Globe,
   FileText,
-  Newspaper,
   Sparkles,
   Activity,
   TrendingUp,
@@ -13,41 +12,42 @@ import {
   AlertCircle,
   ArrowRight,
   Zap,
-  Package,
-  AlertTriangle,
   Loader2,
-  HeartPulse,
-  MessageSquare,
-  Share2,
-  Archive,
+  GitPullRequest,
+  ShieldCheck,
+  Lock,
+  Plug,
+  XCircle,
+  CalendarClock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Badge } from "../components/ui/badge";
 import { ScrollArea } from "../components/ui/scroll-area";
-import { getDashboardStats, auditPlugins, getPluginAudit, getSites, getHealthData, getComments, getSocialQueue, listBackups } from "../lib/api";
+import { getDashboardStats, getSites, listAllChangeSets, listItems, apiErrorMessage } from "../lib/api";
+import { formatDate } from "../lib/changesets";
+import StatusBadge, { ConnectionBadge, EnvironmentBadge, ToneBadge } from "../components/sa/StatusBadge";
 import { toast } from "sonner";
 
-const StatCard = ({ icon: Icon, value, label, trend, color = "primary" }) => (
+const StatCard = ({ icon: Icon, value, label, trend, color = "primary", testId }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ duration: 0.3 }}
   >
-    <Card className="stat-card">
+    <Card className="stat-card" data-testid={testId}>
       <div className="flex items-start justify-between">
         <div>
           <p className="stat-value">{value}</p>
           <p className="stat-label">{label}</p>
         </div>
         <div className={`w-10 h-10 rounded-lg bg-${color}/10 flex items-center justify-center`}>
-          <Icon size={20} className={`text-${color}`} style={{ color: color === "primary" ? "hsl(var(--primary))" : color }} />
+          <Icon size={20} className={`text-${color}`} style={{ color: color === "primary" ? "hsl(var(--primary))" : color }} aria-hidden="true" />
         </div>
       </div>
       {trend && (
         <div className="flex items-center gap-1 mt-3 text-xs text-emerald-500">
-          <TrendingUp size={12} />
+          <TrendingUp size={12} aria-hidden="true" />
           <span>{trend}</span>
         </div>
       )}
@@ -59,17 +59,12 @@ const ActivityItem = ({ log }) => {
   const getStatusIcon = () => {
     switch (log.status) {
       case "success":
-        return <CheckCircle2 size={14} className="text-emerald-500" />;
+        return <CheckCircle2 size={14} className="text-emerald-500" aria-label="Succeeded" />;
       case "error":
-        return <AlertCircle size={14} className="text-red-500" />;
+        return <AlertCircle size={14} className="text-red-500" aria-label="Failed" />;
       default:
-        return <Clock size={14} className="text-yellow-500" />;
+        return <Clock size={14} className="text-yellow-500" aria-label="Pending" />;
     }
-  };
-
-  const formatTime = (timestamp) => {
-    const date = new Date(timestamp);
-    return date.toLocaleString();
   };
 
   return (
@@ -80,101 +75,76 @@ const ActivityItem = ({ log }) => {
         <p className="text-xs text-muted-foreground truncate">{log.details}</p>
       </div>
       <span className="text-xs text-muted-foreground whitespace-nowrap">
-        {formatTime(log.created_at)}
+        {formatDate(log.created_at)}
       </span>
     </div>
   );
 };
 
+const EMPTY_STATS = {
+  total_sites: 0,
+  connected_sites: 0,
+  write_enabled_sites: 0,
+  content_items: 0,
+  changesets_pending_approval: 0,
+  changesets_failed: 0,
+  ai_commands_executed: 0,
+  scheduled_jobs: 0,
+  recent_activity: [],
+  sites: [],
+};
+
 export default function Dashboard() {
-  const [stats, setStats] = useState({
-    total_sites: 0,
-    total_pages: 0,
-    total_posts: 0,
-    ai_commands_executed: 0,
-    recent_activity: [],
-    sites: []
-  });
-  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState(EMPTY_STATS);
   const [sites, setSites] = useState([]);
-  const [selectedPluginSite, setSelectedPluginSite] = useState("");
-  const [pluginAudit, setPluginAudit] = useState(null);
-  const [auditingPlugins, setAuditingPlugins] = useState(false);
-  const [loadingPluginAudit, setLoadingPluginAudit] = useState(false);
-  const [extraStats, setExtraStats] = useState({ uptime: "—", pendingComments: "—", scheduledPosts: "—", lastBackup: "—" });
+  const [loadingSites, setLoadingSites] = useState(true);
+  const [pending, setPending] = useState([]);
+  const [loadingPending, setLoadingPending] = useState(true);
+  const [pendingError, setPendingError] = useState("");
+
+  const loadStats = useCallback(async () => {
+    try {
+      const response = await getDashboardStats();
+      setStats({ ...EMPTY_STATS, ...(response.data || {}) });
+    } catch (error) {
+      toast.error("Failed to load dashboard stats");
+    }
+  }, []);
+
+  const loadSites = useCallback(async () => {
+    setLoadingSites(true);
+    try {
+      const r = await getSites();
+      setSites(listItems(r.data));
+    } catch {
+      setSites([]);
+    } finally {
+      setLoadingSites(false);
+    }
+  }, []);
+
+  const loadPending = useCallback(async () => {
+    setLoadingPending(true);
+    setPendingError("");
+    try {
+      const r = await listAllChangeSets({ status: "pending_approval" });
+      setPending(listItems(r.data));
+    } catch (err) {
+      setPending([]);
+      setPendingError(apiErrorMessage(err, "Could not load change sets"));
+    } finally {
+      setLoadingPending(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadStats();
-    loadSiteList();
-  }, []);
+    loadSites();
+    loadPending();
+  }, [loadStats, loadSites, loadPending]);
 
-  const loadSiteList = async () => {
-    try {
-      const r = await getSites();
-      const list = r.data || [];
-      setSites(list);
-      if (list.length > 0) {
-        setSelectedPluginSite(list[0].id);
-        loadPluginAudit(list[0].id);
-        loadExtraStats(list[0].id);
-      }
-    } catch { /* ignore */ }
-  };
-
-  const loadExtraStats = async (siteId) => {
-    try {
-      const [healthR, commentsR, queueR, backupsR] = await Promise.allSettled([
-        getHealthData(siteId),
-        getComments(siteId, "hold"),
-        getSocialQueue(siteId),
-        listBackups(siteId),
-      ]);
-      const health = healthR.status === "fulfilled" ? healthR.value.data : null;
-      const comments = commentsR.status === "fulfilled" ? (Array.isArray(commentsR.value.data) ? commentsR.value.data : []) : [];
-      const queue = queueR.status === "fulfilled" ? (Array.isArray(queueR.value.data) ? queueR.value.data : []) : [];
-      const backups = backupsR.status === "fulfilled" ? (Array.isArray(backupsR.value.data) ? backupsR.value.data : []) : [];
-      const lastBackupDate = backups[0]?.created_at ? new Date(backups[0].created_at) : null;
-      const daysSince = lastBackupDate ? Math.floor((Date.now() - lastBackupDate) / 86400000) : null;
-      setExtraStats({
-        uptime: health ? (health.online ? "Online" : "Down") : "—",
-        pendingComments: comments.length,
-        scheduledPosts: queue.filter(q => q.status === "pending").length,
-        lastBackup: daysSince !== null ? `${daysSince}d ago` : "None",
-      });
-    } catch { }
-  };
-
-  const loadPluginAudit = async (siteId) => {
-    setLoadingPluginAudit(true);
-    try {
-      const r = await getPluginAudit(siteId);
-      setPluginAudit(r.data);
-    } catch { setPluginAudit(null); }
-    finally { setLoadingPluginAudit(false); }
-  };
-
-  const handleAuditPlugins = async () => {
-    if (!selectedPluginSite) return;
-    setAuditingPlugins(true);
-    try {
-      const r = await auditPlugins(selectedPluginSite);
-      setPluginAudit(r.data);
-      toast.success(`Plugin audit complete: ${r.data.total_plugins} plugins analysed`);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Plugin audit failed");
-    } finally { setAuditingPlugins(false); }
-  };
-
-  const loadStats = async () => {
-    try {
-      const response = await getDashboardStats();
-      setStats(response.data);
-    } catch (error) {
-      toast.error("Failed to load dashboard stats");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const siteName = (id) => sites.find((s) => s.id === id)?.name || id;
+  const recentActivity = Array.isArray(stats.recent_activity) ? stats.recent_activity : [];
 
   return (
     <div className="page-container" data-testid="dashboard-page">
@@ -193,7 +163,7 @@ export default function Dashboard() {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
         >
-          Overview of your AI-managed WordPress sites
+          Overview of your connected Next.js sites, pending change sets and recent activity
         </motion.p>
       </div>
 
@@ -201,50 +171,53 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-8">
         <StatCard
           icon={Globe}
-          value={stats.total_sites}
-          label="Connected Sites"
-          trend={stats.total_sites > 0 ? "Active" : null}
+          value={`${stats.connected_sites}/${stats.total_sites}`}
+          label="Sites Connected"
+          trend={stats.connected_sites > 0 ? "Bridge online" : null}
+          testId="stat-connected-sites"
+        />
+        <StatCard
+          icon={ShieldCheck}
+          value={stats.write_enabled_sites}
+          label="Write-enabled Sites"
+          testId="stat-write-enabled"
         />
         <StatCard
           icon={FileText}
-          value={stats.total_pages}
-          label="Total Pages"
-        />
-        <StatCard
-          icon={Newspaper}
-          value={stats.total_posts}
-          label="Total Posts"
+          value={stats.content_items}
+          label="Content Items"
+          testId="stat-content-items"
         />
         <StatCard
           icon={Sparkles}
           value={stats.ai_commands_executed}
           label="AI Commands"
           color="primary"
+          testId="stat-ai-commands"
         />
       </div>
 
-      {/* Extra Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6 mb-8">
+      {/* Change set / job stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 md:gap-6 mb-8">
         <StatCard
-          icon={HeartPulse}
-          value={extraStats.uptime}
-          label="Site Status"
-          color={extraStats.uptime === "Down" ? "#ef4444" : "primary"}
+          icon={GitPullRequest}
+          value={stats.changesets_pending_approval}
+          label="Awaiting Approval"
+          color={stats.changesets_pending_approval > 0 ? "#eab308" : "primary"}
+          testId="stat-pending-approval"
         />
         <StatCard
-          icon={MessageSquare}
-          value={extraStats.pendingComments}
-          label="Pending Comments"
+          icon={XCircle}
+          value={stats.changesets_failed}
+          label="Failed Change Sets"
+          color={stats.changesets_failed > 0 ? "#ef4444" : "primary"}
+          testId="stat-failed-changesets"
         />
         <StatCard
-          icon={Share2}
-          value={extraStats.scheduledPosts}
-          label="Social Scheduled"
-        />
-        <StatCard
-          icon={Archive}
-          value={extraStats.lastBackup}
-          label="Last Backup"
+          icon={CalendarClock}
+          value={stats.scheduled_jobs}
+          label="Scheduled Jobs"
+          testId="stat-scheduled-jobs"
         />
       </div>
 
@@ -260,67 +233,55 @@ export default function Dashboard() {
           <Card className="content-card">
             <CardHeader>
               <CardTitle className="text-lg font-heading flex items-center gap-2">
-                <Zap size={18} className="text-primary" />
+                <Zap size={18} className="text-primary" aria-hidden="true" />
                 Quick Actions
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Link to="/sites" data-testid="quick-add-site">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50"
-                  >
-                    <Globe size={20} className="text-primary" />
+                <Button asChild variant="outline" className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50">
+                  <Link to="/sites" data-testid="quick-add-site">
+                    <Plug size={20} className="text-primary" aria-hidden="true" />
                     <div className="text-left">
-                      <p className="font-medium">Add WordPress Site</p>
-                      <p className="text-xs text-muted-foreground">Connect a new site</p>
+                      <p className="font-medium">Connect a Next.js Site</p>
+                      <p className="text-xs text-muted-foreground">Pair a site through its bridge agent</p>
                     </div>
-                    <ArrowRight size={16} className="ml-auto text-muted-foreground" />
-                  </Button>
-                </Link>
-                
-                <Link to="/ai-command" data-testid="quick-ai-command">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50"
-                  >
-                    <Sparkles size={20} className="text-primary" />
+                    <ArrowRight size={16} className="ml-auto text-muted-foreground" aria-hidden="true" />
+                  </Link>
+                </Button>
+
+                <Button asChild variant="outline" className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50">
+                  <Link to="/ai-command" data-testid="quick-ai-command">
+                    <Sparkles size={20} className="text-primary" aria-hidden="true" />
                     <div className="text-left">
                       <p className="font-medium">AI Command</p>
-                      <p className="text-xs text-muted-foreground">Execute AI tasks</p>
+                      <p className="text-xs text-muted-foreground">Propose changes as a change set</p>
                     </div>
-                    <ArrowRight size={16} className="ml-auto text-muted-foreground" />
-                  </Button>
-                </Link>
-                
-                <Link to="/posts" data-testid="quick-create-post">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50"
-                  >
-                    <Newspaper size={20} className="text-primary" />
+                    <ArrowRight size={16} className="ml-auto text-muted-foreground" aria-hidden="true" />
+                  </Link>
+                </Button>
+
+                <Button asChild variant="outline" className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50">
+                  <Link to="/auto-blog-generation" data-testid="quick-create-post">
+                    <FileText size={20} className="text-primary" aria-hidden="true" />
                     <div className="text-left">
-                      <p className="font-medium">Generate Blog Post</p>
-                      <p className="text-xs text-muted-foreground">AI-powered content</p>
+                      <p className="font-medium">Generate Content</p>
+                      <p className="text-xs text-muted-foreground">AI drafts, reviewed before publishing</p>
                     </div>
-                    <ArrowRight size={16} className="ml-auto text-muted-foreground" />
-                  </Button>
-                </Link>
-                
-                <Link to="/seo" data-testid="quick-seo">
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50"
-                  >
-                    <TrendingUp size={20} className="text-primary" />
+                    <ArrowRight size={16} className="ml-auto text-muted-foreground" aria-hidden="true" />
+                  </Link>
+                </Button>
+
+                <Button asChild variant="outline" className="w-full justify-start gap-3 h-auto py-4 hover:border-primary/50">
+                  <Link to="/seo" data-testid="quick-seo">
+                    <TrendingUp size={20} className="text-primary" aria-hidden="true" />
                     <div className="text-left">
                       <p className="font-medium">SEO Analysis</p>
                       <p className="text-xs text-muted-foreground">Optimize rankings</p>
                     </div>
-                    <ArrowRight size={16} className="ml-auto text-muted-foreground" />
-                  </Button>
-                </Link>
+                    <ArrowRight size={16} className="ml-auto text-muted-foreground" aria-hidden="true" />
+                  </Link>
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -336,7 +297,7 @@ export default function Dashboard() {
             <CardHeader>
               <CardTitle className="text-lg font-heading flex items-center justify-between">
                 <span className="flex items-center gap-2">
-                  <Activity size={18} className="text-primary" />
+                  <Activity size={18} className="text-primary" aria-hidden="true" />
                   Recent Activity
                 </span>
                 <Link to="/activity">
@@ -348,13 +309,13 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[300px] pr-4">
-                {stats.recent_activity.length > 0 ? (
-                  stats.recent_activity.map((log, index) => (
+                {recentActivity.length > 0 ? (
+                  recentActivity.map((log, index) => (
                     <ActivityItem key={log.id || index} log={log} />
                   ))
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                    <Activity size={32} className="text-muted-foreground/30 mb-3" />
+                    <Activity size={32} className="text-muted-foreground/30 mb-3" aria-hidden="true" />
                     <p className="text-sm text-muted-foreground">No recent activity</p>
                     <p className="text-xs text-muted-foreground mt-1">
                       Connect a site to get started
@@ -362,6 +323,73 @@ export default function Dashboard() {
                   </div>
                 )}
               </ScrollArea>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Change sets awaiting approval */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="lg:col-span-3"
+        >
+          <Card className="content-card" data-testid="pending-approval-card">
+            <CardHeader>
+              <CardTitle className="text-lg font-heading flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <GitPullRequest size={18} className="text-primary" aria-hidden="true" />
+                  Change sets awaiting approval
+                </span>
+                {pending.length > 0 && (
+                  <ToneBadge tone="warn">{pending.length} pending</ToneBadge>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loadingPending ? (
+                <div className="flex justify-center py-8" role="status" aria-label="Loading change sets">
+                  <Loader2 size={24} className="animate-spin text-primary" />
+                </div>
+              ) : pendingError ? (
+                <div className="flex items-center gap-2 text-sm text-red-500 py-4" role="alert">
+                  <AlertCircle size={16} aria-hidden="true" />
+                  {pendingError}
+                  <Button variant="outline" size="sm" className="ml-auto" onClick={loadPending}>
+                    Retry
+                  </Button>
+                </div>
+              ) : pending.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <CheckCircle2 size={32} className="text-muted-foreground/30 mb-3" aria-hidden="true" />
+                  <p className="text-sm text-muted-foreground">Nothing is waiting for approval.</p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-border/30">
+                  {pending.map((cs) => (
+                    <li key={cs.id} className="flex flex-wrap items-center gap-3 py-3" data-testid="pending-changeset-row">
+                      <div className="flex-1 min-w-0">
+                        <Link to={`/changesets/${cs.id}`} className="text-sm font-medium text-foreground hover:text-primary hover:underline truncate block">
+                          {cs.title || cs.id}
+                        </Link>
+                        <p className="text-xs text-muted-foreground truncate">
+                          <Link to={`/sites/${cs.site_id}`} className="hover:underline">
+                            {siteName(cs.site_id)}
+                          </Link>
+                          {" · "}
+                          {Array.isArray(cs.operations) ? `${cs.operations.length} operation${cs.operations.length === 1 ? "" : "s"}` : "—"}
+                          {" · submitted "}
+                          {formatDate(cs.submitted_at || cs.updated_at || cs.created_at)}
+                        </p>
+                      </div>
+                      <StatusBadge status={cs.status} />
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={`/changesets/${cs.id}`}>Review</Link>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -377,145 +405,84 @@ export default function Dashboard() {
             <CardHeader>
               <CardTitle className="text-lg font-heading flex items-center justify-between">
                 <span className="flex items-center gap-2">
-                  <Globe size={18} className="text-primary" />
+                  <Globe size={18} className="text-primary" aria-hidden="true" />
                   Connected Sites
                 </span>
-                <Link to="/sites">
-                  <Button variant="outline" size="sm" data-testid="view-all-sites">
-                    Manage Sites
-                  </Button>
-                </Link>
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/sites" data-testid="view-all-sites">Manage Sites</Link>
+                </Button>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {stats.sites.length > 0 ? (
+              {loadingSites ? (
+                <div className="flex justify-center py-8" role="status" aria-label="Loading sites">
+                  <Loader2 size={24} className="animate-spin text-primary" />
+                </div>
+              ) : sites.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {stats.sites.map((site) => (
-                    <div
+                  {sites.map((site) => (
+                    <Link
                       key={site.id}
-                      className="p-4 rounded-lg border border-border/50 hover:border-primary/30 transition-colors"
+                      to={`/sites/${site.id}`}
+                      className="block p-4 rounded-lg border border-border/50 hover:border-primary/30 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      data-testid="dashboard-site-card"
                     >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <Globe size={16} className="text-primary" />
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Globe size={16} className="text-primary shrink-0" aria-hidden="true" />
                           <span className="font-medium text-sm truncate max-w-[150px]">
                             {site.name}
                           </span>
                         </div>
-                        <Badge
-                          variant={site.status === "connected" ? "default" : "secondary"}
-                          className={site.status === "connected" ? "bg-emerald-500/10 text-emerald-500" : ""}
-                        >
-                          {site.status}
-                        </Badge>
+                        <ConnectionBadge status={site.connection?.status} />
                       </div>
-                      <p className="text-xs text-muted-foreground truncate">{site.url}</p>
-                      {site.last_sync && (
+                      <p className="text-xs text-muted-foreground truncate">{site.base_url}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <EnvironmentBadge environment={site.environment} />
+                        {site.writes_enabled ? (
+                          <ToneBadge tone="ok">
+                            <ShieldCheck size={11} className="mr-1" aria-hidden="true" />
+                            Writes enabled
+                          </ToneBadge>
+                        ) : (
+                          <ToneBadge tone="muted">
+                            <Lock size={11} className="mr-1" aria-hidden="true" />
+                            Read-only
+                          </ToneBadge>
+                        )}
+                      </div>
+                      {site.connection?.last_handshake_at && (
                         <p className="text-xs text-muted-foreground mt-2">
-                          Last sync: {new Date(site.last_sync).toLocaleDateString()}
+                          Last handshake: {formatDate(site.connection.last_handshake_at)}
                         </p>
                       )}
-                    </div>
+                      {site.connection?.last_error && (
+                        <p className="text-xs text-red-500 mt-1 truncate" title={site.connection.last_error}>
+                          {site.connection.last_error}
+                        </p>
+                      )}
+                    </Link>
                   ))}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Globe size={48} className="text-muted-foreground/30 mb-4" />
+                  <Globe size={48} className="text-muted-foreground/30 mb-4" aria-hidden="true" />
                   <h3 className="font-medium text-foreground mb-1">No sites connected</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Connect your first WordPress site to start managing it with AI
+                    Install the bridge agent on your first Next.js site and connect it here
                   </p>
-                  <Link to="/sites">
-                    <Button className="btn-primary" data-testid="add-first-site">
-                      <Globe size={16} className="mr-2" />
+                  <Button asChild className="btn-primary">
+                    <Link to="/sites" data-testid="add-first-site">
+                      <Globe size={16} className="mr-2" aria-hidden="true" />
                       Add Your First Site
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </div>
               )}
             </CardContent>
           </Card>
         </motion.div>
       </div>
-
-      {/* Plugin Health Audit */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-        className="mt-6"
-      >
-        <Card className="content-card">
-          <CardHeader>
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <CardTitle className="text-lg font-heading flex items-center gap-2">
-                <Package size={18} className="text-primary" />
-                Plugin Health Audit
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                {sites.length > 1 && (
-                  <Select value={selectedPluginSite} onValueChange={(v) => { setSelectedPluginSite(v); loadPluginAudit(v); }}>
-                    <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {sites.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                <Button size="sm" onClick={handleAuditPlugins} disabled={auditingPlugins || !selectedPluginSite} className="h-8">
-                  {auditingPlugins ? <Loader2 size={13} className="animate-spin mr-1.5" /> : <Package size={13} className="mr-1.5" />}
-                  Run Audit
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loadingPluginAudit ? (
-              <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-primary" /></div>
-            ) : !pluginAudit ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <Package size={36} className="text-muted-foreground/30 mb-3" />
-                <p className="text-muted-foreground text-sm">No audit data yet. Click "Run Audit" to scan plugins.</p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: "Total Plugins", value: pluginAudit.total_plugins, color: "text-foreground" },
-                    { label: "High Issues", value: pluginAudit.high_issues, color: "text-red-500" },
-                    { label: "Medium Issues", value: pluginAudit.medium_issues, color: "text-yellow-500" },
-                    { label: "Last Audit", value: pluginAudit.audited_at ? new Date(pluginAudit.audited_at).toLocaleDateString() : "—", color: "text-muted-foreground" },
-                  ].map(({ label, value, color }) => (
-                    <div key={label} className="p-3 rounded-lg bg-muted/30 border border-border/30">
-                      <p className="text-xs text-muted-foreground mb-0.5">{label}</p>
-                      <p className={`text-lg font-semibold ${color}`}>{value}</p>
-                    </div>
-                  ))}
-                </div>
-                {pluginAudit.issues?.length > 0 ? (
-                  <div>
-                    <p className="text-sm font-medium mb-2">Issues Found</p>
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {pluginAudit.issues.map((issue, i) => (
-                        <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-muted/20 border border-border/30 text-sm">
-                          {issue.severity === "high" ? <AlertTriangle size={14} className="text-red-500 mt-0.5 shrink-0" /> : issue.severity === "medium" ? <AlertCircle size={14} className="text-yellow-500 mt-0.5 shrink-0" /> : <CheckCircle2 size={14} className="text-muted-foreground mt-0.5 shrink-0" />}
-                          <div>
-                            <span className="font-medium">{issue.plugin}</span>
-                            <span className="text-muted-foreground"> — {issue.issue}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 text-emerald-500 text-sm">
-                    <CheckCircle2 size={16} />No issues found — plugins look healthy!
-                  </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </motion.div>
     </div>
   );
 }
