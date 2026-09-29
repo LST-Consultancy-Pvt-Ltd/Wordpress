@@ -91,4 +91,8 @@ jobs:
           cache: yarn
           cache-dependency-path: frontend/yarn.lock
       - run: yarn install --frozen-lockfile
-      - run: CI=false yarn build
+      - run: yarn test:ci
+      - run: CI=true yarn build
+      - run: npx playwright install --with-deps chromium
+      - run: E2E_SKIP_BUILD=1 yarn e2e
+      - run: yarn audit --groups dependencies --level critical || true   # report-only: CRA's transitive tree
