@@ -32,7 +32,7 @@ import {
 import { formatDate } from "../../lib/changesets";
 import { hasCapability, missingCapabilityReason } from "../../lib/capabilities";
 
-const DEPLOY_TONE = { succeeded: "ok", running: "info", failed: "error", rolled_back: "warn" };
+const DEPLOY_TONE = { succeeded: "ok", running: "info", failed: "error", rolled_back: "warn", unknown: "muted" };
 
 function LiveTask({ task, onDone }) {
   const { events, status, message } = useTaskStream(task?.id, { onDone });
@@ -223,6 +223,7 @@ export default function SiteOperations() {
                       <ToneBadge tone={DEPLOY_TONE[d.status] || "muted"}>{d.status}</ToneBadge>
                       <span className="text-xs text-muted-foreground">{d.profile} · {formatDate(d.started_at)} → {formatDate(d.finished_at)}</span>
                       {d.requested_by && <span className="text-xs text-muted-foreground">by {d.requested_by}</span>}
+                      {d.job_status && <span className="text-xs text-muted-foreground">job: {d.job_status}</span>}
                       <span className="ml-auto">
                         <GatedButton
                           minRole="deployer"
@@ -236,6 +237,11 @@ export default function SiteOperations() {
                         </GatedButton>
                       </span>
                     </div>
+                    {d.recovery && (
+                      <p className="text-xs text-yellow-500 mt-1" data-testid="deployment-recovery">
+                        Recovery: {typeof d.recovery === "string" ? d.recovery : d.recovery.status || JSON.stringify(d.recovery)}
+                      </p>
+                    )}
                     <p className="text-[11px] font-mono text-muted-foreground mt-1 break-all">
                       {d.previous_image_id?.slice(0, 19) || "—"} → {d.new_image_id?.slice(0, 19) || "—"}
                     </p>
