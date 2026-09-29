@@ -43,6 +43,12 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.runtime.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build the automation bridge (for the real-bridge end-to-end test)
+        working-directory: automation-bridge
+        run: npm ci && npm run build
       - run: pip install -r requirements.runtime.txt ruff
       - run: ruff check --select F,E9 --ignore F841 server.py core routers providers models migrations tests
       - run: python -m pytest -q tests
@@ -50,6 +56,27 @@ jobs:
         run: |
           docker build -t sa-backend-ci .
           test "$(docker run --rm --entrypoint id sa-backend-ci -u)" = "10001"
+
+  automation-bridge:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: automation-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: automation-bridge/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Sidecar image builds
+        run: docker build -t automation-bridge-ci .
 
   frontend:
     runs-on: ubuntu-latest
