@@ -73,18 +73,9 @@ export const getAgentSession = (id) => api.get(`/agent/session/${id}`);
 export const deleteAgentSession = (id) => api.delete(`/agent/session/${id}`);
 export const startAgentTurn = (data) => api.post("/agent/turn", data);
 
-// Pages
-export const getPages = (siteId) => api.get(`/pages/${siteId}`);
-export const createPage = (data) => api.post("/pages", data);
-export const updatePage = (siteId, wpId, data) => api.put(`/pages/${siteId}/${wpId}`, data);
-export const deletePage = (siteId, wpId) => api.delete(`/pages/${siteId}/${wpId}`);
 
 // Posts
 export const getPosts = (siteId) => api.get(`/posts/${siteId}`);
-export const createPost = (data) => api.post("/posts", data);
-export const updatePost = (siteId, wpId, data) => api.put(`/posts/${siteId}/${wpId}`, data);
-export const deletePost = (siteId, wpId) => api.delete(`/posts/${siteId}/${wpId}`);
-export const generateBlogPost = (data) => api.post("/posts/generate", data);
 
 // SEO
 export const getSEOMetrics = (siteId) => api.get(`/seo/${siteId}`);
@@ -95,7 +86,6 @@ export const refreshSEOFromGoogle = (siteId) => api.post(`/seo/refresh-google/${
 export const bulkSEOAudit = (siteIds) => api.post("/seo/bulk-audit", { site_ids: siteIds });
 
 // Bulk Operations
-export const bulkPublish = (data) => api.post("/bulk/publish", data);
 export const bulkContentRefresh = (siteIds) => api.post("/content-refresh/bulk", { site_ids: siteIds });
 
 // Scheduled Jobs
@@ -104,9 +94,6 @@ export const createJob = (data) => api.post("/jobs", data);
 export const updateJob = (id, data) => api.put(`/jobs/${id}`, data);
 export const deleteJob = (id) => api.delete(`/jobs/${id}`);
 
-// Navigation
-export const getNavigation = (siteId) => api.get(`/navigation/${siteId}`);
-export const syncNavigation = (siteId) => api.post(`/navigation/${siteId}/sync`);
 
 // Content Refresh
 export const getContentRefreshItems = (siteId) => api.get(`/content-refresh/${siteId}`);
@@ -135,21 +122,12 @@ export const suggestInternalLinks = (siteId) => api.post(`/internal-links/${site
 export const getInternalLinkSuggestions = (siteId) => api.get(`/internal-links/${siteId}`);
 export const applyInternalLink = (siteId, suggestionId) => api.post(`/internal-links/${siteId}/apply/${suggestionId}`);
 
-// Content Calendar
-export const getCalendarEvents = (siteId) => api.get(`/calendar/${siteId}`);
-export const scheduleCalendarPost = (siteId, data) => api.post(`/calendar/${siteId}/schedule`, data);
 
 // Competitor Analysis
 export const analyzeCompetitor = (siteId, data) => api.post(`/competitor/${siteId}/analyze`, data);
 export const getCompetitorAnalyses = (siteId) => api.get(`/competitor/${siteId}`);
 
-// Bulk Meta + Taxonomy
-export const bulkMetaUpdate = (data) => api.post("/bulk/meta-update", data);
-export const bulkTaxonomyUpdate = (data) => api.post("/bulk/taxonomy-update", data);
-export const getTaxonomies = (siteId) => api.get(`/taxonomies/${siteId}`);
 
-// Post Translation
-export const translatePost = (siteId, wpId, data) => api.post(`/posts/translate/${siteId}/${wpId}`, data);
 
 // PageSpeed Insights
 export const analyzePageSpeed = (siteId, data) => api.post(`/pagespeed/${siteId}/analyze`, data);
@@ -161,10 +139,6 @@ export const createWritingStyle = (data) => api.post('/writing-styles', data);
 export const updateWritingStyle = (id, data) => api.put(`/writing-styles/${id}`, data);
 export const deleteWritingStyle = (id) => api.delete(`/writing-styles/${id}`);
 
-// Content Briefs
-export const generateBrief = (siteId, data) => api.post(`/brief/${siteId}/generate`, data);
-export const getBriefs = (siteId) => api.get(`/brief/${siteId}`);
-export const generatePostFromBrief = (siteId, briefId) => api.post(`/brief/${siteId}/${briefId}/generate-post`);
 
 // Plugin Health Audit
 export const auditPlugins = (siteId) => api.post(`/plugins/${siteId}/audit`);
@@ -187,7 +161,6 @@ export const generateSiteReport = (siteId) =>
   api.post(`/reports/${siteId}/generate`, { template: 'site_health' }, { responseType: 'blob' });
 
 // Readability
-export const analyzeReadability = (siteId, wpId, contentType = 'post') =>
   api.post(`/readability/${siteId}/${wpId}?content_type=${contentType}`);
 
 // Task polling helper (SSE-compatible via polling for environments that block EventSource)
@@ -244,9 +217,6 @@ export const deleteLocalKeyword = (siteId, kwId) => api.delete(`/local/${siteId}
 export const getLocalRecommendations = (siteId) => api.post(`/local/recommendations/${siteId}`);
 
 // Feature 8: Live Editor
-export const editorListPosts = (siteId) => api.get(`/editor/${siteId}/posts`);
-export const editorGetPost = (siteId, wpId, type = 'post') => api.get(`/editor/${siteId}/post/${wpId}?content_type=${type}`);
-export const editorSavePost = (siteId, wpId, data) => api.put(`/editor/${siteId}/post/${wpId}`, data);
 export const editorAIAssist = (data) => api.post('/editor/ai-assist', data);
 
 // Feature 10: Crawl Report
@@ -264,8 +234,6 @@ export const autopilotGetJobs      = (siteId) => api.get(`/autopilot/${siteId}/j
 export const autopilotPickKeyword  = (siteId) => api.post(`/autopilot/${siteId}/pick-keyword`);
 export const autopilotWritePost    = (siteId, jobId) => api.post(`/autopilot/${siteId}/write-post/${jobId}`);
 export const autopilotOptimizeSEO  = (siteId, jobId) => api.post(`/autopilot/${siteId}/optimize-seo/${jobId}`);
-export const autopilotPublish      = (siteId, jobId) => api.post(`/autopilot/${siteId}/publish/${jobId}`);
-export const autopilotInterlink    = (siteId, jobId) => api.post(`/autopilot/${siteId}/interlink/${jobId}`);
 export const autopilotUpdateSchedule = (siteId) => api.post(`/autopilot/${siteId}/update-schedule`);
 
 // Auto-SEO: Meta Tags, Open Graph, Schema Markup
@@ -279,81 +247,18 @@ export const downloadMetaFixerPlugin = (siteId)            => api.get(`/seo/meta
 export const downloadBridgePlugin    = (siteId)            => api.get(`/seo/bridge-plugin/${siteId}`, { responseType: "blob" });
 export const fullPageSEOAudit        = (siteId, data)      => api.post(`/seo/full-page-audit/${siteId}`, data);
 
-// Feature: Media Library
-export const getMedia              = (siteId)                       => api.get(`/media/${siteId}`);
-export const deleteMedia           = (siteId, mediaId)              => api.delete(`/media/${siteId}/${mediaId}`);
-export const renameMedia           = (siteId, mediaId, data)        => api.post(`/media/${siteId}/rename/${mediaId}`, data);
-export const compressMedia         = (siteId, mediaId)              => api.post(`/media/${siteId}/compress/${mediaId}`);
-export const bulkCompressMedia     = (siteId)                       => api.post(`/media/${siteId}/bulk-compress`);
-export const uploadMedia           = (siteId, file)                 => {
-  const formData = new FormData(); formData.append("file", file);
-  return api.post(`/media/${siteId}/upload`, file, {
-    headers: { "Content-Type": file.type, "X-Filename": file.name },
-  });
-};
 
 // Feature: Comments
 export const getComments           = (siteId, status = "hold")      => api.get(`/comments/${siteId}?status=${status}`);
-export const approveComment        = (siteId, commentId)            => api.post(`/comments/${siteId}/approve/${commentId}`);
-export const spamComment           = (siteId, commentId)            => api.post(`/comments/${siteId}/spam/${commentId}`);
-export const deleteComment         = (siteId, commentId)            => api.delete(`/comments/${siteId}/${commentId}`);
-export const bulkCommentAction     = (siteId, data)                 => api.post(`/comments/${siteId}/bulk-action`, data);
-export const aiReplyComment        = (siteId, commentId)            => api.post(`/comments/${siteId}/ai-reply/${commentId}`);
-export const postCommentReply      = (siteId, commentId, data)      => api.post(`/comments/${siteId}/post-reply/${commentId}`, data);
-export const autoModerateComments  = (siteId)                       => api.post(`/comments/${siteId}/auto-moderate`);
 
-// Feature: WP Users
-export const getWPUsers            = (siteId)                       => api.get(`/wp-users/${siteId}`);
-export const createWPUser          = (siteId, data)                 => api.post(`/wp-users/${siteId}`, data);
-export const updateWPUser          = (siteId, userId, data)         => api.put(`/wp-users/${siteId}/${userId}`, data);
-export const deleteWPUser          = (siteId, userId, reassign = 1) => api.delete(`/wp-users/${siteId}/${userId}?reassign=${reassign}`);
-export const resetWPUserPassword   = (siteId, userId)               => api.post(`/wp-users/${siteId}/reset-password/${userId}`);
 
-// Feature: Plugins & Themes
-export const getPluginsThemes      = (siteId)                       => api.get(`/plugins-themes/${siteId}/plugins`);
-export const activatePlugin        = (siteId, slug)                 => api.post(`/plugins-themes/${siteId}/plugins/${encodeURIComponent(slug)}/activate`);
-export const deactivatePlugin      = (siteId, slug)                 => api.post(`/plugins-themes/${siteId}/plugins/${encodeURIComponent(slug)}/deactivate`);
-export const getThemes             = (siteId)                       => api.get(`/plugins-themes/${siteId}/themes`);
-export const activateTheme         = (siteId, stylesheet)           => api.post(`/plugins-themes/${siteId}/themes/${encodeURIComponent(stylesheet)}/activate`);
-export const pluginSecurityScan    = (siteId)                       => api.post(`/plugins-themes/${siteId}/security-scan`);
 
-// Feature: Forms & Leads
-export const getForms              = (siteId)                       => api.get(`/forms/${siteId}`);
-export const getFormEntries        = (siteId, formId)               => api.get(`/forms/${siteId}/${formId}/entries`);
-export const analyzeFormEntries    = (siteId, formId)               => api.post(`/forms/${siteId}/ai-analyze/${formId}`);
-export const createFaqPostFromForm = (siteId, formId)               => api.post(`/forms/${siteId}/create-faq-post/${formId}`);
 
-// Feature: WooCommerce
-export const getWooProducts        = (siteId)                       => api.get(`/woo/${siteId}/products`);
-export const getWooOrders          = (siteId)                       => api.get(`/woo/${siteId}/orders`);
-export const getWooCustomers       = (siteId)                       => api.get(`/woo/${siteId}/customers`);
-export const getWooStats           = (siteId)                       => api.get(`/woo/${siteId}/stats`);
-export const wooAIDescription      = (siteId, prodId)               => api.post(`/woo/${siteId}/products/${prodId}/ai-description`);
-export const wooBulkAIDescriptions = (siteId)                       => api.post(`/woo/${siteId}/bulk-ai-descriptions`);
-export const wooLowStockAlert      = (siteId)                       => api.post(`/woo/${siteId}/low-stock-alert`);
 
 // Feature: Backups
 export const listBackups           = (siteId)                       => api.get(`/backups/${siteId}`);
-export const createBackup          = (siteId)                       => api.post(`/backups/${siteId}/create`);
-export const restoreBackup         = (siteId, backupId)             => api.post(`/backups/${siteId}/restore/${backupId}`);
-export const deleteBackup          = (siteId, backupId)             => api.delete(`/backups/${siteId}/${backupId}`);
-export const scheduleBackup        = (siteId, data)                 => api.post(`/backups/${siteId}/schedule`, data);
 
-// Feature: Redirects
-export const listRedirects         = (siteId)                       => api.get(`/redirects/${siteId}`);
-export const createRedirect        = (siteId, data)                 => api.post(`/redirects/${siteId}`, data);
-export const deleteRedirect        = (siteId, redirectId)           => api.delete(`/redirects/${siteId}/${redirectId}`);
-export const aiSuggestRedirects    = (siteId)                       => api.post(`/redirects/${siteId}/ai-suggest`);
-export const bulkCreateRedirects   = (siteId, data)                 => api.post(`/redirects/${siteId}/bulk-create`, data);
 
-// Feature: A/B Testing
-export const listABTests           = (siteId)                       => api.get(`/ab/${siteId}`);
-export const createABTest          = (siteId, data)                 => api.post(`/ab/${siteId}/create`, data);
-export const recordABImpression    = (siteId, testId, variant)      => api.post(`/ab/${siteId}/record-impression/${testId}?variant=${variant}`);
-export const recordABClick         = (siteId, testId, variant)      => api.post(`/ab/${siteId}/record-click/${testId}?variant=${variant}`);
-export const switchABVariant       = (siteId, testId)               => api.post(`/ab/${siteId}/switch-variant/${testId}`);
-export const concludeABTest        = (siteId, testId)               => api.post(`/ab/${siteId}/conclude/${testId}`);
-export const generateABVariants    = (siteId, postId)               => api.post(`/ab/${siteId}/ai-generate-variants/${postId}`);
 
 // Feature: Social Media
 export const getSocialAccounts     = (siteId)                       => api.get(`/social/${siteId}/accounts`);
@@ -384,8 +289,6 @@ export const getNotifications      = (siteId)                       => api.get(`
 export const markNotificationRead  = (siteId, notifId)              => api.post(`/notifications/${siteId}/mark-read/${notifId}`);
 export const markAllNotificationsRead = (siteId)                    => api.post(`/notifications/${siteId}/mark-all-read`);
 
-// Global: Search
-export const globalSearch          = (siteId, q)                    => api.get(`/search/${siteId}?q=${encodeURIComponent(q)}`);
 
 // Feature: Programmatic SEO
 export const generateProgrammaticPages  = (siteId, data)            => api.post(`/programmatic/${siteId}/generate`, data);
@@ -435,22 +338,14 @@ export const exportOnPageAudit       = (siteId, kind = "actions") =>
 
 // Next.js sites: content publishing via the SEO Bridge endpoint in their app
 export const nextjsBridgeHealth      = (siteId)                  => api.get(`/nextjs/${siteId}/health`);
-export const nextjsListPosts         = (siteId)                  => api.get(`/nextjs/${siteId}/posts`);
-export const nextjsGetPost           = (siteId, slug)             => api.get(`/nextjs/${siteId}/posts/${slug}`);
-export const nextjsPublishPost       = (siteId, data)            => api.post(`/nextjs/${siteId}/posts`, data);
-export const nextjsDeletePost        = (siteId, slug)            => api.delete(`/nextjs/${siteId}/posts/${slug}`);
 
 // Next.js sites: editable body-copy blocks on static pages (not blog posts)
-export const nextjsListPageContent   = (siteId)                  => api.get(`/nextjs/${siteId}/pages`);
 export const nextjsGetPageContent    = (siteId, path)             => api.get(`/nextjs/${siteId}/pages/content`, { params: { path } });
 export const nextjsSetPageContent    = (siteId, path, key, value) => api.put(`/nextjs/${siteId}/pages/content`, { path, key, value });
-export const nextjsClearPageContent  = (siteId, path, key)        => api.delete(`/nextjs/${siteId}/pages/content`, { params: key ? { path, key } : { path } });
 
 // Next.js sites: editable image alt text on static pages
-export const nextjsListImages        = (siteId)                  => api.get(`/nextjs/${siteId}/images`);
 export const nextjsGetPageImages     = (siteId, path)             => api.get(`/nextjs/${siteId}/images/content`, { params: { path } });
 export const nextjsSetImageAlt       = (siteId, path, key, alt)   => api.put(`/nextjs/${siteId}/images/content`, { path, key, alt });
-export const nextjsClearImageAlt     = (siteId, path, key)        => api.delete(`/nextjs/${siteId}/images/content`, { params: key ? { path, key } : { path } });
 export const nextjsGenerateImageAlt  = (siteId, path, key, src)   => api.post(`/nextjs/${siteId}/images/generate-alt`, { path, key, src });
 
 // Direct-posting directories (sign in & get listed — no outreach email)
@@ -487,10 +382,6 @@ export const getOffPagePriorityActions  = (siteId)                  => api.get(`
 export const generateOffPageStrategy   = (siteId)                  => api.post(`/offpage-autopilot/${siteId}/generate-strategy`);
 export const getOffPageDigest           = (siteId)                  => api.get(`/offpage-autopilot/${siteId}/digest`);
 
-// Feature: Schema Markup Generator
-export const generateSchema             = (siteId, data)            => api.post(`/schema/${siteId}/generate`, data);
-export const listSchemaRecords          = (siteId)                  => api.get(`/schema/${siteId}`);
-export const applySchemaRecord          = (siteId, schemaId)        => api.post(`/schema/${siteId}/apply/${schemaId}`);
 
 // Feature: Sitemap & Robots.txt Manager
 export const getSitemap                 = (siteId)                  => api.get(`/sitemap/${siteId}`);
@@ -498,10 +389,6 @@ export const regenerateSitemap          = (siteId)                  => api.post(
 export const getRobotsTxt               = (siteId)                  => api.get(`/robots/${siteId}`);
 export const updateRobotsTxt            = (siteId, data)            => api.put(`/robots/${siteId}`, data);
 
-// Feature: Canonical Tag Manager
-export const getCanonicals              = (siteId)                  => api.get(`/canonical/${siteId}`);
-export const updateCanonical            = (siteId, wpId, data)      => api.put(`/canonical/${siteId}/${wpId}`, data);
-export const bulkFixCanonicals          = (siteId)                  => api.post(`/canonical/${siteId}/bulk-fix`);
 
 // Feature: Mobile Responsiveness Checker
 export const checkMobileUsability       = (siteId)                  => api.post(`/mobile/${siteId}/check`);
@@ -531,10 +418,6 @@ export const uptimeDeepCheck            = (siteId)                  => api.post(
 export const getUptimeHistory           = (siteId, days = 7)        => api.get(`/uptime/${siteId}/history?days=${days}`);
 export const getUptimeSummary           = (siteId)                  => api.get(`/uptime/${siteId}/summary`);
 
-// Module 4: Image SEO
-export const bulkGenerateAltText        = (siteId)                  => api.post(`/image-seo/${siteId}/bulk-generate-alt`);
-export const runImageSEOAudit           = (siteId)                  => api.post(`/image-seo/${siteId}/audit`);
-export const getImageSEOAudit           = (siteId)                  => api.get(`/image-seo/${siteId}/audit`);
 
 // Module 12: Pipeline Logs
 export const getPipelineLogs            = (siteId, limit = 20)      => api.get(`/autopilot/${siteId}/pipeline-logs?limit=${limit}`);
@@ -543,14 +426,10 @@ export const getPipelineStats           = (siteId)                  => api.get(`
 // Keyword Cannibalization Detector (Module 1)
 export const detectCannibalization      = (siteId)                  => api.get(`/keywords/${siteId}/cannibalization`);
 
-// EXIF Metadata Cleaning (Module 4)
-export const cleanExifMetadata          = (siteId, data = {})       => api.post(`/images/${siteId}/clean-exif`, data);
 
 // Image Sitemap with Images (Module 4)
 export const regenerateSitemapWithImages = (siteId, data = {})      => api.post(`/sitemap/${siteId}/regenerate-with-images`, data);
 
-// WebP Bulk Conversion (Module 4)
-export const convertImagesToWebP        = (siteId, data = {})       => api.post(`/images/${siteId}/convert-webp`, data);
 
 // Event-Based Autopilot Triggers (Module 12)
 export const getAutopilotTriggers       = (siteId)                  => api.get(`/autopilot/${siteId}/trigger-settings`);
@@ -586,10 +465,6 @@ export const getAnchorDistribution     = (siteId)                   => api.get(`
 // Social Signal SEO Mapping (Module 9)
 export const getSocialSignals          = (siteId)                   => api.get(`/link-builder/${siteId}/social-signals`);
 
-// A/B Title SEO Testing (Module 5)
-export const createTitleTest           = (siteId, data)             => api.post(`/ab-testing/${siteId}/title-test`, data);
-export const listTitleTests            = (siteId)                   => api.get(`/ab-testing/${siteId}/title-tests`);
-export const concludeTitleTest         = (siteId, testId)           => api.post(`/ab-testing/${siteId}/title-test/${testId}/conclude`);
 
 // DataForSEO Integrations — Real Keyword & SERP Data
 export const getKeywordMetrics         = (siteId, data)             => api.post(`/keywords/${siteId}/metrics`, data);

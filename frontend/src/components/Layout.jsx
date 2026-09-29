@@ -119,9 +119,7 @@ const navGroups = [
       { path: "/broken-links", icon: Link2, label: "Broken Links" },
       { path: "/duplicate-content", icon: Copy, label: "Duplicate Content" },
       { path: "/crawl-report", icon: Bug, label: "Crawl Report" },
-      { path: "/schema-markup", icon: Code2, label: "Schema Markup" },
       { path: "/sitemap-robots", icon: Map, label: "Sitemap & Robots" },
-      { path: "/canonical-manager", icon: GitMerge, label: "Canonical Manager" },
       { path: "/mobile-checker", icon: Smartphone, label: "Mobile Checker" },
       { path: "/indexing-tracker", icon: Compass, label: "Indexing Tracker" },
       { path: "/reports", icon: BarChart3, label: "Reports" },
@@ -160,26 +158,7 @@ const navGroups = [
   {
     label: "Content",
     items: [
-      { path: "/pages", icon: FileText, label: "Pages" },
-      { path: "/posts", icon: Newspaper, label: "Posts" },
-      { path: "/calendar", icon: CalendarDays, label: "Calendar" },
       { path: "/content-refresh", icon: RefreshCw, label: "Content Refresh" },
-      { path: "/live-editor", icon: PenTool, label: "Live Editor" },
-    ],
-  },
-  // WordPress Integration
-  {
-    label: "WordPress",
-    items: [
-      { path: "/media-library", icon: Image, label: "Media Library" },
-      { path: "/comments", icon: MessageSquare, label: "Comments" },
-      { path: "/wp-users", icon: Users, label: "Users" },
-      { path: "/plugins-themes", icon: Puzzle, label: "Plugins & Themes" },
-      { path: "/forms", icon: FileInput, label: "Forms" },
-      { path: "/navigation", icon: MenuIcon, label: "Navigation" },
-      { path: "/backups", icon: Archive, label: "Backups" },
-      { path: "/redirects", icon: ArrowRightLeft, label: "Redirects" },
-      { path: "/woocommerce", icon: Store, label: "WooCommerce" },
     ],
   },
   // Module 7 — Social Media & Marketing
@@ -188,7 +167,6 @@ const navGroups = [
     items: [
       { path: "/social-media", icon: Share2, label: "Social Media" },
       { path: "/newsletter", icon: Mail, label: "Newsletter" },
-      { path: "/ab-testing", icon: FlaskConical, label: "A/B Testing" },
     ],
   },
   // Paid Ads
