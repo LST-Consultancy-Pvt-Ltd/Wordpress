@@ -104,7 +104,8 @@ async def _start_deploy(site_id: str, actor: dict, *, body: dict, kind: str, rea
         await audit(f"deployment.{kind}", actor=actor, site=site, outcome="error", correlation_id=cid,
                     detail={"code": e.code, **body})
         raise e.to_http()
-    dep = {"id": "dep_" + uuid.uuid4().hex[:16], "site_id": site_id, "kind": kind,
+    dep_id = "dep_" + uuid.uuid4().hex[:16]
+    dep = {"id": dep_id, "deployment_id": dep_id, "site_id": site_id, "kind": kind,
            "profile": body.get("profile"), "reason": reason, "bridge_deployment_id": started.get("deployment_id"),
            "bridge_job_id": started.get("job_id"), "status": "running", "steps": [],
            "requested_by": actor.get("id"), "requested_by_email": actor.get("email"),
