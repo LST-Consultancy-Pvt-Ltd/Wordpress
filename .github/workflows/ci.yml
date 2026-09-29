@@ -94,5 +94,5 @@ jobs:
       - run: yarn test:ci
       - run: CI=true yarn build
       - run: npx playwright install --with-deps chromium
-      - run: E2E_SKIP_BUILD=1 yarn e2e
+      - run: yarn e2e   # builds with the mocked API URL
       - run: yarn audit --groups dependencies --level critical || true   # report-only: CRA's transitive tree
