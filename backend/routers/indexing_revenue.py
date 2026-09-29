@@ -48,7 +48,7 @@ async def _check_indexing(task_id: str, site_id: str):
             return
 
         # Try fetching sitemap
-        site_url = site.get("url", "").rstrip("/")
+        site_url = site.get("base_url", "").rstrip("/")
         sitemap_url = f"{site_url}/sitemap.xml"
         await push_event(task_id, "status", {"message": f"Fetching sitemap from {sitemap_url}...", "percent": 10})
 
@@ -65,9 +65,9 @@ async def _check_indexing(task_id: str, site_id: str):
 
         if not urls:
             # Fallback: use cached pages/posts
-            pages = await db.pages.find({"site_id": site_id, "link": {"$exists": True}}, {"_id": 0, "link": 1, "title": 1}).to_list(200)
-            posts = await db.posts.find({"site_id": site_id, "link": {"$exists": True}}, {"_id": 0, "link": 1, "title": 1}).to_list(200)
-            urls = [p.get("link") for p in pages + posts if p.get("link")]
+            items = await db.content_items.find({"site_id": site_id, "url": {"$nin": [None, ""]}},
+                                                {"_id": 0, "url": 1}).to_list(400)
+            urls = [p["url"] for p in items]
 
         total = len(urls)
         await push_event(task_id, "status", {"message": f"Found {total} URLs. Checking GSC index status...", "percent": 20})
@@ -152,7 +152,7 @@ async def submit_sitemap_to_gsc(site_id: str, body: SitemapBatch, _: dict = Depe
         site_doc = await db.sites.find_one({"id": site_id}, {"_id": 0}) or {}
         # gsc_site_url must match exactly how the property is verified in GSC
         # (e.g. "https://example.com/" or "sc-domain:example.com")
-        site_url = settings.get("gsc_site_url") or site_doc.get("url", "")
+        site_url = settings.get("gsc_site_url") or site_doc.get("base_url", "")
         if not site_url:
             raise HTTPException(
                 status_code=400,

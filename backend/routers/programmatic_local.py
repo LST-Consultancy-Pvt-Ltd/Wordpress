@@ -1,5 +1,5 @@
 """Programmatic Page Engine (service×city page generation with AI FAQs +
-LocalBusiness/FAQPage schema, push to WordPress) and Keyword Cluster Engine
+LocalBusiness/FAQPage schema, proposed as a content change set) and Keyword Cluster Engine
 (AI-classified local/transactional/comparison keyword clusters).
 """
 import json
@@ -17,7 +17,7 @@ from core.db import db
 from core.router import api_router
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from providers.wordpress import get_wp_credentials, wp_api_request
+from core.content_proposals import propose_content
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +142,7 @@ Return JSON array: [{{"question": "...", "answer": "..."}}]"""
                 "url_slug": url_slug,
                 "meta_description": meta_desc,
                 "content": content,
-                "pushed_to_wp": False,
-                "wp_id": None,
+                "changeset_id": None,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
             await db.programmatic_pages.insert_one(page_doc)
@@ -162,48 +161,25 @@ async def list_programmatic_pages(site_id: str, _: dict = Depends(require_user))
     return docs
 
 @api_router.post("/programmatic/{site_id}/push")
-async def push_programmatic_pages(
-    site_id: str,
-    body: ProgrammaticPushRequest,
-    background_tasks: BackgroundTasks,
-    _: dict = Depends(require_editor),
-):
-    task_id = make_task_id()
-    await create_task_queue(task_id)
-    background_tasks.add_task(_push_programmatic_pages, task_id, site_id, body.page_ids)
-    return {"task_id": task_id}
+async def push_programmatic_pages(site_id: str, body: ProgrammaticPushRequest, user: dict = Depends(require_editor)):
+    """Propose the selected generated pages as one content change set."""
+    docs = [d for d in await db.programmatic_pages.find(
+        {"site_id": site_id, "id": {"$in": body.page_ids}}, {"_id": 0}).to_list(len(body.page_ids) or 1)
+        if not d.get("changeset_id")]
+    if not docs:
+        raise HTTPException(status_code=400, detail="No unproposed pages among the selection")
+    cs = await propose_content(
+        site_id, actor=user, source="programmatic", title=f"{len(docs)} programmatic page(s)",
+        items=[{"title": d["title"], "slug": d["url_slug"].strip("/").split("/")[-1], "body": d["content"],
+                "frontmatter": {"description": d.get("meta_description"), "content_format": "html",
+                                "service": d.get("service"), "city": d.get("city"), "state": d.get("state")}}
+               for d in docs[:50]])
+    await db.programmatic_pages.update_many({"id": {"$in": [d["id"] for d in docs[:50]]}},
+                                            {"$set": {"changeset_id": cs["id"]}})
+    await log_activity(site_id, "programmatic_proposed", f"Proposed {len(docs[:50])} programmatic pages ({cs['id']})",
+                       user_id=user["id"])
+    return {"changeset": cs, "proposed": len(docs[:50]), "truncated": len(docs) > 50}
 
-async def _push_programmatic_pages(task_id: str, site_id: str, page_ids: List[str]):
-    try:
-        site = await get_wp_credentials(site_id)
-        total = len(page_ids)
-        pushed = 0
-        for idx, page_id in enumerate(page_ids):
-            doc = await db.programmatic_pages.find_one({"id": page_id, "site_id": site_id}, {"_id": 0})
-            if not doc or doc.get("pushed_to_wp"):
-                continue
-            wp_data = {
-                "title": doc["title"],
-                "content": doc["content"],
-                "status": "draft",
-                "slug": doc["url_slug"].strip("/"),
-                "meta": {"_yoast_wpseo_metadesc": doc["meta_description"]},
-            }
-            resp = await wp_api_request(site, "POST", "pages", wp_data)
-            if resp.status_code in (200, 201):
-                wp_id = resp.json()["id"]
-                await db.programmatic_pages.update_one(
-                    {"id": page_id}, {"$set": {"pushed_to_wp": True, "wp_id": wp_id}}
-                )
-                pushed += 1
-            pct = int(((idx + 1) / total) * 100)
-            await push_event(task_id, "progress", {"message": f"Pushed {pushed}/{total}", "percent": pct})
-        await push_event(task_id, "complete", {"message": f"Pushed {pushed}/{total} pages to WordPress", "percent": 100})
-        await log_activity(site_id, "programmatic_pushed", f"Pushed {pushed} programmatic pages to WP")
-    except Exception as e:
-        await push_event(task_id, "error", {"message": str(e)})
-    finally:
-        await finish_task(task_id)
 
 @api_router.delete("/programmatic/{site_id}/{page_id}")
 async def delete_programmatic_page(site_id: str, page_id: str, _: dict = Depends(require_editor)):

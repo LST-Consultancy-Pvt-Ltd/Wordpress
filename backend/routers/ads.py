@@ -757,7 +757,7 @@ async def _ads_autopilot_check():
                 cache = await db.ads_campaigns_cache.find_one({"platform": platform}) or {}
                 active_campaign_names = {c.get("name", "").lower() for c in cache.get("campaigns", [])}
 
-                # Find top posts from activity/WordPress (simplified: look at posts with high view counts)
+                # Find top posts (simplified: look at posts with high view counts)
                 posts_cursor = db.posts_cache.find({"site_id": site_id}).sort("view_count", -1).limit(5)
                 async for post in posts_cursor:
                     view_count = post.get("view_count", 0)

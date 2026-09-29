@@ -6,66 +6,6 @@
     ]
   ],
   [
-    "/api/ab-testing/{site_id}/title-test",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab-testing/{site_id}/title-test/{test_id}/conclude",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab-testing/{site_id}/title-tests",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/ai-generate-variants/{post_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/conclude/{test_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/create",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/record-click/{test_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/record-impression/{test_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/ab/{site_id}/switch-variant/{test_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/activity",
     [
       "GET"
@@ -75,12 +15,6 @@
     "/api/activity/{site_id}",
     [
       "GET"
-    ]
-  ],
-  [
-    "/api/admin/migrate-encrypt",
-    [
-      "POST"
     ]
   ],
   [
@@ -306,6 +240,12 @@
     ]
   ],
   [
+    "/api/ai/assist",
+    [
+      "POST"
+    ]
+  ],
+  [
     "/api/ai/command",
     [
       "POST"
@@ -313,6 +253,12 @@
   ],
   [
     "/api/ai/commands/{site_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/audit",
     [
       "GET"
     ]
@@ -336,12 +282,6 @@
     ]
   ],
   [
-    "/api/auth/session",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/auto-blog-generation/{site_id}/generate",
     [
       "POST"
@@ -351,12 +291,6 @@
     "/api/autopilot/{site_id}/history",
     [
       "GET"
-    ]
-  ],
-  [
-    "/api/autopilot/{site_id}/interlink/{job_id}",
-    [
-      "POST"
     ]
   ],
   [
@@ -387,12 +321,6 @@
     "/api/autopilot/{site_id}/pipeline-stats",
     [
       "GET"
-    ]
-  ],
-  [
-    "/api/autopilot/{site_id}/publish/{job_id}",
-    [
-      "POST"
     ]
   ],
   [
@@ -492,36 +420,6 @@
     ]
   ],
   [
-    "/api/backups/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/backups/{site_id}/create",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/backups/{site_id}/restore/{backup_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/backups/{site_id}/schedule",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/backups/{site_id}/{backup_id}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
     "/api/brief/{site_id}",
     [
       "GET"
@@ -558,39 +456,15 @@
     ]
   ],
   [
-    "/api/bulk/meta-update",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/bulk/publish",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/bulk/taxonomy-update",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/calendar/{site_id}",
+    "/api/canonical/{site_id}",
     [
       "GET"
-    ]
-  ],
-  [
-    "/api/calendar/{site_id}/schedule",
-    [
-      "POST"
     ]
   ],
   [
     "/api/canonical/{site_id}",
     [
-      "GET"
+      "PUT"
     ]
   ],
   [
@@ -600,57 +474,75 @@
     ]
   ],
   [
-    "/api/canonical/{site_id}/{wp_id}",
-    [
-      "PUT"
-    ]
-  ],
-  [
-    "/api/comments/{site_id}",
+    "/api/changesets",
     [
       "GET"
     ]
   ],
   [
-    "/api/comments/{site_id}/ai-reply/{comment_id}",
+    "/api/changesets/{cs_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/changesets/{cs_id}",
+    [
+      "PUT"
+    ]
+  ],
+  [
+    "/api/changesets/{cs_id}/apply",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/approve/{comment_id}",
+    "/api/changesets/{cs_id}/approve",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/auto-moderate",
+    "/api/changesets/{cs_id}/cancel",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/bulk-action",
+    "/api/changesets/{cs_id}/plan",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/post-reply/{comment_id}",
+    "/api/changesets/{cs_id}/preview",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/spam/{comment_id}",
+    "/api/changesets/{cs_id}/reject",
     [
       "POST"
     ]
   ],
   [
-    "/api/comments/{site_id}/{comment_id}",
+    "/api/changesets/{cs_id}/rollback",
     [
-      "DELETE"
+      "POST"
+    ]
+  ],
+  [
+    "/api/changesets/{cs_id}/submit",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/changesets/{cs_id}/validate",
+    [
+      "POST"
     ]
   ],
   [
@@ -714,12 +606,6 @@
     ]
   ],
   [
-    "/api/crawl/{site_id}/fix/{issue_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/crawl/{site_id}/latest",
     [
       "GET"
@@ -729,6 +615,18 @@
     "/api/dashboard/stats",
     [
       "GET"
+    ]
+  ],
+  [
+    "/api/deployments/{deployment_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/deployments/{deployment_id}/rollback",
+    [
+      "POST"
     ]
   ],
   [
@@ -768,63 +666,9 @@
     ]
   ],
   [
-    "/api/duplicate-content/{site_id}/fix/{item_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/duplicate-content/{site_id}/scan",
     [
       "POST"
-    ]
-  ],
-  [
-    "/api/editor/ai-assist",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/editor/{site_id}/post/{wp_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/editor/{site_id}/post/{wp_id}",
-    [
-      "PUT"
-    ]
-  ],
-  [
-    "/api/editor/{site_id}/posts",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/forms/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/forms/{site_id}/ai-analyze/{form_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/forms/{site_id}/create-faq-post/{form_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/forms/{site_id}/{form_id}/entries",
-    [
-      "GET"
     ]
   ],
   [
@@ -900,60 +744,6 @@
     ]
   ],
   [
-    "/api/image-seo/{site_id}/audit",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/image-seo/{site_id}/audit",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/image-seo/{site_id}/bulk-generate-alt",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/audit",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/audit",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/clean-exif",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/convert-webp",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/generate-all-alts",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/images/{site_id}/generate-alt/{media_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/indexing/{site_id}",
     [
       "GET"
@@ -981,12 +771,6 @@
     "/api/internal-links/{site_id}",
     [
       "GET"
-    ]
-  ],
-  [
-    "/api/internal-links/{site_id}/apply/{suggestion_id}",
-    [
-      "POST"
     ]
   ],
   [
@@ -1146,12 +930,6 @@
     ]
   ],
   [
-    "/api/link-builder/{site_id}/social-signals",
-    [
-      "GET"
-    ]
-  ],
-  [
     "/api/link-reclamation/{site_id}/bulk-redirect",
     [
       "POST"
@@ -1171,12 +949,6 @@
   ],
   [
     "/api/link-reclamation/{site_id}/scan-inbound-404s",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/links/internal/insert/{site_id}",
     [
       "POST"
     ]
@@ -1296,42 +1068,6 @@
     ]
   ],
   [
-    "/api/media/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/media/{site_id}/bulk-compress",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/media/{site_id}/compress/{media_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/media/{site_id}/rename/{media_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/media/{site_id}/upload",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/media/{site_id}/{media_id}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
     "/api/mobile/{site_id}",
     [
       "GET"
@@ -1339,18 +1075,6 @@
   ],
   [
     "/api/mobile/{site_id}/check",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/navigation/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/navigation/{site_id}/sync",
     [
       "POST"
     ]
@@ -1386,97 +1110,7 @@
     ]
   ],
   [
-    "/api/nextjs/{site_id}/health",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/images",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/images/content",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/images/content",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/images/content",
-    [
-      "PUT"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/images/generate-alt",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/pages",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/pages/content",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/pages/content",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/pages/content",
-    [
-      "PUT"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/posts",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/posts",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/posts/{slug}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/nextjs/{site_id}/posts/{slug}",
-    [
-      "GET"
-    ]
-  ],
-  [
     "/api/notifications",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/notifications/stream",
     [
       "GET"
     ]
@@ -1644,30 +1278,6 @@
     ]
   ],
   [
-    "/api/pages",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/pages/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/pages/{site_id}/{wp_id}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/pages/{site_id}/{wp_id}",
-    [
-      "PUT"
-    ]
-  ],
-  [
     "/api/pagespeed/{site_id}",
     [
       "GET"
@@ -1686,93 +1296,9 @@
     ]
   ],
   [
-    "/api/plugins-themes/{site_id}/plugins",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/activate",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/deactivate",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/plugins/{plugin_slug:path}/update",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/security-scan",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/themes",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/plugins-themes/{site_id}/themes/{stylesheet}/activate",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/plugins/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/plugins/{site_id}/audit",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/posts",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/posts/generate",
     [
       "POST"
-    ]
-  ],
-  [
-    "/api/posts/translate/{site_id}/{wp_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/posts/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/posts/{site_id}/{wp_id}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/posts/{site_id}/{wp_id}",
-    [
-      "PUT"
     ]
   ],
   [
@@ -1830,39 +1356,9 @@
     ]
   ],
   [
-    "/api/readability/{site_id}/{wp_id}",
+    "/api/readability/{site_id}/{collection}/{slug}",
     [
       "POST"
-    ]
-  ],
-  [
-    "/api/redirects/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/redirects/{site_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/redirects/{site_id}/ai-suggest",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/redirects/{site_id}/bulk-create",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/redirects/{site_id}/{redirect_id}",
-    [
-      "DELETE"
     ]
   ],
   [
@@ -1890,12 +1386,6 @@
     ]
   ],
   [
-    "/api/robots/{site_id}",
-    [
-      "PUT"
-    ]
-  ],
-  [
     "/api/schema/{site_id}",
     [
       "GET"
@@ -1914,57 +1404,9 @@
     ]
   ],
   [
-    "/api/search/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
     "/api/seo/analyze/{site_id}",
     [
       "POST"
-    ]
-  ],
-  [
-    "/api/seo/apply-bulk/{site_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/seo/apply-meta/{site_id}/{wp_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/seo/apply-og/{site_id}/{wp_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/seo/apply-schema/{site_id}/{wp_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/seo/auto-scan/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/seo/auto-scan/{site_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/seo/bridge-plugin/{site_id}",
-    [
-      "GET"
     ]
   ],
   [
@@ -1977,12 +1419,6 @@
     "/api/seo/full-page-audit/{site_id}",
     [
       "POST"
-    ]
-  ],
-  [
-    "/api/seo/meta-fixer-plugin/{site_id}",
-    [
-      "GET"
     ]
   ],
   [
@@ -2028,12 +1464,6 @@
     ]
   ],
   [
-    "/api/sitemap/{site_id}/regenerate-with-images",
-    [
-      "POST"
-    ]
-  ],
-  [
     "/api/sites",
     [
       "GET"
@@ -2070,9 +1500,123 @@
     ]
   ],
   [
-    "/api/sites/{site_id}/credentials",
+    "/api/sites/{site_id}",
     [
-      "PUT"
+      "PATCH"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/backups",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/backups",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/backups/{backup_id}/restore",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/bridge/audit",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/changesets",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/changesets",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/content/collections",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/content/sync",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/content/{collection}/items",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/content/{collection}/items/{slug}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/credential/replace",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/credential/revoke",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/credential/rotate",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/deployments",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/deployments",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/deployments/profiles",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/handshake",
+    [
+      "POST"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/health",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/inventory/{kind}",
+    [
+      "GET"
     ]
   ],
   [
@@ -2082,19 +1626,49 @@
     ]
   ],
   [
-    "/api/sites/{site_id}/sync",
+    "/api/sites/{site_id}/ops/logs",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/ops/status",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/policy",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/policy",
+    [
+      "PUT"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/revisions",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/revisions/{revision_id}",
+    [
+      "GET"
+    ]
+  ],
+  [
+    "/api/sites/{site_id}/verify-write",
     [
       "POST"
     ]
   ],
   [
-    "/api/sites/{site_id}/test-connection",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/sites/{site_id}/test-write",
+    "/api/sites/{site_id}/writes",
     [
       "POST"
     ]
@@ -2130,7 +1704,7 @@
     ]
   ],
   [
-    "/api/social/{site_id}/generate-post/{wp_post_id}",
+    "/api/social/{site_id}/generate-post/{content_id}",
     [
       "POST"
     ]
@@ -2142,7 +1716,7 @@
     ]
   ],
   [
-    "/api/social/{site_id}/publish/{wp_post_id}",
+    "/api/social/{site_id}/publish/{content_id}",
     [
       "POST"
     ]
@@ -2154,6 +1728,12 @@
     ]
   ],
   [
+    "/api/stream-token",
+    [
+      "POST"
+    ]
+  ],
+  [
     "/api/stream/{task_id}",
     [
       "GET"
@@ -2161,12 +1741,6 @@
   ],
   [
     "/api/tasks/{task_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/taxonomies/{site_id}",
     [
       "GET"
     ]
@@ -2205,78 +1779,6 @@
     "/api/users/{user_id}/role",
     [
       "PATCH"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/bulk-ai-descriptions",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/customers",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/low-stock-alert",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/orders",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/products",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/products/{prod_id}/ai-description",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/woo/{site_id}/stats",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/wp-users/{site_id}",
-    [
-      "GET"
-    ]
-  ],
-  [
-    "/api/wp-users/{site_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/wp-users/{site_id}/reset-password/{user_id}",
-    [
-      "POST"
-    ]
-  ],
-  [
-    "/api/wp-users/{site_id}/{user_id}",
-    [
-      "DELETE"
-    ]
-  ],
-  [
-    "/api/wp-users/{site_id}/{user_id}",
-    [
-      "PUT"
     ]
   ],
   [

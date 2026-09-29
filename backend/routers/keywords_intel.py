@@ -316,7 +316,7 @@ async def check_live_rankings(site_id: str, data: LiveRankCheckRequest, _=Depend
             try:
                 settings = await get_decrypted_settings()
                 site_doc = await db.sites.find_one({"id": site_id}, {"_id": 0})
-                site_url = settings.get("gsc_site_url") or (site_doc.get("url", "") if site_doc else "")
+                site_url = settings.get("gsc_site_url") or (site_doc.get("base_url", "") if site_doc else "")
                 gsc_rows = await fetch_gsc_metrics(settings, site_url)
                 gsc_pos = None
                 for row in gsc_rows:

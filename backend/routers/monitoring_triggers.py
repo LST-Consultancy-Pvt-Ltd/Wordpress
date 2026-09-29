@@ -15,10 +15,9 @@ from core.db import db
 from core.security import get_current_user, require_editor
 from core.activity import log_activity
 from core.automation_policy import skip_if_frozen
-from providers.wordpress import get_wp_credentials
 from routers.autopilot import _autopilot_run_pipeline_bg
 from core.router import api_router
-from providers.content import get_site_any  # the shared APIRouter instance
+from providers.sites import get_site
 
 # FEATURE: Event-Based Autopilot Triggers (Module 12)
 # ========================
@@ -91,8 +90,8 @@ async def _check_new_keyword_triggers():
 async def multi_region_uptime_check(site_id: str, _=Depends(require_editor)):
     """Check site availability simulating multiple regions."""
     # Availability probe of the public URL — platform-agnostic.
-    site = await get_site_any(site_id, _["id"])
-    site_url = site["url"].rstrip("/")
+    site = await get_site(site_id)
+    site_url = site["base_url"].rstrip("/")
     import time as _time
 
     regions = [{"name": "US-East"}, {"name": "EU-West"}, {"name": "Asia-Pacific"}]

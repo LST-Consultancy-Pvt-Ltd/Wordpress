@@ -1,26 +1,20 @@
-"""On-page SEO: a complete, platform-neutral SEO audit and editing workspace.
+"""On-page SEO: audit and metadata editing workspace.
 
 Every signal is sourced from what a crawler sees — the rendered HTML of the
 live URL, the response headers, robots.txt, the sitemap and the PageSpeed
-Insights API — so a Next.js site, a WordPress site or a hand-rolled static
-site are audited identically and their scores are comparable. Contrast
-routers/auto_seo.py, which reads Yoast / RankMath fields through the WordPress
-REST API and therefore only ever works for WordPress.
+Insights API — so scores reflect what search engines actually receive.
 
-Writes go through whatever the site actually exposes. For a Next.js site that
-is the SEO Bridge, whose metadata contract is discovered rather than assumed:
-a bridge handed a body it does not recognise answers 200 OK and writes
-nothing, so anything that could not be stored is reported back as unsupported
-instead of being shown as saved.
+Edits never write directly: metadata changes become change sets (plan →
+review → approve → apply on the bridge). The bridge reports per route
+whether the page opted in to runtime metadata; an override on a route that
+has not opted in is flagged in the plan rather than shown as effective.
 """
-import asyncio
 import csv
 import io
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
@@ -34,13 +28,9 @@ from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
 from core.security import require_editor, require_user
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
-from providers.content import get_platform, get_site_any
-from providers.nextjs import (
-    META_FIELDS_FULL,
-    bridge_clear_content_block, bridge_clear_image_alt, bridge_clear_meta, bridge_get_meta,
-    bridge_get_page_content, bridge_get_page_images, bridge_list_meta, bridge_meta_capabilities,
-    bridge_set_content_block, bridge_set_image_alt, bridge_set_meta, get_bridge_credentials,
-)
+from core.changesets import create_changeset
+from providers.bridge_client import BridgeError, capability_enabled
+from providers.sites import get_site, get_site_and_client
 from providers.onpage import SCORING_FACTORS, audit_url  # noqa: F401  (audit_url re-exported)
 from providers import seo_audit
 from providers.seo_audit import (
@@ -70,6 +60,7 @@ class MetaUpdate(BaseModel):
     ogDescription: Optional[str] = None
     ogImage: Optional[str] = None
     noindex: Optional[bool] = None
+    jsonLd: Optional[list[dict]] = None
 
 
 class MovePage(BaseModel):
@@ -101,12 +92,12 @@ async def _discover_urls(site: dict, limit: int) -> tuple[list[str], str]:
     platform-neutral) and falling back to homepage links then synced content.
     Returns (urls, source) so the UI can say where the list came from rather
     than implying a completeness it cannot guarantee."""
-    base = (site.get("url") or "").rstrip("/")
+    base = (site.get("base_url") or "").rstrip("/")
     if not base:
         return [], "none"
-    cached = [d["link"] for d in await db.posts.find(
-        {"site_id": site["id"], "link": {"$nin": [None, ""]}}, {"_id": 0, "link": 1}
-    ).to_list(limit) if d.get("link")]
+    cached = [d["url"] for d in await db.content_items.find(
+        {"site_id": site["id"], "url": {"$nin": [None, ""]}}, {"_id": 0, "url": 1}
+    ).to_list(limit) if d.get("url")]
     async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         robots = await fetch_robots(client, base)
         sitemap = await fetch_sitemaps(client, base, robots.get("sitemaps"))
@@ -131,7 +122,7 @@ async def _gsc_snapshot(site: dict) -> dict:
         return {"connected": False,
                 "error": "No Search Console credentials configured. Add a Google service-account "
                          "JSON and gsc_site_url in Settings."}
-    property_url = settings.get("gsc_site_url") or (site.get("url") or "")
+    property_url = settings.get("gsc_site_url") or (site.get("base_url") or "")
     try:
         from providers.google_analytics import fetch_gsc_metrics
         rows = await fetch_gsc_metrics(settings, property_url)
@@ -155,7 +146,7 @@ async def _gsc_snapshot(site: dict) -> dict:
 async def scan_onpage_seo(site_id: str, req: OnPageScanRequest, background_tasks: BackgroundTasks,
                           user=Depends(require_editor)):
     """Crawl the site's live pages and evaluate every SEO category."""
-    site = await get_site_any(site_id)
+    site = await get_site(site_id)
     task_id = make_task_id()
     await create_task_queue(task_id, task_type="onpage_audit", site_id=site_id)
 
@@ -173,9 +164,9 @@ async def scan_onpage_seo(site_id: str, req: OnPageScanRequest, background_tasks
                                        "overall_score": 1, "pages_audited": 1},
             ).sort("created_at", 1).to_list(50)
             tracked = await db.keyword_tracking.find({"site_id": site_id}, {"_id": 0}).to_list(200)
-            cached = [d["link"] for d in await db.posts.find(
-                {"site_id": site_id, "link": {"$nin": [None, ""]}}, {"_id": 0, "link": 1}
-            ).to_list(limit) if d.get("link")]
+            cached = [d["url"] for d in await db.content_items.find(
+                {"site_id": site_id, "url": {"$nin": [None, ""]}}, {"_id": 0, "url": 1}
+            ).to_list(limit) if d.get("url")]
 
             psi_key = ""
             if req.measure_cwv:
@@ -278,14 +269,34 @@ async def get_onpage_category(site_id: str, key: str, user=Depends(require_user)
     raise HTTPException(status_code=404, detail=f"No category '{key}' in the latest audit.")
 
 
+META_FIELDS = ("title", "description", "canonical", "robots", "openGraph", "jsonLd")
+
+
+async def _bridge_metadata_state(site_id: str) -> dict:
+    """Current overrides and per-route opt-in status, read from the bridge."""
+    site, client = await get_site_and_client(site_id)
+    state = {"site": site, "overrides": {}, "opted_in": {}, "supported": capability_enabled(site, "metadata.write"),
+             "error": None}
+    if not state["supported"]:
+        state["error"] = ("This site's bridge does not offer runtime metadata (capability 'metadata.write'). "
+                          "Enable the metadata store on the bridge and opt pages in with withAutomationMetadata().")
+        return state
+    try:
+        meta = await client.request("GET", "/inventory/metadata")
+        state["overrides"] = {i["route"]: i.get("fields") or {} for i in meta.get("items", [])}
+        routes = await client.request("GET", "/inventory/routes")
+        state["opted_in"] = {r["route"]: r.get("metadata") == "generateMetadata-optin"
+                             for r in routes.get("items", [])}
+    except BridgeError as e:
+        state["supported"], state["error"] = False, f"{e.code}: {e.message}"
+    return state
+
+
 @api_router.get("/onpage/{site_id}/pages")
 async def list_onpage_pages(site_id: str, user=Depends(require_user)):
     """Every page known for this site, with its latest score, its focus
-    keyword and any SEO metadata override currently in force. This is the
-    browse-and-fix view: pages come from the last audit (or the sitemap if
-    none has run yet), and overrides come from the site's own bridge."""
-    site = await get_site_any(site_id)
-    platform = site.get("platform", "wordpress")
+    keyword and the runtime metadata override currently stored for it."""
+    site = await get_site(site_id)
 
     audit = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
     by_url: dict[str, dict] = {}
@@ -301,21 +312,7 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
         for u in urls:
             by_url[u] = {"url": u, "score": None, "issues": [], "ok": None, "audited": False}
 
-    overrides: dict = {}
-    capabilities: dict = {}
-    meta_supported = platform != "wordpress"
-    meta_error = None
-    if meta_supported:
-        try:
-            bridge_site = await get_bridge_credentials(site_id)
-            overrides = await bridge_list_meta(bridge_site)
-            try:
-                capabilities = await bridge_meta_capabilities(bridge_site)
-            except Exception as e:
-                logger.warning(f"Could not read bridge metadata capabilities for {site_id}: {e}")
-        except HTTPException as e:
-            meta_supported, meta_error = False, e.detail
-
+    state = await _bridge_metadata_state(site_id)
     keywords = await _focus_keywords(site_id)
 
     pages = []
@@ -328,8 +325,7 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
             "path": route,
             "score": page.get("score"),
             # `audited` distinguishes "we fetched it and it failed" from "we
-            # have never looked at it" — conflating those told the user their
-            # pages were unreachable when they simply hadn't been scanned.
+            # have never looked at it".
             "audited": page.get("audited", audited),
             "ok": page.get("ok"),
             "error": page.get("error"),
@@ -338,7 +334,8 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
             "issues": page.get("issues") or [],
             "live_title": signals.get("title", ""),
             "live_description": signals.get("description", ""),
-            "override": overrides.get(route),
+            "override": state["overrides"].get(route),
+            "metadata_opted_in": state["opted_in"].get(route),
             "focus_keyword": kw.get("keyword", ""),
             "secondary_keywords": kw.get("secondary", []),
             "search_intent": kw.get("intent", ""),
@@ -348,193 +345,128 @@ async def list_onpage_pages(site_id: str, user=Depends(require_user)):
 
     return {
         "site_id": site_id,
-        "platform": platform,
         "pages": pages,
-        "meta_editing_supported": meta_supported,
-        "meta_capabilities": capabilities,
-        "meta_editing_note": meta_error or (
-            capabilities.get("note") if capabilities else None
-        ) or (
-            None if meta_supported else
-            "Editing metadata here is for non-WordPress sites. For WordPress, use the SEO page's apply-meta action."
-        ),
+        "meta_editing_supported": state["supported"],
+        "meta_editing_note": state["error"],
         "audited_at": (audit or {}).get("created_at"),
     }
 
 
 @api_router.get("/onpage/{site_id}/meta-capabilities")
 async def get_meta_capabilities(site_id: str, user=Depends(require_user)):
-    """Which metadata fields this site's bridge can actually store. Asked
-    before offering an input, so the UI never accepts an edit that would be
-    silently dropped."""
-    if await get_platform(site_id) == "wordpress":
-        return {"dialect": "wordpress", "supported_fields": [], "unsupported_fields": [],
-                "note": "WordPress metadata is written through the SEO page's apply-meta action."}
-    site = await get_bridge_credentials(site_id)
-    return await bridge_meta_capabilities(site)
+    """Which metadata fields can be edited, and on which routes they take
+    effect, so the UI never offers an edit that would be silently ignored."""
+    state = await _bridge_metadata_state(site_id)
+    return {
+        "supported": state["supported"],
+        "supported_fields": list(META_FIELDS) if state["supported"] else [],
+        "opted_in_routes": sorted(r for r, ok in state["opted_in"].items() if ok),
+        "not_opted_in_routes": sorted(r for r, ok in state["opted_in"].items() if not ok),
+        "note": state["error"],
+    }
+
+
+def _normalise_route(raw: str) -> str:
+    raw = (raw or "").strip()
+    # Accept a full URL and always reduce it to a route path; a URL stored as
+    # the key would never match the route the site looks up.
+    return _route_path(raw) if "://" in raw else _route_path("http://x" + (raw if raw.startswith("/") else "/" + raw))
+
+
+def _merge_meta(existing: dict, body: "MetaUpdate") -> dict:
+    fields = {k: v for k, v in (existing or {}).items() if k in META_FIELDS}
+    if body.title is not None:
+        fields["title"] = body.title
+    if body.description is not None:
+        fields["description"] = body.description
+    if body.canonical is not None:
+        fields["canonical"] = body.canonical
+    og = dict(fields.get("openGraph") or {})
+    for src, dst in (("ogTitle", "title"), ("ogDescription", "description"), ("ogImage", "image")):
+        value = getattr(body, src)
+        if value is not None:
+            og[dst] = value
+    if og:
+        fields["openGraph"] = og
+    if body.noindex is not None:
+        fields["robots"] = {"index": not body.noindex, "follow": True}
+    if body.jsonLd is not None:
+        fields["jsonLd"] = body.jsonLd
+    return {k: v for k, v in fields.items() if v not in (None, "", {}, [])}
 
 
 @api_router.put("/onpage/{site_id}/meta")
 async def set_onpage_meta(site_id: str, body: MetaUpdate, user=Depends(require_editor)):
-    """Set the meta title/description (and OG/canonical/noindex) for one page.
-
-    Writes to the site's own override store through the bridge, so it applies
-    to static pages as well as blog posts — a static page's metadata lives in
-    generateMetadata() and cannot be rewritten from outside the repo."""
-    if await get_platform(site_id) == "wordpress":
-        raise HTTPException(
-            status_code=400,
-            detail="This endpoint writes overrides through the Next.js SEO Bridge. "
-                   "For a WordPress site, use the SEO page's apply-meta action instead.",
-        )
+    """Propose metadata for one page. Creates a change set; nothing changes on
+    the site until it is approved and applied."""
     raw = body.path.strip() or body.url.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Supply either `path` (e.g. \"/about\") or `url`.")
-    # Accept a full URL in either field and always reduce it to a route path.
-    # A full URL stored as the key would land under something like
-    # "/https:/host/page" — an override the site could never read back.
-    route = _route_path(raw) if "://" in raw else _route_path("http://x" + (raw if raw.startswith("/") else "/" + raw))
-
-    fields = {k: v for k, v in body.model_dump(
-        exclude={"path", "url"}, exclude_none=True).items()}
+    route = _normalise_route(raw)
+    state = await _bridge_metadata_state(site_id)
+    if not state["supported"]:
+        raise HTTPException(status_code=422, detail={"code": "CAPABILITY_UNSUPPORTED", "capability": "metadata.write",
+                                                     "message": state["error"]})
+    fields = _merge_meta(state["overrides"].get(route) or {}, body)
     if not fields:
         raise HTTPException(status_code=400, detail="Nothing to set — supply at least one field, e.g. `title`.")
-
-    site = await get_bridge_credentials(site_id)
-    result = await bridge_set_meta(site, route, fields)
-    unsupported = result.get("unsupported_fields") or []
-    await log_activity(site_id, "onpage_meta_updated",
-                       f"Updated SEO metadata for {route}: {', '.join(sorted(fields))}"
-                       + (f" (not stored: {', '.join(unsupported)})" if unsupported else ""))
-
-    # Re-score the live page so the caller sees the effect of the edit rather
-    # than having to re-run a whole audit. The bridge revalidates on write, but
-    # give the render a moment to land before fetching.
-    rescored = None
-    page_url = f"{(site.get('url') or '').rstrip('/')}{route}"
-    try:
-        await asyncio.sleep(1.5)
-        fresh = await audit_url(page_url)
-        if fresh.get("ok"):
-            rescored = {
-                "url": page_url,
-                "score": fresh.get("score"),
-                "issues": fresh.get("issues", []),
-                "title": (fresh.get("signals") or {}).get("title", ""),
-                "description": (fresh.get("signals") or {}).get("description", ""),
-            }
-            # Keep the stored audit in step so the table and site score reflect it.
-            audit = await db.onpage_audits.find_one({"site_id": site_id}, sort=[("created_at", -1)])
-            if audit:
-                pages = audit.get("pages", [])
-                for idx, existing in enumerate(pages):
-                    if existing.get("url") == page_url:
-                        pages[idx] = {**existing, **fresh, "path": route}
-                        break
-                scored = [p["score"] for p in pages if p.get("score") is not None]
-                await db.onpage_audits.update_one(
-                    {"_id": audit["_id"]},
-                    {"$set": {"pages": pages,
-                              "site_score": round(sum(scored) / len(scored)) if scored else None}},
-                )
-        else:
-            rescored = {"url": page_url, "score": None, "error": fresh.get("error")}
-    except Exception as e:
-        logger.warning(f"Could not re-score {page_url} after a metadata update: {e}")
-
-    return {**result, "rescored": rescored}
+    cs = await create_changeset(site_id, title=f"Metadata for {route}", source="onpage-seo", actor=user,
+                                operations=[{"op": "metadata.set", "route": route, "fields": fields}],
+                                description=f"Fields: {', '.join(sorted(fields))}")
+    await log_activity(site_id, "onpage_meta_proposed", f"Proposed SEO metadata for {route} ({cs['id']})",
+                       user_id=user["id"])
+    return {"changeset": cs, "route": route, "opted_in": state["opted_in"].get(route)}
 
 
 @api_router.delete("/onpage/{site_id}/meta")
 async def clear_onpage_meta(site_id: str, path: str, user=Depends(require_editor)):
-    """Remove the override for a route, handing control back to the page's own
-    generateMetadata()."""
-    if await get_platform(site_id) == "wordpress":
-        raise HTTPException(status_code=400, detail="Not applicable to WordPress sites.")
-    site = await get_bridge_credentials(site_id)
-    result = await bridge_clear_meta(site, path)
-    await log_activity(site_id, "onpage_meta_cleared", f"Cleared SEO metadata override for {path}")
-    return result
+    """Propose removing the override for a route, handing control back to the
+    page's own generateMetadata()."""
+    route = _normalise_route(path)
+    cs = await create_changeset(site_id, title=f"Clear metadata override for {route}", source="onpage-seo",
+                                actor=user, operations=[{"op": "metadata.clear", "route": route}])
+    return {"changeset": cs, "route": route}
 
 
 @api_router.post("/onpage/{site_id}/move-page")
 async def move_page(site_id: str, body: MovePage, user=Depends(require_editor)):
-    """Move everything this platform stores for a page from one route to
-    another — the SEO override, body-copy blocks, image alt text and focus
-    keyword — and hand back the one thing it CANNOT do live: the route itself
-    is a folder name compiled into the Next.js build, so renaming it takes a
-    code change and a redeploy. Doing the data migration here means that
-    change doesn't also reset every SEO edit made through this app back to
-    nothing, and the returned redirect is what carries the old URL's ranking
-    signal over to the new one instead of losing it to a dead link.
-    """
-    if await get_platform(site_id) == "wordpress":
-        raise HTTPException(
-            status_code=400,
-            detail="On WordPress, editing a post or page's slug already takes effect immediately — "
-                   "there is no separate code deploy step, so this endpoint doesn't apply.",
-        )
+    """Propose moving a page's stored metadata override to a new route plus a
+    301 from the old route, and move its focus keyword. The route itself is a
+    folder in the Next.js repo: renaming it is a code change (a `file.*`
+    change set from the code workspace, or a normal commit) and a deploy."""
     old_raw, new_raw = body.from_path.strip(), body.to_path.strip()
     if not old_raw or not new_raw:
         raise HTTPException(status_code=400, detail="Supply both `from_path` and `to_path`, e.g. "
                              "\"/about\" and \"/company/about\".")
-    old = _route_path(old_raw) if "://" in old_raw else _route_path("http://x" + (old_raw if old_raw.startswith("/") else "/" + old_raw))
-    new = _route_path(new_raw) if "://" in new_raw else _route_path("http://x" + (new_raw if new_raw.startswith("/") else "/" + new_raw))
+    old, new = _normalise_route(old_raw), _normalise_route(new_raw)
     if old == new:
         raise HTTPException(status_code=400, detail="from_path and to_path are the same route.")
-
-    site = await get_bridge_credentials(site_id)
-    moved: list[str] = []
-    errors: list[str] = []
-
-    try:
-        existing = await bridge_get_meta(site, old)
-        fields = {k: v for k, v in (existing or {}).items() if k in META_FIELDS_FULL and v not in (None, "")}
-        if fields:
-            await bridge_set_meta(site, new, fields)
-            await bridge_clear_meta(site, old)
-            moved.append("SEO title/description/canonical/OG overrides")
-    except HTTPException as e:
-        errors.append(f"SEO overrides: {e.detail}")
-
-    try:
-        blocks = (await bridge_get_page_content(site, old)).get("blocks") or {}
-        for key, value in blocks.items():
-            await bridge_set_content_block(site, new, key, value)
-        if blocks:
-            await bridge_clear_content_block(site, old)
-            moved.append(f"{len(blocks)} body-copy block(s)")
-    except HTTPException as e:
-        errors.append(f"page content: {e.detail}")
-
-    try:
-        images = (await bridge_get_page_images(site, old)).get("images") or {}
-        for key, img in images.items():
-            await bridge_set_image_alt(site, new, key, (img or {}).get("alt") or "")
-        if images:
-            await bridge_clear_image_alt(site, old)
-            moved.append(f"{len(images)} image alt text entr{'y' if len(images) == 1 else 'ies'}")
-    except HTTPException as e:
-        errors.append(f"image alt text: {e.detail}")
-
+    state = await _bridge_metadata_state(site_id)
+    site = state["site"]
+    ops: list[dict] = []
+    fields = state["overrides"].get(old)
+    if fields:
+        ops += [{"op": "metadata.set", "route": new, "fields": fields}, {"op": "metadata.clear", "route": old}]
+    if capability_enabled(site, "redirects.write"):
+        ops.append({"op": "redirect.upsert", "source": old, "destination": new, "permanent": True})
+    cs = None
+    if ops:
+        cs = await create_changeset(site_id, title=f"Move {old} to {new}", source="onpage-seo", actor=user,
+                                    operations=ops, require_capabilities=True)
     kw = await db.onpage_keywords.find_one({"site_id": site_id, "path": old})
     if kw:
         await db.onpage_keywords.delete_many({"site_id": site_id, "path": new})
         await db.onpage_keywords.update_one({"_id": kw["_id"]}, {"$set": {"path": new}})
-        moved.append("focus keyword")
-
-    await log_activity(site_id, "onpage_page_moved",
-                       f"Moved SEO data for {old} to {new}" + (f" ({', '.join(moved)})" if moved else " (nothing was stored yet)"))
-
+    await log_activity(site_id, "onpage_page_move_proposed", f"Proposed moving {old} to {new}", user_id=user["id"])
     return {
-        "from_path": old, "to_path": new, "moved": moved, "errors": errors,
+        "from_path": old, "to_path": new, "changeset": cs, "focus_keyword_moved": bool(kw),
         "instructions": [
-            f"Rename the route folder in your Next.js repo so {old} becomes {new} "
+            f"Rename the route folder in the Next.js repo so {old} becomes {new} "
             f"(e.g. git mv app{old.rstrip('/') or '/(home)'} app{new.rstrip('/')}), then deploy.",
-            "Add the redirect below to next.config.mjs in the same deploy — this is what carries the "
-            "old URL's ranking signal over instead of losing it to a dead link.",
-        ],
-        "redirect_snippet": _redirects_snippet([(old, new)]),
+        ] + ([] if capability_enabled(site, "redirects.write") else [
+            "This bridge cannot manage redirects; add the redirect below to next.config.mjs in the same deploy.",
+        ]),
+        "redirect_snippet": None if capability_enabled(site, "redirects.write") else _redirects_snippet([(old, new)]),
     }
 
 
@@ -545,7 +477,7 @@ async def move_page(site_id: str, body: MovePage, user=Depends(require_editor)):
 
 @api_router.get("/onpage/{site_id}/keywords")
 async def list_focus_keywords(site_id: str, user=Depends(require_user)):
-    await get_site_any(site_id)
+    await get_site(site_id)
     docs = await db.onpage_keywords.find({"site_id": site_id}, {"_id": 0}).to_list(1000)
     return {"site_id": site_id, "keywords": docs}
 
@@ -554,7 +486,7 @@ async def list_focus_keywords(site_id: str, user=Depends(require_user)):
 async def set_focus_keyword(site_id: str, body: FocusKeyword, user=Depends(require_editor)):
     """Assign the focus keyword (and optional secondary keywords / intent) for
     one page. Re-scores that page's keyword placement immediately."""
-    await get_site_any(site_id)
+    await get_site(site_id)
     raw = body.path.strip() or body.url.strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Supply either `path` or `url`.")
@@ -575,7 +507,7 @@ async def set_focus_keyword(site_id: str, body: FocusKeyword, user=Depends(requi
     # Re-analyse the live page against the new keyword so the answer is about
     # the page as it stands, not as it was at the last crawl.
     analysis = None
-    site = await get_site_any(site_id)
+    site = await get_site(site_id)
     page_url = f"{(site.get('url') or '').rstrip('/')}{route}"
     try:
         async with httpx.AsyncClient(timeout=25, follow_redirects=True,
@@ -592,7 +524,7 @@ async def set_focus_keyword(site_id: str, body: FocusKeyword, user=Depends(requi
 
 @api_router.delete("/onpage/{site_id}/keyword")
 async def clear_focus_keyword(site_id: str, path: str, user=Depends(require_editor)):
-    await get_site_any(site_id)
+    await get_site(site_id)
     route = _route_path(path) if "://" in path else _route_path(
         "http://x" + (path if path.startswith("/") else "/" + path))
     result = await db.onpage_keywords.delete_one({"site_id": site_id, "path": route})
@@ -617,7 +549,7 @@ async def audit_single_page(site_id: str, req: OnPageScanRequest, user=Depends(r
     """Audit one URL immediately, without a background task. Returns the full
     signal set as well as the ten-factor score, so a single page can be
     inspected after an edit without re-crawling the site."""
-    site = await get_site_any(site_id)
+    site = await get_site(site_id)
     if not req.urls:
         raise HTTPException(status_code=400, detail="Supply a URL in `urls`.")
     url = req.urls[0]
@@ -890,16 +822,10 @@ export default nextConfig;'''
 async def get_nextjs_snippets(site_id: str, user=Depends(require_user)):
     """Ready-to-paste Next.js code for the SEO surfaces that live in the repo
     rather than in the bridge, pre-filled from this site's latest audit."""
-    site = await get_site_any(site_id)
-    platform = site.get("platform", "wordpress")
-    base = (site.get("url") or "").rstrip("/")
+    site = await get_site(site_id)
+    base = (site.get("base_url") or "").rstrip("/")
     doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0}, sort=[("created_at", -1)])
     cats = {c["key"]: c for c in (doc or {}).get("categories", [])}
-
-    if platform == "wordpress":
-        return {"platform": platform, "snippets": [],
-                "note": "These snippets are for a Next.js codebase. On WordPress the same surfaces are "
-                        "managed by Rank Math / Yoast / AIOSEO and the Redirection plugin."}
 
     robots = cats.get("robots") or {}
     existing_disallow: list[str] = []
@@ -959,5 +885,5 @@ async def get_nextjs_snippets(site_id: str, user=Depends(require_user)):
                 else "All checked security headers are present.",
          "code": _security_headers_snippet(missing_headers)},
     ]
-    return {"platform": platform, "site_url": base, "audited_at": (doc or {}).get("created_at"),
+    return {"site_url": base, "audited_at": (doc or {}).get("created_at"),
             "snippets": snippets}

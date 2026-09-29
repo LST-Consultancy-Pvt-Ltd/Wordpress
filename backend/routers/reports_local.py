@@ -45,9 +45,9 @@ async def generate_pdf_report(site_id: str, data: GenerateReportRequest, _: dict
 
     site = await db.sites.find_one({"id": site_id}, {"_id": 0}) or {}
     site_name = site.get("name", "Site")
-    site_url = site.get("url", "")
+    site_url = site.get("base_url", "")
     seo_metrics = await db.seo_metrics.find({"site_id": site_id}, {"_id": 0}).sort("recorded_at", -1).limit(20).to_list(20)
-    posts = await db.posts.find({"site_id": site_id}, {"_id": 0, "title": 1, "status": 1}).limit(20).to_list(20)
+    posts = await db.content_items.find({"site_id": site_id}, {"_id": 0, "title": 1, "status": 1}).limit(20).to_list(20)
     keywords = await db.keyword_tracking.find({"site_id": site_id}, {"_id": 0}).to_list(50)
     speed_results = await db.pagespeed_results.find({"site_id": site_id}, {"_id": 0}).sort("fetched_at", -1).limit(1).to_list(1)
     activity = await db.activity_logs.find({"site_id": site_id}, {"_id": 0}).sort("created_at", -1).limit(10).to_list(10)
@@ -65,7 +65,7 @@ async def generate_pdf_report(site_id: str, data: GenerateReportRequest, _: dict
                  "keyword_rankings": "Keyword Rankings Report", "site_health": "Site Health Report"}
     report_title = tpl_names.get(data.template, "Report")
     story: list = []
-    story.append(Paragraph(f"WP Autopilot — {report_title}", title_style))
+    story.append(Paragraph(f"Site Autopilot — {report_title}", title_style))
     story.append(Paragraph(f"Site: {site_name} ({site_url})", body_style))
     story.append(Paragraph(f"Generated: {datetime.now(timezone.utc).strftime('%B %d, %Y')}", body_style))
     story.append(HRFlowable(width="100%", color=colors.HexColor("#e2e8f0")))

@@ -17,8 +17,8 @@ from core.router import api_router
 from core.scheduled_jobs import _schedule_job
 from core.scheduler import scheduler
 from core.security import (
-    create_access_token, get_current_user, hash_password, require_admin,
-    require_user, verify_password,
+    create_access_token, get_current_user, hash_password, require_admin, require_editor,
+    require_user, verify_password, verify_stream_token,
 )
 from core.tasks import get_durable_task_status, sse_generator
 from models.legacy import (
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 @api_router.get("/")
 async def root():
-    return {"message": "AI WordPress Management Platform API", "version": "2.0.0"}
+    return {"message": "Site Autopilot API", "version": "3.0.0"}
 
 
 @api_router.get("/health")
@@ -240,7 +240,12 @@ async def update_settings(update: SettingsUpdate, _: dict = Depends(require_admi
 # ========================
 
 @api_router.get("/stream/{task_id}")
-async def stream_task(task_id: str):
+async def stream_task(task_id: str, token: str = ""):
+    """SSE progress. EventSource cannot send headers, so it authenticates with
+    a short-lived task-bound token from POST /stream-token (never the
+    session JWT, which would end up in proxy/access logs)."""
+    if not verify_stream_token(token, task_id):
+        raise HTTPException(status_code=401, detail="Stream token missing, expired or not for this task")
     return StreamingResponse(
         sse_generator(task_id),
         media_type="text/event-stream",
@@ -251,7 +256,7 @@ async def stream_task(task_id: str):
     )
 
 @api_router.get("/tasks/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(task_id: str, _: dict = Depends(require_user)):
     """REST polling endpoint for task status (used by subscribeToTask).
 
     Falls back to the durable `db.task_runs` record (core.tasks.create_task_queue/
@@ -267,14 +272,14 @@ async def get_task_status(task_id: str):
 # ========================
 
 @api_router.get("/jobs/{site_id}")
-async def get_jobs(site_id: str, current_user: Optional[dict] = Depends(get_current_user)):
-    user_id = current_user["id"] if current_user else "global"
+async def get_jobs(site_id: str, current_user: dict = Depends(require_user)):
+    user_id = current_user["id"]
     jobs = await db.scheduled_jobs.find({"site_id": site_id, "user_id": user_id}, {"_id": 0}).to_list(50)
     return jobs
 
 @api_router.post("/jobs")
-async def create_job(job_data: ScheduledJobCreate, current_user: Optional[dict] = Depends(get_current_user)):
-    user_id = current_user["id"] if current_user else "global"
+async def create_job(job_data: ScheduledJobCreate, current_user: dict = Depends(require_editor)):
+    user_id = current_user["id"]
     job = ScheduledJob(**job_data.model_dump(), user_id=user_id)
     await db.scheduled_jobs.insert_one(job.model_dump())
     _schedule_job(job.model_dump())
@@ -282,8 +287,8 @@ async def create_job(job_data: ScheduledJobCreate, current_user: Optional[dict] 
     return job.model_dump()
 
 @api_router.put("/jobs/{job_id}")
-async def update_job(job_id: str, job_data: ScheduledJobCreate, current_user: Optional[dict] = Depends(get_current_user)):
-    user_id = current_user["id"] if current_user else "global"
+async def update_job(job_id: str, job_data: ScheduledJobCreate, current_user: dict = Depends(require_editor)):
+    user_id = current_user["id"]
     update = job_data.model_dump()
     update["user_id"] = user_id
     result = await db.scheduled_jobs.update_one({"id": job_id}, {"$set": update})
@@ -294,7 +299,7 @@ async def update_job(job_id: str, job_data: ScheduledJobCreate, current_user: Op
     return job
 
 @api_router.delete("/jobs/{job_id}")
-async def delete_job(job_id: str, current_user: Optional[dict] = Depends(get_current_user)):
+async def delete_job(job_id: str, current_user: dict = Depends(require_editor)):
     result = await db.scheduled_jobs.delete_one({"id": job_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Job not found")

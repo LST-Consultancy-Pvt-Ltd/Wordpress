@@ -2,9 +2,8 @@
 
 Every signal here is taken from what a crawler actually sees — the rendered
 HTML of the live URL, the response headers, robots.txt, the sitemap and the
-PageSpeed Insights API. Nothing is read from a CMS plugin, so a Next.js site,
-a WordPress site or a hand-rolled static site are all audited identically and
-their scores are comparable.
+PageSpeed Insights API. Nothing is read from a content-management plugin, so
+scores reflect what search engines actually receive.
 
 Contrast providers/onpage.py, which scores a single page on ten core factors.
 This module keeps that scoring intact (it imports and reuses it) and adds the
@@ -537,7 +536,7 @@ async def fetch_sitemaps(client: httpx.AsyncClient, base: str,
     import xml.etree.ElementTree as ET
 
     candidates = list(dict.fromkeys((advertised or []) + [
-        f"{base}/sitemap.xml", f"{base}/sitemap_index.xml", f"{base}/wp-sitemap.xml",
+        f"{base}/sitemap.xml", f"{base}/sitemap_index.xml",
         f"{base}/sitemap-index.xml", f"{base}/sitemap/sitemap.xml",
     ]))
     out = {"found": False, "url": None, "tried": candidates[:6], "urls": [],
@@ -1712,7 +1711,7 @@ def cat_robots(ctx: dict) -> dict:
     asset_blocks = []
     for group in robots["groups"]:
         for rule in group["disallow"]:
-            if re.search(r"\.(css|js)$|/_next/|/wp-content/|/assets|/static", rule or "", re.I):
+            if re.search(r"\.(css|js)$|/_next/|/assets|/static", rule or "", re.I):
                 asset_blocks.append(f"{', '.join(group['agents'])} → Disallow: {rule}")
     checks.append(check("robots_assets", "CSS and JS are not blocked",
                         _status_of(not asset_blocks),
@@ -2890,7 +2889,7 @@ async def run_full_audit(
 ) -> dict:
     """Crawl the site and evaluate every SEO category. `progress(message, i, n)`
     is awaited if supplied, so a caller can stream the crawl to the UI."""
-    base = (site.get("url") or "").rstrip("/")
+    base = (site.get("base_url") or "").rstrip("/")
     if not base:
         raise ValueError("The site has no URL configured.")
     focus_keywords = focus_keywords or {}
@@ -3066,7 +3065,6 @@ async def run_full_audit(
     return {
         "site_id": site.get("id"),
         "site_url": base,
-        "platform": site.get("platform", "wordpress"),
         "site_score": site_score,
         "overall_score": categories[-1]["score"],
         "pages_audited": len(scored),

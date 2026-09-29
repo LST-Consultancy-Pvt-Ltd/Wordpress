@@ -1,28 +1,37 @@
-"""Full Page SEO Optimizer: runs a deep AI SEO audit on a single WordPress page,
+"""Full Page SEO Optimizer: runs a deep AI SEO audit on a single live page,
 returning before/after values for all meta fields (title, description, OG, schema)
 plus a full action plan (headings, content, internal links, images, technical, off-page).
+
+Current values come from the rendered HTML of the public URL — what search
+engines actually receive — not from any CMS field.
 """
 import json
 import logging
 
+import httpx
 from bs4 import BeautifulSoup
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.activity import log_activity
 from core.ai import get_ai_response
+from core.db import db
+from core.http_headers import BROWSER_HEADERS
 from core.router import api_router
 from core.security import require_editor
-from providers.wordpress import get_wp_credentials, wp_api_request
+from providers.seo_audit import route_path
+from providers.sites import get_site
 
 logger = logging.getLogger(__name__)
 
-# Full Page SEO Optimizer
-# ========================
 
 class FullPageAuditRequest(BaseModel):
-    wp_id: int
-    content_type: str  # "post" | "page"
+    path: str = Field(min_length=1, max_length=2000)  # route ("/about") or full URL on the site
+
+
+def _meta(soup: BeautifulSoup, **attrs) -> str:
+    tag = soup.find("meta", attrs=attrs)
+    return (tag.get("content") or "").strip() if tag else ""
 
 
 @api_router.post("/seo/full-page-audit/{site_id}")
@@ -31,97 +40,44 @@ async def full_page_seo_audit(
     data: FullPageAuditRequest,
     _: dict = Depends(require_editor),
 ):
-    """Run a deep AI SEO audit on a single WordPress page, returning before/after for all
+    """Run a deep AI SEO audit on a single page, returning before/after for all
     meta fields (title, description, OG, schema) plus a full action plan."""
-    site = await get_wp_credentials(site_id)
-    ct_plural = "pages" if data.content_type == "page" else "posts"
-    wp_id = data.wp_id
+    site = await get_site(site_id)
+    base = site["base_url"].rstrip("/")
+    raw = data.path.strip()
+    route = route_path(raw) if "://" in raw else route_path(base + (raw if raw.startswith("/") else "/" + raw))
+    page_url = f"{base}{route if route != '/' else ''}" or base
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+            resp = await client.get(page_url)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Could not fetch {page_url}: {type(e).__name__}")
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"{page_url} returned HTTP {resp.status_code}")
 
-    # Fetch page from WordPress REST API including meta, Yoast head JSON, and raw Yoast head HTML
-    # We request both yoast_head_json (structured) and yoast_head (HTML) so we can parse
-    # the actual <title> and <meta name="description"> that Yoast renders — these reflect the
-    # true current values even when _yoast_wpseo_* custom fields are not exposed via REST meta.
-    ep = f"{ct_plural}/{wp_id}?context=edit&_fields=id,slug,link,title,content,meta,yoast_head_json,yoast_head"
-    resp = await wp_api_request(site, "GET", ep)
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to fetch page from WordPress: {resp.text[:200]}"
-        )
-    page_data = resp.json()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    title = soup.title.get_text(strip=True) if soup.title else ""
+    current_meta_title = title
+    current_meta_desc = _meta(soup, name="description")
+    current_og_title = _meta(soup, property="og:title") or current_meta_title
+    current_og_desc = _meta(soup, property="og:description") or current_meta_desc
+    schema_raw = "\n".join(t.get_text() for t in soup.find_all("script", attrs={"type": "application/ld+json"}))[:4000]
+    for tag in soup(["script", "style", "noscript", "head"]):
+        tag.decompose()
+    text_content = (soup.find("main") or soup.body or soup).get_text(separator=" ", strip=True)[:4000]
 
-    title_obj = page_data.get("title", {})
-    title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
-
-    content_obj = page_data.get("content", {})
-    raw_html = (
-        content_obj.get("raw") or content_obj.get("rendered") or ""
-        if isinstance(content_obj, dict) else str(content_obj)
-    )
-    soup = BeautifulSoup(raw_html, "html.parser")
-    text_content = soup.get_text(separator=" ", strip=True)[:4000]
-
-    meta = page_data.get("meta") or {}
-    yoast_head = page_data.get("yoast_head_json") or {}
-
-    # Parse Yoast-rendered HTML head to reliably extract SEO title + description.
-    # Yoast's _yoast_wpseo_* meta fields are often blocked by auth_callback in the REST API
-    # even when the values are correctly stored in wp_postmeta, so the HTML head is the
-    # ground-truth for what Yoast actually outputs on the page.
-    yoast_seo_title = ""
-    yoast_seo_desc = ""
-    yoast_head_html = page_data.get("yoast_head") or ""
-    if yoast_head_html:
-        head_soup = BeautifulSoup(yoast_head_html, "html.parser")
-        title_tag = head_soup.find("title")
-        if title_tag:
-            yoast_seo_title = title_tag.get_text(strip=True)
-        desc_tag = head_soup.find("meta", attrs={"name": "description"})
-        if desc_tag:
-            yoast_seo_desc = desc_tag.get("content", "")
-
-    current_meta_title = (
-        meta.get("_yoast_wpseo_title") or meta.get("rank_math_title")
-        or yoast_head.get("title") or yoast_seo_title or title or ""
-    )
-    current_meta_desc = (
-        meta.get("_yoast_wpseo_metadesc") or meta.get("rank_math_description")
-        or yoast_seo_desc or ""
-    )
-    current_og_title = (
-        meta.get("_yoast_wpseo_opengraph-title")
-        or yoast_head.get("og_title")
-        or current_meta_title
-    )
-    current_og_desc = (
-        meta.get("_yoast_wpseo_opengraph-description")
-        or yoast_head.get("og_description")
-        or current_meta_desc
-    )
-    og_imgs = yoast_head.get("og_image")
-    current_og_image = og_imgs[0].get("url", "") if isinstance(og_imgs, list) and og_imgs else ""  # noqa: F841
-    schema_raw = meta.get("_auto_seo_schema_json") or ""
-    page_url = page_data.get("link", "")
-
-    # Fetch a sample of other pages for internal link context (up to 30)
-    other_pages: list = []
-    for other_ct in ("posts", "pages"):
-        oresp = await wp_api_request(
-            site, "GET",
-            f"{other_ct}?per_page=50&status=publish&_fields=id,link,title&context=view"
-        )
-        if oresp.status_code == 200:
-            for item in oresp.json():
-                if item.get("id") != wp_id:
-                    t = item.get("title", {})
-                    other_pages.append({
-                        "id": item.get("id"),
-                        "title": t.get("rendered", "") if isinstance(t, dict) else str(t),
-                        "url": item.get("link", ""),
-                    })
+    # Other pages for internal-link context: latest audit, else synced content.
+    audit_doc = await db.onpage_audits.find_one({"site_id": site_id}, {"_id": 0, "pages.url": 1,
+                                                                         "pages.signals.title": 1},
+                                                sort=[("created_at", -1)])
+    other_pages = [{"title": (p.get("signals") or {}).get("title", ""), "url": p["url"]}
+                   for p in (audit_doc or {}).get("pages", []) if p.get("url") and p["url"] != page_url]
+    if not other_pages:
+        other_pages = [{"title": d.get("title", ""), "url": d["url"]} for d in await db.content_items.find(
+            {"site_id": site_id, "url": {"$nin": [None, "", page_url]}}, {"_id": 0, "title": 1, "url": 1}).to_list(30)]
     other_pages_json = json.dumps(other_pages[:30], ensure_ascii=False)
 
-    prompt = f"""You are a world-class SEO expert. Perform a comprehensive SEO audit of the following WordPress page and return ONLY a valid JSON object.
+    prompt = f"""You are a world-class SEO expert. Perform a comprehensive SEO audit of the following web page and return ONLY a valid JSON object.
 
 PAGE DATA:
 - URL: {page_url}
@@ -227,7 +183,7 @@ Return ONLY the JSON object. No markdown fences, no explanation."""
             detail=f"AI audit generation failed: {str(e)[:200]}"
         )
 
-    # Overwrite before values with actual current WordPress data
+    # Overwrite before values with what the live page actually serves
     audit.setdefault("meta_title", {})["before"] = current_meta_title
     audit.setdefault("meta_description", {})["before"] = current_meta_desc
     audit.setdefault("og_title", {})["before"] = current_og_title
@@ -235,13 +191,12 @@ Return ONLY the JSON object. No markdown fences, no explanation."""
     audit.setdefault("schema_markup", {})["before"] = schema_raw or "None"
 
     # Attach context needed for frontend apply calls
-    audit["wp_id"] = wp_id
-    audit["content_type"] = data.content_type
+    audit["route"] = route
     audit["page_url"] = page_url
     audit["page_title"] = title
 
     await log_activity(
         site_id, "full_page_seo_audit",
-        f"Full SEO audit for {data.content_type} {wp_id} ({page_url})"
+        f"Full SEO audit for {page_url}"
     )
     return audit

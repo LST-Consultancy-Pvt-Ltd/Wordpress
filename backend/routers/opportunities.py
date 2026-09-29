@@ -41,7 +41,8 @@ from providers.dataforseo import _data_meta, _dfs_available, _dfs_check_spend, d
 from providers.google_cse import cse_available, google_custom_search
 from providers.hunter import hunter_available, hunter_domain_search
 from providers.signalhire import signalhire_available, signalhire_domain_search
-from providers.wordpress import get_wp_credentials, wp_api_request
+from core.changesets import create_changeset
+from providers.sites import get_site
 from routers.company_profile import get_verified_nap
 
 logger = logging.getLogger(__name__)
@@ -1100,7 +1101,7 @@ async def scan_inbound_404s(site_id: str, background_tasks: BackgroundTasks, use
         try:
             await push_event(tid, "progress", {"message": "Scanning for inbound links pointing to 404 pages…"})
             site = await db.sites.find_one({"_id": __import__("bson").ObjectId(site_id)})
-            site_url = site.get("url","https://example.com") if site else "https://example.com"
+            site_url = site.get("base_url","https://example.com") if site else "https://example.com"
             links = await _real_inbound_404s(site_id, site_url)
             if links:
                 data_meta = _data_meta("dataforseo", is_estimated=False)
@@ -1167,23 +1168,25 @@ Keep it short, friendly, and helpful. Return JSON: {{"subject":"...","body":"...
 
 @api_router.post("/link-reclamation/{site_id}/bulk-redirect")
 async def bulk_create_redirects(site_id: str, req: BulkRedirectRequest, user=Depends(require_editor)):
-    # Sites are keyed by their uuid `id` field, not Mongo's `_id` — the old
-    # ObjectId(site_id) lookup could never match (and raised InvalidId on a
-    # uuid), so this endpoint always 404'd. get_wp_credentials is the correct
-    # accessor and also applies the non-WordPress platform guard.
-    site = await get_wp_credentials(site_id)
-    results = []
+    """Propose 301 redirects for reclaimed broken URLs as one change set."""
+    from urllib.parse import urlsplit
+    site = await get_site(site_id)
+    own_host = urlsplit(site["base_url"]).hostname
+    ops, skipped = [], []
     for item in req.redirects:
-        try:
-            result = await wp_api_request(site, "POST", "redirection/v1/redirect", {
-                "url": item.from_url, "action_type": "url",
-                "action_data": {"url": item.to_url}, "match_type": "url"
-            })
-            results.append({"from": item.from_url, "to": item.to_url, "success": True})
-            await db.link_reclamation.update_one({"site_id": site_id, "broken_url": item.from_url}, {"$set": {"redirect_created": True, "updated_at": datetime.utcnow()}})
-        except Exception as e:
-            results.append({"from": item.from_url, "to": item.to_url, "success": False, "error": str(e)})
-    return results
+        src = urlsplit(item.from_url)
+        if src.hostname and src.hostname != own_host:
+            skipped.append({"from": item.from_url, "reason": "not a URL on this site"})
+            continue
+        ops.append({"op": "redirect.upsert", "source": src.path or "/", "destination": item.to_url, "permanent": True})
+    if not ops:
+        return {"changeset": None, "skipped": skipped}
+    cs = await create_changeset(site_id, title=f"{len(ops)} reclamation redirect(s)", source="redirects",
+                                actor=user, operations=ops)
+    for item in req.redirects:
+        await db.link_reclamation.update_one({"site_id": site_id, "broken_url": item.from_url},
+                                             {"$set": {"redirect_changeset_id": cs["id"], "updated_at": datetime.utcnow()}})
+    return {"changeset": cs, "skipped": skipped}
 
 
 # ─────────────────────────────────────────────────────────────

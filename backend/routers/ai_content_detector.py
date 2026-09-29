@@ -240,7 +240,7 @@ Provide 3-5 humanization suggestions. Return ONLY valid JSON."""
 @api_router.post("/ai-content-detector/{site_id}/bulk-scan")
 async def bulk_scan_ai_content(site_id: str, _=Depends(require_user)):
     """Scan all posts on a site for AI-generated content"""
-    posts_cursor = db.posts.find({"site_id": site_id}, {"_id": 0, "title": 1, "content": 1, "wp_id": 1}).limit(20)
+    posts_cursor = db.content_items.find({"site_id": site_id}, {"_id": 0, "title": 1, "body": 1, "content_id": 1}).limit(20)
     posts = []
     async for p in posts_cursor:
         posts.append(p)
@@ -250,11 +250,11 @@ async def bulk_scan_ai_content(site_id: str, _=Depends(require_user)):
 
     results = []
     for post in posts:
-        text = post.get("content", "")
+        text = post.get("body", "")
         if text:
             text = BeautifulSoup(text, "html.parser").get_text()[:2000]
         if len(text) < 50:
-            results.append({"title": post.get("title", "Untitled"), "wp_id": post.get("wp_id"), "ai_probability": 0})
+            results.append({"title": post.get("title", "Untitled"), "content_id": post.get("content_id"), "ai_probability": 0})
             continue
         try:
             stats = _compute_text_stats(text)
@@ -288,9 +288,9 @@ async def bulk_scan_ai_content(site_id: str, _=Depends(require_user)):
             # Statistical correction
             if stats["contraction_rate"] > 2.0 and stats["sent_len_std"] > 8 and stats["marker_count"] <= 1:
                 ai_prob = min(ai_prob, 20)
-            results.append({"title": post.get("title", "Untitled"), "wp_id": post.get("wp_id"), "ai_probability": ai_prob})
+            results.append({"title": post.get("title", "Untitled"), "content_id": post.get("content_id"), "ai_probability": ai_prob})
         except Exception:
-            results.append({"title": post.get("title", "Untitled"), "wp_id": post.get("wp_id"), "ai_probability": -1})
+            results.append({"title": post.get("title", "Untitled"), "content_id": post.get("content_id"), "ai_probability": -1})
 
     await log_activity(site_id, "ai_bulk_scan", f"Bulk AI scan: {len(results)} posts analyzed")
     return {"results": results}

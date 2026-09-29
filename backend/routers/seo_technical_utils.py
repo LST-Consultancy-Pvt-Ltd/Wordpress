@@ -15,15 +15,26 @@ import json
 
 from core.db import db
 from core.http_headers import BROWSER_HEADERS
-from core.security import require_editor
+from core.security import require_editor, require_user
 from core.tasks import make_task_id, create_task_queue, push_event, finish_task
 from core.activity import log_activity
 from core.seo_impact import estimate_seo_impact
-from providers.wordpress import get_wp_credentials, wp_api_request
 from core.ai import get_ai_response
 from core.crypto import get_decrypted_settings
 from core.router import api_router
-from providers.content import get_site_any
+from core.changesets import create_changeset
+from providers.bridge_client import BridgeError
+from providers.live_page import fetch_page, known_routes, merge_json_ld, normalise_route
+from providers.sites import get_site, get_site_and_client
+
+
+async def _current_overrides(site_id: str) -> dict:
+    _, client = await get_site_and_client(site_id)
+    try:
+        meta = await client.request("GET", "/inventory/metadata")
+    except BridgeError as e:
+        raise e.to_http()
+    return {i["route"]: i.get("fields") or {} for i in meta.get("items", [])}
 
 
 # ========================
@@ -31,37 +42,24 @@ from providers.content import get_site_any
 # ========================
 
 class SchemaGenerateRequest(BaseModel):
-    wp_id: int
-    content_type: str = "post"  # post | page
+    path: str  # route or full URL on the site
     schema_type: str  # faq, product, article, local_business
 
 
 @api_router.post("/schema/{site_id}/generate")
 async def generate_schema_markup(site_id: str, data: SchemaGenerateRequest, _: dict = Depends(require_editor)):
-    """Use AI to generate JSON-LD schema markup for a page/post."""
-    site = await get_wp_credentials(site_id)
-    endpoint = "pages" if data.content_type == "page" else "posts"
-    resp = await wp_api_request(site, "GET", f"{endpoint}/{data.wp_id}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=404, detail="Content not found in WordPress")
-    content_data = resp.json()
-    title_raw = content_data.get("title", "")
-    title = title_raw.get("rendered", "") if isinstance(title_raw, dict) else str(title_raw)
-    content_raw = content_data.get("content", "")
-    content_html = content_raw.get("rendered", "") if isinstance(content_raw, dict) else str(content_raw)
-    link = content_data.get("link", "")
-    from bs4 import BeautifulSoup as _BS4
-    text_content = _BS4(content_html, "html.parser").get_text()[:2000]
+    """Use AI to generate JSON-LD for a page, from its live content."""
+    site = await get_site(site_id)
+    page = await fetch_page(site, data.path)
+    title, link, text_content = page["title"], page["url"], page["text"][:2000]
     schema_prompts = {
         "faq": (
-            f"Generate a valid JSON-LD FAQPage schema for this page.\n"
-            f"Title: {title}\nContent: {text_content}\nURL: {link}\n"
+            f"Generate a valid JSON-LD FAQPage schema for this page.\nTitle: {title}\nContent: {text_content}\nURL: {link}\n"
             f'Return ONLY the JSON-LD object, example: {{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[...]}}'
         ),
         "article": (
             f"Generate a valid JSON-LD Article schema.\nTitle: {title}\n"
-            f"Content: {text_content[:500]}\nURL: {link}\nSite: {site.get('url', '')}\n"
-            f"Return ONLY the JSON-LD object."
+            f"Content: {text_content[:500]}\nURL: {link}\nSite: {site['base_url']}\nReturn ONLY the JSON-LD object."
         ),
         "product": (
             f"Generate a valid JSON-LD Product schema.\nTitle: {title}\n"
@@ -69,8 +67,7 @@ async def generate_schema_markup(site_id: str, data: SchemaGenerateRequest, _: d
         ),
         "local_business": (
             f"Generate a valid JSON-LD LocalBusiness schema.\nName: {title}\n"
-            f"Content: {text_content}\nURL: {link}\nSite: {site.get('url', '')}\n"
-            f"Return ONLY the JSON-LD object."
+            f"Content: {text_content}\nURL: {link}\nSite: {site['base_url']}\nReturn ONLY the JSON-LD object."
         ),
     }
     prompt = schema_prompts.get(data.schema_type, schema_prompts["article"])
@@ -88,19 +85,14 @@ async def generate_schema_markup(site_id: str, data: SchemaGenerateRequest, _: d
             break
     schema_raw = schema_raw.strip()
     try:
-        json.loads(schema_raw)
+        parsed = json.loads(schema_raw)
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="AI returned invalid JSON schema")
+    if not isinstance(parsed, dict) or "@type" not in parsed:
+        raise HTTPException(status_code=500, detail="AI returned JSON-LD without an @type")
     doc = {
-        "id": str(uuid.uuid4()),
-        "site_id": site_id,
-        "wp_id": data.wp_id,
-        "content_type": data.content_type,
-        "schema_type": data.schema_type,
-        "title": title,
-        "url": link,
-        "schema_json": schema_raw,
-        "status": "pending",
+        "id": str(uuid.uuid4()), "site_id": site_id, "route": page["route"], "schema_type": data.schema_type,
+        "title": title, "url": link, "schema_json": schema_raw, "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.schema_records.insert_one(doc)
@@ -108,46 +100,30 @@ async def generate_schema_markup(site_id: str, data: SchemaGenerateRequest, _: d
     return doc
 
 
-@api_router.get("/schema/{site_id}")
-async def list_schema_records(site_id: str, _: dict = Depends(require_editor)):
-    return await db.schema_records.find({"site_id": site_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
-
-
 @api_router.post("/schema/{site_id}/apply/{schema_id}")
-async def apply_schema_markup(site_id: str, schema_id: str, _: dict = Depends(require_editor)):
-    """Inject the schema JSON-LD into the WordPress post content via REST API."""
+async def apply_schema_markup(site_id: str, schema_id: str, user: dict = Depends(require_editor)):
+    """Propose the JSON-LD as part of the page's runtime metadata (change set)."""
     record = await db.schema_records.find_one({"id": schema_id, "site_id": site_id}, {"_id": 0})
     if not record:
         raise HTTPException(status_code=404, detail="Schema record not found")
-    site = await get_wp_credentials(site_id)
-    endpoint = "pages" if record["content_type"] == "page" else "posts"
-    resp = await wp_api_request(site, "GET", f"{endpoint}/{record['wp_id']}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Could not fetch content from WordPress")
-    existing_raw = resp.json().get("content", "")
-    existing_content = (
-        existing_raw.get("raw", existing_raw.get("rendered", ""))
-        if isinstance(existing_raw, dict)
-        else str(existing_raw)
-    )
-    import re as _re
-    existing_content = _re.sub(
-        r'<script\s+type="application/ld\+json">.*?</script>',
-        "",
-        existing_content,
-        flags=_re.DOTALL,
-    )
-    script_tag = f'<script type="application/ld+json">\n{record["schema_json"]}\n</script>\n'
-    new_content = script_tag + existing_content
-    update_resp = await wp_api_request(site, "POST", f"{endpoint}/{record['wp_id']}", {"content": new_content})
-    if update_resp.status_code not in (200, 201):
-        raise HTTPException(status_code=502, detail=f"WordPress returned {update_resp.status_code}")
-    await db.schema_records.update_one(
-        {"id": schema_id},
-        {"$set": {"status": "applied", "applied_at": datetime.now(timezone.utc).isoformat()}},
-    )
-    await log_activity(site_id, "schema_applied", f"Applied {record['schema_type']} schema to '{record['title']}'")
-    return {"ok": True, "status": "applied", "impact_estimate": estimate_seo_impact("schema_markup")}
+    overrides = await _current_overrides(site_id)
+    fields = dict(overrides.get(record["route"]) or {})
+    fields["jsonLd"] = merge_json_ld(fields.get("jsonLd"), json.loads(record["schema_json"]))
+    cs = await create_changeset(site_id, title=f"{record['schema_type']} schema for {record['route']}",
+                                source="schema", actor=user,
+                                operations=[{"op": "metadata.set", "route": record["route"], "fields": fields}])
+    await db.schema_records.update_one({"id": schema_id}, {"": {"status": "proposed", "changeset_id": cs["id"]}})
+    await log_activity(site_id, "schema_proposed", f"Proposed {record['schema_type']} schema for '{record['title']}'")
+    return {"changeset": cs, "status": "proposed", "impact_estimate": estimate_seo_impact("schema_markup")}
+
+
+# ========================
+# FEATURE: Schema Markup Generator
+# ========================
+
+@api_router.get("/schema/{site_id}")
+async def list_schema_records(site_id: str, _: dict = Depends(require_editor)):
+    return await db.schema_records.find({"site_id": site_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 
 # ========================
@@ -156,10 +132,9 @@ async def apply_schema_markup(site_id: str, schema_id: str, _: dict = Depends(re
 
 @api_router.get("/sitemap/{site_id}")
 async def get_sitemap(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_site_any(site_id)
-    base_url = site.get("url", "").rstrip("/")
+    site = await get_site(site_id)
+    base_url = site.get("base_url", "").rstrip("/")
     candidates = [
-        f"{base_url}/wp-sitemap.xml",
         f"{base_url}/sitemap.xml",
         f"{base_url}/sitemap_index.xml",
     ]
@@ -193,8 +168,8 @@ async def get_sitemap(site_id: str, _: dict = Depends(require_editor)):
 
 @api_router.post("/sitemap/{site_id}/regenerate")
 async def regenerate_sitemap(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_site_any(site_id)
-    base_url = site.get("url", "").rstrip("/")
+    site = await get_site(site_id)
+    base_url = site.get("base_url", "").rstrip("/")
     results = []
     async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
         for name, ping_url in [
@@ -212,8 +187,8 @@ async def regenerate_sitemap(site_id: str, _: dict = Depends(require_editor)):
 
 @api_router.get("/robots/{site_id}")
 async def get_robots_txt(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_site_any(site_id)
-    base_url = site.get("url", "").rstrip("/")
+    site = await get_site(site_id)
+    base_url = site.get("base_url", "").rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10, follow_redirects=True, headers=BROWSER_HEADERS) as client:
             resp = await client.get(f"{base_url}/robots.txt")
@@ -228,106 +203,60 @@ class RobotsUpdateRequest(BaseModel):
     content: str
 
 
-@api_router.put("/robots/{site_id}")
-async def update_robots_txt(site_id: str, data: RobotsUpdateRequest, _: dict = Depends(require_editor)):
-    await get_wp_credentials(site_id)  # validate site ownership
-    await db.robots_config.replace_one(
-        {"site_id": site_id},
-        {"site_id": site_id, "content": data.content, "updated_at": datetime.now(timezone.utc).isoformat()},
-        upsert=True,
-    )
-    await log_activity(site_id, "robots_updated", "robots.txt content updated")
-    return {"ok": True, "content": data.content}
-
-
 # ========================
 # FEATURE: Canonical Tag Manager
 # ========================
 
 @api_router.get("/canonical/{site_id}")
-async def get_canonicals(site_id: str, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
+async def get_canonicals(site_id: str, _: dict = Depends(require_user)):
+    """Live canonical per known page (from the latest audit) plus any runtime
+    override already stored on the bridge."""
+    overrides = await _current_overrides(site_id)
     items = []
-    for endpoint, ctype in [("pages", "page"), ("posts", "post")]:
-        resp = await wp_api_request(site, "GET", f"{endpoint}?per_page=50&_fields=id,link,title,meta&status=publish")
-        if resp.status_code != 200:
-            continue
-        for item in resp.json():
-            title_raw = item.get("title", "")
-            title = title_raw.get("rendered", "") if isinstance(title_raw, dict) else str(title_raw)
-            meta = item.get("meta", {}) or {}
-            canonical = meta.get("_yoast_wpseo_canonical") or meta.get("rank_math_canonical_url") or ""
-            self_url = item.get("link", "")
-            items.append({
-                "wp_id": item["id"],
-                "content_type": ctype,
-                "title": title,
-                "url": self_url,
-                "canonical": canonical or self_url,
-                "is_self_referencing": not canonical or canonical == self_url,
-                "is_missing": not bool(canonical),
-            })
+    for page in await known_routes(site_id):
+        override = (overrides.get(page["route"]) or {}).get("canonical")
+        live = page.get("canonical")
+        effective = override or live or ""
+        items.append({
+            "route": page["route"], "title": page.get("title", ""), "url": page["url"],
+            "canonical": effective or None, "override_canonical": override,
+            "live_canonical": live, "audited": page.get("audited"),
+            "is_self_referencing": bool(effective) and effective.rstrip("/") == page["url"].rstrip("/"),
+            "is_missing": not effective,
+        })
     return items
 
 
 class CanonicalUpdateRequest(BaseModel):
+    path: str
     canonical_url: str
-    content_type: str = "post"
 
 
-@api_router.put("/canonical/{site_id}/{wp_id}")
-async def update_canonical(site_id: str, wp_id: int, data: CanonicalUpdateRequest, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
-    endpoint = "pages" if data.content_type == "page" else "posts"
-    update_resp = await wp_api_request(
-        site, "POST", f"{endpoint}/{wp_id}",
-        {"meta": {"_yoast_wpseo_canonical": data.canonical_url, "rank_math_canonical_url": data.canonical_url}},
-    )
-    if update_resp.status_code not in (200, 201):
-        raise HTTPException(status_code=502, detail=f"WordPress returned {update_resp.status_code}")
-    await log_activity(site_id, "canonical_updated", f"Updated canonical for {data.content_type} #{wp_id}")
-    return {"ok": True, "wp_id": wp_id, "canonical_url": data.canonical_url, "impact_estimate": estimate_seo_impact("canonical_fix")}
+@api_router.put("/canonical/{site_id}")
+async def update_canonical(site_id: str, data: CanonicalUpdateRequest, user: dict = Depends(require_editor)):
+    site = await get_site(site_id)
+    route, _url = normalise_route(site, data.path)
+    overrides = await _current_overrides(site_id)
+    fields = {**(overrides.get(route) or {}), "canonical": data.canonical_url}
+    cs = await create_changeset(site_id, title=f"Canonical for {route}", source="canonical", actor=user,
+                                operations=[{"op": "metadata.set", "route": route, "fields": fields}])
+    return {"changeset": cs, "route": route, "impact_estimate": estimate_seo_impact("canonical_fix")}
 
 
 @api_router.post("/canonical/{site_id}/bulk-fix")
-async def bulk_fix_canonicals(site_id: str, background_tasks: BackgroundTasks, _: dict = Depends(require_editor)):
-    task_id = make_task_id()
-    await create_task_queue(task_id)
-    background_tasks.add_task(_bulk_fix_canonicals, task_id, site_id)
-    return {"task_id": task_id, "message": "Bulk canonical fix started"}
-
-
-async def _bulk_fix_canonicals(task_id: str, site_id: str):
-    try:
-        site = await get_wp_credentials(site_id)
-        fixed = 0
-        all_items = []
-        for endpoint, _ctype in [("pages", "page"), ("posts", "post")]:
-            resp = await wp_api_request(site, "GET", f"{endpoint}?per_page=50&_fields=id,link,meta&status=publish")
-            if resp.status_code == 200:
-                for item in resp.json():
-                    all_items.append((endpoint, item))
-        total = len(all_items)
-        for idx, (endpoint, item) in enumerate(all_items):
-            meta = item.get("meta", {}) or {}
-            has_canonical = meta.get("_yoast_wpseo_canonical") or meta.get("rank_math_canonical_url")
-            if not has_canonical:
-                self_url = item.get("link", "")
-                upd = await wp_api_request(
-                    site, "POST", f"{endpoint}/{item['id']}",
-                    {"meta": {"_yoast_wpseo_canonical": self_url, "rank_math_canonical_url": self_url}},
-                )
-                if upd.status_code in (200, 201):
-                    fixed += 1
-            await push_event(task_id, "status", {
-                "message": f"Processed {idx + 1}/{total} ({fixed} fixed)", "step": idx + 1, "total": total,
-            })
-        await push_event(task_id, "status", {"message": f"Done — {fixed} canonicals fixed", "step": total, "total": total})
-        await finish_task(task_id)
-    except Exception as e:
-        await push_event(task_id, "error", {"message": str(e)})
-        await finish_task(task_id)
-
+async def bulk_fix_canonicals(site_id: str, user: dict = Depends(require_editor)):
+    """One change set adding a self-referencing canonical to every audited page that has none."""
+    overrides = await _current_overrides(site_id)
+    ops = []
+    for page in await known_routes(site_id):
+        existing = overrides.get(page["route"]) or {}
+        if page.get("audited") and not page.get("canonical") and not existing.get("canonical"):
+            ops.append({"op": "metadata.set", "route": page["route"], "fields": {**existing, "canonical": page["url"]}})
+    if not ops:
+        return {"changeset": None, "message": "Every audited page already has a canonical (or run an audit first)."}
+    cs = await create_changeset(site_id, title=f"Self-referencing canonicals for {len(ops)} page(s)",
+                                source="canonical", actor=user, operations=ops[:50])
+    return {"changeset": cs, "pages": len(ops), "truncated": len(ops) > 50}
 
 # ========================
 # FEATURE: Mobile Responsiveness Checker
@@ -343,16 +272,14 @@ async def check_mobile_usability(site_id: str, background_tasks: BackgroundTasks
 
 async def _check_mobile_usability(task_id: str, site_id: str):
     try:
-        site = await get_wp_credentials(site_id)
+        site = await get_site(site_id)
         settings = await get_decrypted_settings()
         psi_key = settings.get("pagespeed_api_key") or os.environ.get("PAGESPEED_API_KEY", "")
-        base_url = site.get("url", "").rstrip("/")
+        base_url = site.get("base_url", "").rstrip("/")
         pages_to_check = [base_url]
-        pages_resp = await wp_api_request(site, "GET", "pages?per_page=5&status=publish&_fields=link")
-        if pages_resp.status_code == 200:
-            for p in pages_resp.json()[:5]:
-                if p.get("link") and p["link"] != base_url:
-                    pages_to_check.append(p["link"])
+        for p in (await known_routes(site_id, limit=10))[:5]:
+            if p["url"].rstrip("/") != base_url:
+                pages_to_check.append(p["url"])
         results = []
         total = len(pages_to_check)
         async with httpx.AsyncClient(timeout=30) as client:

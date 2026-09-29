@@ -1,7 +1,12 @@
-"""Daily Crawl + Recommendations (scan published posts for common SEO issues,
-AI-prioritised fixes, apply a single fix) and the Autopilot Engine: a 5-stage
-pipeline (pick keyword → write post → optimize SEO → publish → interlink) that
-runs on a schedule or on demand, streamed to the UI over SSE.
+"""Daily Crawl + Recommendations (scan synced content for common SEO issues,
+AI-prioritised fixes) and the Autopilot Engine: a 4-stage pipeline (pick
+keyword → write post → optimize SEO → propose) that runs on a schedule or on
+demand, streamed to the UI over SSE.
+
+The last stage creates a content change set and submits it for approval. It
+never writes to the site itself: the change set is applied only after a
+deployer approves it, or when the site's auto-apply policy explicitly covers
+it (and automatic writes are not frozen).
 
 `_daily_crawl_all_sites` and `_restore_autopilot_schedules` are called from
 server.py's `lifespan()` at startup — imported back there for that reason.
@@ -23,7 +28,6 @@ from pydantic import BaseModel
 from core.activity import log_activity
 from core.automation_policy import skip_if_frozen
 from core.ai import get_ai_response
-from core.crypto import decrypt_field
 from core.db import db
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
@@ -32,7 +36,9 @@ from core.security import get_current_user, require_editor
 from core.tasks import (
     autopilot_sse_queues, create_task_queue, finish_task, make_task_id, push_event,
 )
-from providers.wordpress import get_wp_credentials, wp_api_request, wp_xmlrpc_write
+from core import changesets
+from core.content_proposals import propose_content
+from core.security import verify_stream_token
 
 logger = logging.getLogger(__name__)
 
@@ -54,101 +60,47 @@ async def get_latest_crawl(site_id: str, _: dict = Depends(require_editor)):
         return {"site_id": site_id, "issues": [], "crawled_at": None, "summary": None}
     return doc
 
-@api_router.post("/crawl/{site_id}/fix/{issue_id}")
-async def fix_crawl_issue(site_id: str, issue_id: str, dry_run: bool = False, _: dict = Depends(require_editor)):
-    report = await db.crawl_reports.find_one({"site_id": site_id}, {"_id": 0}, sort=[("crawled_at", -1)])
-    if not report:
-        raise HTTPException(status_code=404, detail="No crawl report found")
-    issue = next((i for i in report.get("issues", []) if i.get("id") == issue_id), None)
-    if not issue:
-        raise HTTPException(status_code=404, detail="Issue not found")
-    site = await get_wp_credentials(site_id)
-    post_id = issue.get("post_id")
-    result_msg = ""
-    new_meta = None
-    new_title = None
-    if post_id and issue.get("issue_type") == "missing_meta":
-        post_resp = await wp_api_request(site, "GET", f"posts/{post_id}")
-        if post_resp.status_code == 200:
-            pd = post_resp.json()
-            content_txt = BeautifulSoup(pd.get("content", {}).get("rendered", ""), "html.parser").get_text()[:400]
-            title = pd.get("title", {}).get("rendered", "")
-            meta = await get_ai_response([{"role": "user", "content": f"Write a 150-char SEO meta description for post titled '{title}'. Content: {content_txt[:300]}"}], max_tokens=80, temperature=0.3)
-            new_meta = meta.strip()
-            if dry_run:
-                return {
-                    "dry_run": True,
-                    "issue_type": issue.get("issue_type"),
-                    "url": issue.get("url", ""),
-                    "recommendation": issue.get("recommended_fix", ""),
-                    "new_meta": new_meta,
-                    "wp_id": post_id,
-                }
-            try:
-                await wp_api_request(site, "POST", f"posts/{post_id}", {"meta": {"_yoast_wpseo_metadesc": meta.strip()}})
-            except Exception:
-                pass
-            result_msg = f"Generated meta description: {meta.strip()[:120]}"
-    elif issue.get("issue_type") == "thin_content":
-        result_msg = "Use Live Editor → Expand to add more content to this post."
-    elif issue.get("issue_type") == "no_alt_text":
-        result_msg = "Use Image Audit → Generate All Alt Texts to fix missing alt text."
-    else:
-        result_msg = issue.get("recommended_fix", "Manual review required.")
-    if dry_run:
-        return {
-            "dry_run": True,
-            "issue_type": issue.get("issue_type"),
-            "url": issue.get("url", ""),
-            "recommendation": result_msg or issue.get("recommended_fix", ""),
-            "wp_id": post_id,
-        }
-    await db.crawl_reports.update_one(
-        {"site_id": site_id, "issues.id": issue_id},
-        {"$set": {"issues.$.fixed": True}}
-    )
-    return {"ok": True, "message": result_msg}
-
 async def _run_site_crawl(task_id: str, site_id: str):
+    """Scan the site's synced content (db.content_items, filled by
+    POST /sites/{id}/content/sync) for common on-page issues."""
     try:
-        await push_event(task_id, "status", {"message": "Fetching posts from WordPress…", "step": 1, "total": 4})
-        site = await get_wp_credentials(site_id)
-        site_url = site.get("url", "").rstrip("/")
-        posts_resp = await wp_api_request(site, "GET", "posts?per_page=50&status=publish&_fields=id,title,content,meta,slug")
-        wp_posts = posts_resp.json() if posts_resp.status_code == 200 else []
-        await push_event(task_id, "status", {"message": f"Analysing {len(wp_posts)} posts for issues…", "step": 2, "total": 4})
+        await push_event(task_id, "status", {"message": "Reading synced content…", "step": 1, "total": 4})
+        items = await db.content_items.find({"site_id": site_id, "status": {"": "draft"}},
+                                            {"_id": 0}).to_list(500)
+        await push_event(task_id, "status", {"message": f"Analysing {len(items)} items for issues…", "step": 2, "total": 4})
         issues: list = []
         seen_titles: dict = {}
-        for post in wp_posts:
-            post_id = post.get("id")
-            post_url = f"{site_url}/?p={post_id}"
-            title_obj = post.get("title", {})
-            title = title_obj.get("rendered", "") if isinstance(title_obj, dict) else str(title_obj)
-            content_obj = post.get("content", {})
-            content_html = content_obj.get("rendered", "") if isinstance(content_obj, dict) else ""
-            content_text = BeautifulSoup(content_html, "html.parser").get_text()
+        for item in items:
+            content_id = item.get("content_id")
+            item_url = item.get("url", "")
+            title = item.get("title", "")
+            body = item.get("body", "")
+            soup = BeautifulSoup(body, "html.parser")
+            content_text = soup.get_text()
             if title:
                 if title in seen_titles:
-                    issues.append({"id": str(uuid.uuid4()), "url": post_url, "issue_type": "duplicate_title",
-                                   "severity": "high", "description": f"Title duplicates post #{seen_titles[title]}",
-                                   "recommended_fix": "Rewrite titles to be unique.", "post_id": post_id, "fixed": False})
+                    issues.append({"id": str(uuid.uuid4()), "url": item_url, "issue_type": "duplicate_title",
+                                   "severity": "high", "description": f"Title duplicates {seen_titles[title]}",
+                                   "recommended_fix": "Rewrite titles to be unique.", "content_id": content_id,
+                                   "fixed": False})
                 else:
-                    seen_titles[title] = post_id
-            meta = post.get("meta", {})
-            yoast_meta = meta.get("_yoast_wpseo_metadesc", "") if isinstance(meta, dict) else ""
-            if not yoast_meta:
-                issues.append({"id": str(uuid.uuid4()), "url": post_url, "issue_type": "missing_meta",
-                               "severity": "medium", "description": "No SEO meta description.",
-                               "recommended_fix": "Add a compelling meta description under 160 chars.", "post_id": post_id, "fixed": False})
+                    seen_titles[title] = item_url
+            if not (item.get("frontmatter") or {}).get("description"):
+                issues.append({"id": str(uuid.uuid4()), "url": item_url, "issue_type": "missing_meta",
+                               "severity": "medium", "description": "No meta description in the front matter.",
+                               "recommended_fix": "Add a compelling description under 160 chars.",
+                               "content_id": content_id, "fixed": False})
             if len(content_text.split()) < 300:
-                issues.append({"id": str(uuid.uuid4()), "url": post_url, "issue_type": "thin_content",
+                issues.append({"id": str(uuid.uuid4()), "url": item_url, "issue_type": "thin_content",
                                "severity": "medium", "description": f"Only {len(content_text.split())} words (recommended ≥300).",
-                               "recommended_fix": "Expand with Live Editor AI.", "post_id": post_id, "fixed": False})
-            imgs = BeautifulSoup(content_html, "html.parser").find_all("img")
-            if any(not img.get("alt") for img in imgs):
-                issues.append({"id": str(uuid.uuid4()), "url": post_url, "issue_type": "no_alt_text",
+                               "recommended_fix": "Expand it in the content editor.", "content_id": content_id,
+                               "fixed": False})
+            md_images_without_alt = body.count("![](")
+            if md_images_without_alt or any(not img.get("alt") for img in soup.find_all("img")):
+                issues.append({"id": str(uuid.uuid4()), "url": item_url, "issue_type": "no_alt_text",
                                "severity": "low", "description": "One or more images missing alt text.",
-                               "recommended_fix": "Use Image Audit to generate alt texts.", "post_id": post_id, "fixed": False})
+                               "recommended_fix": "Add alt text in the content editor.", "content_id": content_id,
+                               "fixed": False})
         await push_event(task_id, "status", {"message": "Generating AI recommendations…", "step": 3, "total": 4})
         recommendations: list = []
         if issues:
@@ -166,11 +118,12 @@ async def _run_site_crawl(task_id: str, site_id: str):
         type_counts = dict(Counter(i["issue_type"] for i in issues))
         report = {
             "id": str(uuid.uuid4()), "site_id": site_id, "issues": issues,
-            "total_urls": len(wp_posts), "crawled_at": datetime.now(timezone.utc).isoformat(),
+            "total_urls": len(items), "crawled_at": datetime.now(timezone.utc).isoformat(),
             "recommendations": recommendations,
             "summary": {"total_issues": len(issues), "by_type": type_counts,
                         "critical": sum(1 for i in issues if i.get("severity") == "critical"),
-                        "high": sum(1 for i in issues if i.get("severity") == "high")}
+                        "high": sum(1 for i in issues if i.get("severity") == "high")},
+            "note": None if items else "No synced content — run a content sync for this site first.",
         }
         await db.crawl_reports.replace_one({"site_id": site_id}, report, upsert=True)
         await push_event(task_id, "status", {"message": f"Crawl complete — {len(issues)} issues found", "step": 4, "total": 4})
@@ -179,10 +132,11 @@ async def _run_site_crawl(task_id: str, site_id: str):
         await push_event(task_id, "error", {"message": str(e)})
         await finish_task(task_id)
 
+
 async def _daily_crawl_all_sites():
     """APScheduler job: crawl all connected sites once per day."""
     try:
-        sites = await db.sites.find({"status": "connected"}, {"_id": 0, "id": 1}).to_list(100)
+        sites = await db.sites.find({"connection.status": "connected"}, {"_id": 0, "id": 1}).to_list(100)
         for s in sites:
             task_id = make_task_id()
             await create_task_queue(task_id)
@@ -515,227 +469,44 @@ async def _autopilot_optimize_seo(site_id: str, job_id: str) -> dict:
 
 # ---------- Stage 4 ----------
 
-async def _autopilot_publish(site_id: str, job_id: str) -> dict:
+# ---------- Stage 4 ----------
+
+AUTOPILOT_ACTOR = {"id": "autopilot", "email": "autopilot", "role": "editor"}
+
+
+async def _autopilot_propose(site_id: str, job_id: str) -> dict:
+    """Create the content change set and submit it for approval."""
     job = await db.autopilot_jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise ValueError("Job not found")
     settings = await _autopilot_get_settings(site_id)
-    site = await db.sites.find_one({"id": site_id}, {"_id": 0})
-    if not site:
-        raise ValueError("Site not found")
-    if site.get("app_password"):
-        site["app_password"] = decrypt_field(site["app_password"])
-
     content = job.get("written_content", {})
     html = job.get("optimized_html_content") or content.get("html_content", "")
     title = content.get("title", job.get("keyword", "New Post"))
-    meta_desc = content.get("meta_description", "")
-    excerpt = content.get("excerpt", "")
     keyword = job.get("keyword", "")
-    wp_status = "publish" if settings.get("auto_publish", False) else "draft"
-
-    post_data = {
-        "title": title,
-        "content": html,
-        "excerpt": excerpt,
-        "status": wp_status,
-        "meta": {
-            "yoast_wpseo_title": title,
-            "yoast_wpseo_metadesc": meta_desc,
-            "_yoast_wpseo_focuskw": keyword,
-            "rank_math_focus_keyword": keyword,
-            "rank_math_description": meta_desc,
-        },
-    }
-
-    resp = await wp_api_request(site, "POST", "posts", post_data)
-    if resp.status_code not in (200, 201):
-        # Fallback: some hosts (Hostinger/LiteSpeed) strip the Authorization header,
-        # causing REST API to reject the request with 401/403. Try XML-RPC instead.
-        logger.warning(
-            f"Autopilot REST publish failed ({resp.status_code}) for site {site_id}, "
-            f"trying XML-RPC fallback"
-        )
-        try:
-            xmlrpc_result = await wp_xmlrpc_write(
-                site, "post", title, html, wp_status
-            )
-            wp_post_id = xmlrpc_result.get("wp_id")
-            wp_post_url = xmlrpc_result.get("link", "")
-        except Exception as xe:
-            raise ValueError(f"WP publish failed: {resp.status_code} {resp.text[:300]} | XML-RPC also failed: {xe}")
-    else:
-        wp_result = resp.json()
-        wp_post_id = wp_result.get("id")
-        wp_post_url = wp_result.get("link", "")
-    published_at = datetime.now(timezone.utc).isoformat()
-
-    await db.autopilot_jobs.update_one(
-        {"id": job_id},
-        {
-            "$set": {
-                "wp_post_id": wp_post_id,
-                "wp_post_url": wp_post_url,
-                "published_at": published_at,
-                "wp_status": wp_status,
-                "status": "published",
-            }
-        },
+    status = "published" if settings.get("auto_publish", False) else "draft"
+    cs = await propose_content(
+        site_id, actor=AUTOPILOT_ACTOR, source="autopilot", title=f"Autopilot: {title}"[:200],
+        description=f"Keyword '{keyword}', SEO score {job.get('seo_score', 0)} (job {job_id})",
+        items=[{"title": title, "body": html, "status": status, "frontmatter": {
+            "description": content.get("meta_description", ""), "excerpt": content.get("excerpt", ""),
+            "keywords": [keyword] if keyword else [], "content_format": "html",
+            "date": datetime.now(timezone.utc).date().isoformat()}}],
     )
-    await log_activity(
-        site_id, "autopilot_publish",
-        f"Published '{title}' (keyword: {keyword}, SEO: {job.get('seo_score', 0)})",
-        "success",
-    )
-    return {"wp_post_id": wp_post_id, "wp_post_url": wp_post_url, "status": wp_status}
-
-
-# ---------- Stage 5 ----------
-
-async def _autopilot_interlink(site_id: str, job_id: str) -> dict:
-    job = await db.autopilot_jobs.find_one({"id": job_id}, {"_id": 0})
-    if not job:
-        raise ValueError("Job not found")
-    site = await db.sites.find_one({"id": site_id}, {"_id": 0})
-    if not site:
-        raise ValueError("Site not found")
-    if site.get("app_password"):
-        site["app_password"] = decrypt_field(site["app_password"])
-
-    new_wp_id = job.get("wp_post_id")
-    new_title = job.get("written_content", {}).get("title", "")
-    new_keyword = job.get("keyword", "")
-    new_html = job.get("optimized_html_content") or job.get("written_content", {}).get("html_content", "")
-
-    # Fetch published posts from WP
-    posts_resp = await wp_api_request(site, "GET", "posts?per_page=50&status=publish&orderby=date")
-    if posts_resp.status_code != 200:
-        raise ValueError(f"Failed to fetch WP posts: {posts_resp.status_code}")
-    all_posts = posts_resp.json()
-    existing = [
-        {
-            "id": p["id"],
-            "title": p.get("title", {}).get("rendered", ""),
-            "link": p.get("link", ""),
-            "excerpt": BeautifulSoup(p.get("excerpt", {}).get("rendered", ""), "html.parser").get_text()[:200],
-        }
-        for p in all_posts
-        if p.get("id") != new_wp_id
-    ]
-    if not existing:
-        await db.autopilot_jobs.update_one(
-            {"id": job_id},
-            {"$set": {"interlinks_added": 0, "status": "completed", "completed_at": datetime.now(timezone.utc).isoformat()}},
-        )
-        return {"interlinks_added": 0}
-
-    posts_summary = "\n".join(
-        f'- ID:{p["id"]} Title:"{p["title"]}" URL:{p["link"]} Excerpt:{p["excerpt"]}'
-        for p in existing[:30]
-    )
-    interlink_prompt = (
-        "You are an SEO expert. Suggest internal links to add to a newly published blog post.\n\n"
-        f"New post title: {new_title}\n"
-        f"New post keyword: {new_keyword}\n\n"
-        f"Existing published posts:\n{posts_summary}\n\n"
-        "Return a JSON array (max 5 suggestions) of internal link opportunities. "
-        "For each suggestion, specify whether the link goes FROM the new post TO an existing one, "
-        "or FROM an existing post TO the new post.\n"
-        "Format:\n"
-        '[{"direction": "from_new"|"to_new", "source_post_id": 0, "source_post_title": "...", '
-        '"anchor_text": "...", "target_post_url": "...", "target_post_id": 0, "target_post_title": "...", '
-        '"insertion_context": "...exact snippet of text where the link should be inserted..."}]\n\n'
-        "Return ONLY the JSON array. No markdown, no explanation."
-    )
-    raw = await get_ai_response(
-        [{"role": "user", "content": interlink_prompt}], max_tokens=1500, temperature=0.3
-    )
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    try:
-        suggestions = json.loads(raw.strip())
-    except Exception:
-        suggestions = []
-
-    links_added = 0
-    for sug in suggestions:
-        try:
-            direction = sug.get("direction", "from_new")
-            anchor = sug.get("anchor_text", "")
-            target_url = sug.get("target_post_url", "")
-            context = sug.get("insertion_context", "")
-            if not anchor or not target_url or not context:
-                continue
-            link_tag = f'<a href="{target_url}">{anchor}</a>'
-
-            if direction == "from_new":
-                # Modify the new post
-                updated_html = new_html.replace(anchor, link_tag, 1)
-                if updated_html == new_html:
-                    continue
-                new_html = updated_html
-                patch_resp = await wp_api_request(site, "PUT", f"posts/{new_wp_id}", {"content": new_html})
-                if patch_resp.status_code in (200, 201):
-                    links_added += 1
-            else:
-                # Modify an existing post
-                src_id = sug.get("source_post_id")
-                if not src_id:
-                    continue
-                src_resp = await wp_api_request(site, "GET", f"posts/{src_id}")
-                if src_resp.status_code != 200:
-                    continue
-                src_content = src_resp.json().get("content", {}).get("rendered", "")
-                updated_src = src_content.replace(anchor, link_tag, 1)
-                if updated_src == src_content:
-                    continue
-                patch_resp = await wp_api_request(site, "PUT", f"posts/{src_id}", {"content": updated_src})
-                if patch_resp.status_code in (200, 201):
-                    links_added += 1
-        except Exception as e:
-            logger.warning(f"Interlink suggestion failed: {e}")
-            continue
-
-    completed_at = datetime.now(timezone.utc).isoformat()
-    await db.autopilot_jobs.update_one(
-        {"id": job_id},
-        {
-            "$set": {
-                "interlinks_added": links_added,
-                "interlink_suggestions": suggestions,
-                "status": "completed",
-                "completed_at": completed_at,
-            }
-        },
-    )
-    # Write to history
-    job_final = await db.autopilot_jobs.find_one({"id": job_id}, {"_id": 0})
-    if job_final:
-        history_doc = {
-            "id": str(uuid.uuid4()),
-            "site_id": site_id,
-            "job_id": job_id,
-            "keyword": job_final.get("keyword", ""),
-            "title": job_final.get("written_content", {}).get("title", ""),
-            "seo_score": job_final.get("seo_score", 0),
-            "word_count": job_final.get("written_content", {}).get("estimated_word_count", 0),
-            "wp_post_id": job_final.get("wp_post_id"),
-            "wp_post_url": job_final.get("wp_post_url", ""),
-            "interlinks_added": links_added,
-            "wp_status": job_final.get("wp_status", "draft"),
-            "published_at": job_final.get("published_at", completed_at),
-        }
-        await db.autopilot_history.insert_one(history_doc)
-    return {"interlinks_added": links_added}
+    if cs["status"] == "planned":
+        cs = await changesets.submit(cs["id"], actor=AUTOPILOT_ACTOR)
+    await db.autopilot_jobs.update_one({"id": job_id}, {"": {
+        "changeset_id": cs["id"], "changeset_status": cs["status"], "proposed_status": status,
+        "status": "proposed", "proposed_at": datetime.now(timezone.utc).isoformat()}})
+    await log_activity(site_id, "autopilot_proposed",
+                       f"Proposed '{title}' (keyword: {keyword}) as change set {cs['id']} ({cs['status']})")
+    return {"changeset_id": cs["id"], "changeset_status": cs["status"], "status": status}
 
 
 # ---------- Pipeline orchestrator ----------
 
 async def _autopilot_run_pipeline_bg(site_id: str, job_id: str = None):
-    """Full 5-stage pipeline. Runs as background task."""
+    """Full 4-stage pipeline. Runs as background task."""
     # Create a fresh job if not provided
     if not job_id:
         job_id = str(uuid.uuid4())
@@ -756,8 +527,7 @@ async def _autopilot_run_pipeline_bg(site_id: str, job_id: str = None):
         ("keyword_picking", "keyword_picked", _autopilot_pick_keyword),
         ("content_writing", "content_written", _autopilot_write_post),
         ("seo_optimizing", "seo_optimized", _autopilot_optimize_seo),
-        ("publishing", "published", _autopilot_publish),
-        ("interlinking", "completed", _autopilot_interlink),
+        ("proposing", "completed", _autopilot_propose),
     ]
 
     cumulative_usage = {"total_input": 0, "total_output": 0, "estimated_cost_usd": 0.0, "by_stage": {}}
@@ -803,7 +573,8 @@ async def _autopilot_run_pipeline_bg(site_id: str, job_id: str = None):
     # Emit pipeline_complete
     final_job = await db.autopilot_jobs.find_one({"id": job_id}, {"_id": 0})
     await emit("pipeline_complete", "done", {
-        "wp_post_url": final_job.get("wp_post_url", ""),
+        "changeset_id": final_job.get("changeset_id"),
+        "changeset_status": final_job.get("changeset_status"),
         "seo_score": final_job.get("seo_score", 0),
         "keyword": final_job.get("keyword", ""),
         "title": (final_job.get("written_content") or {}).get("title", ""),
@@ -828,8 +599,11 @@ class AutopilotSettingsUpdate(BaseModel):
 # ---------- Autopilot API endpoints ----------
 
 @api_router.get("/autopilot/{site_id}/stream")
-async def autopilot_stream(site_id: str, current_user: dict = Depends(get_current_user)):
-    """SSE endpoint — stream pipeline events for a site."""
+async def autopilot_stream(site_id: str, token: str = ""):
+    """SSE endpoint — stream pipeline events for a site. Authenticated with a
+    stream token for id 'autopilot:{site_id}' (POST /stream-token)."""
+    if not verify_stream_token(token, f"autopilot:{site_id}"):
+        raise HTTPException(status_code=401, detail="Stream token missing, expired or not for this stream")
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
     if site_id not in autopilot_sse_queues:
         autopilot_sse_queues[site_id] = []
@@ -947,20 +721,6 @@ async def autopilot_optimize_seo_ep(
     site_id: str, job_id: str, current_user: dict = Depends(get_current_user)
 ):
     return await _autopilot_optimize_seo(site_id, job_id)
-
-
-@api_router.post("/autopilot/{site_id}/publish/{job_id}")
-async def autopilot_publish_ep(
-    site_id: str, job_id: str, current_user: dict = Depends(get_current_user)
-):
-    return await _autopilot_publish(site_id, job_id)
-
-
-@api_router.post("/autopilot/{site_id}/interlink/{job_id}")
-async def autopilot_interlink_ep(
-    site_id: str, job_id: str, current_user: dict = Depends(get_current_user)
-):
-    return await _autopilot_interlink(site_id, job_id)
 
 
 @api_router.get("/autopilot/{site_id}/history")

@@ -5,10 +5,8 @@ linking opportunities, AI-generated anchor text, apply the link into the post).
 import asyncio
 import json
 import logging
-import re as _re
-from datetime import datetime, timezone
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -16,12 +14,9 @@ from core.activity import log_activity
 from core.ai import get_ai_response
 from core.content_analysis import _strip_html
 from core.db import db
-from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
-from core.seo_impact import estimate_seo_impact
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.legacy import DuplicateContentResult, InternalLinkSuggestion
-from providers.wordpress import get_wp_credentials, wp_xmlrpc_edit
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +37,7 @@ async def _scan_duplicate_content(task_id: str, site_id: str):
     try:
         await push_event(task_id, "status", {"message": "Loading posts and pages...", "percent": 5})
 
-        posts = await db.posts.find({"site_id": site_id}, {"_id": 0}).to_list(500)
-        pages = await db.pages.find({"site_id": site_id}, {"_id": 0}).to_list(500)
-        all_items = posts + pages
+        all_items = await db.content_items.find({"site_id": site_id}, {"_id": 0}).to_list(1000)
 
         if len(all_items) < 2:
             await push_event(task_id, "complete", {
@@ -55,9 +48,9 @@ async def _scan_duplicate_content(task_id: str, site_id: str):
         await push_event(task_id, "status", {"message": f"Comparing {len(all_items)} items...", "percent": 20})
 
         # Strip HTML and collect plain text
-        texts = [_strip_html(item.get("content", "")) for item in all_items]
+        texts = [_strip_html(item.get("body", "")) for item in all_items]
         titles = [item.get("title", "") for item in all_items]
-        ids = [item.get("wp_id", 0) for item in all_items]
+        ids = [item.get("content_id", 0) for item in all_items]
 
         # Clear old results for this site
         await db.duplicate_content.delete_many({"site_id": site_id})
@@ -142,92 +135,6 @@ async def get_duplicate_content(site_id: str):
     return results
 
 
-@api_router.post("/duplicate-content/{site_id}/fix/{item_id}")
-async def fix_duplicate_content(site_id: str, item_id: str, dry_run: bool = False):
-    """Use AI to rewrite post_b of a duplicate pair so it is sufficiently different, then save via XML-RPC."""
-    record = await db.duplicate_content.find_one({"id": item_id, "site_id": site_id}, {"_id": 0})
-    if not record:
-        raise HTTPException(status_code=404, detail="Duplicate record not found")
-
-    site = await get_wp_credentials(site_id)
-
-    # Fetch the post/page content for post_b from our cache
-    post = await db.posts.find_one({"site_id": site_id, "wp_id": record["post_b_id"]}, {"_id": 0})
-    if not post:
-        post = await db.pages.find_one({"site_id": site_id, "wp_id": record["post_b_id"]}, {"_id": 0})
-    if not post:
-        raise HTTPException(status_code=404, detail="Source post/page not found in cache. Sync the site first.")
-
-    original_title = post.get("title", "")
-    original_content = _strip_html(post.get("content", ""))[:3000]
-
-    system_prompt = f"You are an expert SEO content writer. Rewrite the provided content so it is unique and distinct from its near-duplicate. Keep the same general topic but change the angle, structure, examples and wording significantly.\n\n{HUMANIZE_DIRECTIVE}"
-    prompt = f"""The following post is a near-duplicate (similarity {record['similarity_score'] * 100:.0f}%) of "{record['post_a_title']}".
-Rewrite it to be clearly distinct while retaining its core subject matter.
-
-Original title: {original_title}
-Original content:
-{original_content}
-
-Return JSON only:
-{{
-  "title": "New unique title",
-  "content": "Rewritten HTML content"
-}}"""
-
-    rewritten_raw = await get_ai_response(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.8,
-        max_tokens=2500,
-    )
-
-    # Parse JSON response
-    try:
-        clean = rewritten_raw
-        if "```json" in clean:
-            clean = clean.split("```json")[1].split("```")[0]
-        elif "```" in clean:
-            clean = clean.split("```")[1].split("```")[0]
-        rewritten = json.loads(clean.strip())
-    except Exception:
-        raise HTTPException(status_code=500, detail="AI returned invalid JSON. Try again.")
-
-    new_title = rewritten.get("title", original_title)
-    new_content = rewritten.get("content", "")
-
-    # dry_run — return the rewritten content without pushing to WordPress
-    if dry_run:
-        return {
-            "dry_run": True,
-            "new_title": new_title,
-            "new_content": new_content,
-            "wp_id": record["post_b_id"],
-            "post_url": post.get("link", ""),
-        }
-
-    # Update via XML-RPC (handles hosts that strip Authorization header)
-    await wp_xmlrpc_edit(site, record["post_b_id"], {"title": new_title, "content": new_content})
-
-    # Update local cache
-    for coll in (db.posts, db.pages):
-        await coll.update_one(
-            {"site_id": site_id, "wp_id": record["post_b_id"]},
-            {"$set": {"title": new_title, "content": new_content}},
-        )
-
-    # Mark the duplicate record as resolved
-    await db.duplicate_content.update_one(
-        {"id": item_id},
-        {"$set": {"resolved": True, "resolved_at": datetime.now(timezone.utc).isoformat()}},
-    )
-
-    await log_activity(site_id, "duplicate_fixed", f"Rewrote post #{record['post_b_id']}: {new_title[:60]}")
-    return {"success": True, "new_title": new_title}
-
-
 # ========================
 # Routes: Internal Link Suggestions
 # ========================
@@ -245,8 +152,8 @@ async def _suggest_internal_links(task_id: str, site_id: str):
     try:
         await push_event(task_id, "status", {"message": "Loading posts...", "percent": 5})
 
-        posts = await db.posts.find(
-            {"site_id": site_id, "status": "publish"},
+        posts = await db.content_items.find(
+            {"site_id": site_id, "status": "published"},
             {"_id": 0}
         ).to_list(300)
 
@@ -254,10 +161,10 @@ async def _suggest_internal_links(task_id: str, site_id: str):
             await push_event(task_id, "complete", {"message": "Need at least 2 published posts.", "percent": 100, "suggestions": 0})
             return
 
-        ids = [p.get("wp_id", 0) for p in posts]
+        ids = [p.get("content_id", 0) for p in posts]
         titles = [p.get("title", "") for p in posts]
-        urls = [p.get("link", "") for p in posts]
-        plain_texts = [_strip_html(p.get("content", "")) for p in posts]
+        urls = [p.get("url", "") for p in posts]
+        plain_texts = [_strip_html(p.get("body", "")) for p in posts]
 
         await push_event(task_id, "status", {"message": "Extracting keywords via TF-IDF...", "percent": 20})
 
@@ -398,66 +305,3 @@ async def get_internal_link_suggestions(site_id: str):
     return results
 
 
-@api_router.post("/internal-links/{site_id}/apply/{suggestion_id}")
-async def apply_internal_link(site_id: str, suggestion_id: str):
-    """Insert the suggested anchor link into the source post's HTML and save via XML-RPC."""
-    rec = await db.internal_link_suggestions.find_one(
-        {"id": suggestion_id, "site_id": site_id}, {"_id": 0}
-    )
-    if not rec:
-        raise HTTPException(status_code=404, detail="Suggestion not found")
-    if rec.get("applied"):
-        raise HTTPException(status_code=400, detail="Suggestion already applied")
-
-    site = await get_wp_credentials(site_id)
-
-    # Fetch source post HTML from cache
-    post = await db.posts.find_one({"site_id": site_id, "wp_id": rec["source_post_id"]}, {"_id": 0})
-    if not post:
-        post = await db.pages.find_one({"site_id": site_id, "wp_id": rec["source_post_id"]}, {"_id": 0})
-    if not post:
-        raise HTTPException(status_code=404, detail="Source post not found in cache. Sync the site first.")
-
-    html_content = post.get("content", "")
-    anchor_text = rec["anchor_text"]
-    target_url = rec["target_url"]
-
-    # Insert anchor link: replace first occurrence of anchor_text in the HTML
-    # that is NOT already inside an HTML tag/attribute
-    linked_anchor = f'<a href="{target_url}">{anchor_text}</a>'
-    # Match the anchor_text only when it's in a text node context (not inside a tag)
-    pattern = _re.compile(
-        r'(?<![<"\'])(' + _re.escape(anchor_text) + r')(?![^<]*>)',
-        _re.IGNORECASE,
-    )
-    new_html, count = pattern.subn(linked_anchor, html_content, count=1)
-
-    if count == 0:
-        # Fallback: plain substring replacement if regex didn't match
-        if anchor_text in html_content:
-            new_html = html_content.replace(anchor_text, linked_anchor, 1)
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail=f'Anchor text "{anchor_text}" not found in post content.'
-            )
-
-    # Save to WordPress via XML-RPC
-    await wp_xmlrpc_edit(site, rec["source_post_id"], {"content": new_html})
-
-    # Update local cache
-    for coll in (db.posts, db.pages):
-        await coll.update_one(
-            {"site_id": site_id, "wp_id": rec["source_post_id"]},
-            {"$set": {"content": new_html}},
-        )
-
-    # Mark suggestion applied
-    await db.internal_link_suggestions.update_one(
-        {"id": suggestion_id},
-        {"$set": {"applied": True, "applied_at": datetime.now(timezone.utc).isoformat()}},
-    )
-
-    await log_activity(site_id, "internal_link_applied",
-                       f'Linked "{anchor_text}" in post #{rec["source_post_id"]} → #{rec["target_post_id"]}')
-    return {"success": True, "anchor_text": anchor_text, "target_url": target_url, "impact_estimate": estimate_seo_impact("internal_link")}

@@ -7,16 +7,16 @@ wants. Splitting further is safe follow-up work; nothing here has behavior.
 """
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 # --- Auth Models ---
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=10)
     full_name: Optional[str] = None
-    role: str = "admin"
+    role: Literal["viewer", "editor", "deployer", "admin"] = "viewer"
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -40,31 +40,21 @@ class ScheduledJob(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     site_id: str
     user_id: str
-    job_type: str  # "content_freshness" | "seo_health" | "scheduled_publish"
+    job_type: Literal["content_freshness", "seo_health"]
     enabled: bool = True
-    cron_expression: Optional[str] = None  # for scheduled_publish
-    publish_post_id: Optional[str] = None
-    publish_at: Optional[str] = None
     last_run: Optional[str] = None
     last_run_status: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class ScheduledJobCreate(BaseModel):
+    """Read-only analysis jobs only. Nothing scheduled may write to a site;
+    changes go through change sets and approval."""
+    model_config = ConfigDict(extra="forbid")
     site_id: str
-    job_type: str
+    job_type: Literal["content_freshness", "seo_health"]
     enabled: bool = True
-    cron_expression: Optional[str] = None
-    publish_post_id: Optional[str] = None
-    publish_at: Optional[str] = None
 
 # --- Agent Session Models ---
-class AgentMessage(BaseModel):
-    role: str  # "user" | "assistant" | "tool"
-    content: str
-    tool_calls: Optional[List[Dict]] = None
-    tool_call_id: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 class AgentSession(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -91,63 +81,6 @@ class BulkSEOAuditRequest(BaseModel):
 class BulkContentRefreshRequest(BaseModel):
     site_ids: List[str]
 
-class BulkPublishRequest(BaseModel):
-    site_id: str
-    item_ids: List[str]  # wp_ids as strings
-    content_type: str  # "post" | "page"
-    action: str  # "publish" | "draft"
-
-class WordPressSite(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    url: str
-    # "wordpress" drives content through the WP REST API (the original and
-    # default behaviour). Any other platform is tracked by URL only: the
-    # domain-level SEO features (backlinks, keywords, citations, indexing,
-    # directories, PageSpeed) all work, while WP-specific content management
-    # is refused with a clear message instead of a confusing gateway error.
-    platform: str = "wordpress"       # "wordpress" | "nextjs"
-    # Non-WordPress publishing target: the SEO Bridge endpoint inside the
-    # site's own app (see nextjs-bridge/ in this repo). Only meaningful when
-    # platform != "wordpress"; the token is encrypted at rest like the WP ones.
-    bridge_url: str = ""
-    bridge_token: str = ""
-    username: str = ""
-    app_password: str = ""
-    auth_type: str = "app_password"   # "app_password" | "jwt"
-    jwt_token: str = ""               # Bearer token for JWT auth
-    status: str = "pending"
-    user_id: str = "global"
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    last_sync: Optional[str] = None
-
-class WordPressSiteCreate(BaseModel):
-    name: str
-    url: str
-    platform: str = "wordpress"       # "wordpress" | "nextjs"
-    bridge_url: str = ""
-    bridge_token: str = ""
-    username: str = ""
-    app_password: str = ""
-    auth_type: str = "app_password"   # "app_password" | "jwt"
-    jwt_token: str = ""               # pre-generated JWT Bearer token (optional)
-    wp_password: str = ""             # plain WP password used ONLY to auto-generate JWT token; never stored
-
-class WordPressSiteResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str
-    name: str
-    url: str
-    platform: str = "wordpress"
-    bridge_url: str = ""
-    username: str = ""
-    app_password: str = "••••••••"
-    auth_type: str = "app_password"
-    status: str
-    created_at: str
-    last_sync: Optional[str] = None
-
 class AICommand(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -161,20 +94,6 @@ class AICommand(BaseModel):
 class AICommandCreate(BaseModel):
     site_id: str
     command: str
-
-class PageCreate(BaseModel):
-    site_id: str
-    title: str
-    content: str
-    status: str = "draft"
-
-class PostCreate(BaseModel):
-    site_id: str
-    title: str
-    content: str
-    status: str = "draft"
-    categories: List[int] = []
-    tags: List[int] = []
 
 class PostGenerate(BaseModel):
     site_id: str
@@ -239,34 +158,6 @@ class CompetitorAnalysis(BaseModel):
 class CompetitorAnalyzeRequest(BaseModel):
     keyword: str
 
-class BulkMetaUpdate(BaseModel):
-    site_id: str
-    item_ids: List[int]
-    content_type: str = "post"  # "post" | "page"
-    meta_title: Optional[str] = None
-    meta_description: Optional[str] = None
-
-class BulkTaxonomyUpdate(BaseModel):
-    site_id: str
-    item_ids: List[int]
-    categories: Optional[List[int]] = None
-    tags: Optional[List[str]] = None
-
-class PostTranslateRequest(BaseModel):
-    target_languages: List[str]
-
-class SEOMetrics(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    site_id: str
-    page_url: str
-    keyword: str
-    ranking: Optional[int] = None
-    impressions: int = 0
-    clicks: int = 0
-    ctr: float = 0.0
-    recorded_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 # ActivityLog now lives in core/activity.py (imported at top of this file)
 
 class Settings(BaseModel):
@@ -324,15 +215,6 @@ class SettingsUpdate(BaseModel):
     supported_languages: Optional[List[str]] = None
     default_language: Optional[str] = None
 
-class NavigationMenu(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    site_id: str
-    wp_menu_id: int
-    name: str
-    items: List[Dict[str, Any]] = []
-    synced_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 class BrokenLink(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -374,7 +256,9 @@ class ContentRefreshItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     site_id: str
-    post_id: int
+    content_id: int
+    collection: str
+    slug: str
     title: str
     url: str
     last_modified: str
@@ -415,17 +299,6 @@ class BriefRequest(BaseModel):
     target_keyword: str
 
 # --- Plugin Audit Model ---
-class PluginAuditResult(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    site_id: str
-    plugins: List[Dict] = []
-    issues: List[Dict] = []
-    total_plugins: int = 0
-    high_issues: int = 0
-    medium_issues: int = 0
-    audited_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 # --- Rank Tracker Models (lightweight, stored as plain dicts) ---
 class RankTrackRequest(BaseModel):
     keywords: List[str]

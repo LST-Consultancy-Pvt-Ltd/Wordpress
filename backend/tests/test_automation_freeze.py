@@ -6,7 +6,7 @@ Scheduler interaction is checked against the real (unstarted) shared scheduler;
 database and CMS calls are mocked, so no MongoDB is needed.
 """
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: F401
 
 import pytest
 
@@ -52,40 +52,30 @@ def test_freeze_defaults_on_and_only_explicit_false_lifts_it(monkeypatch, value,
     assert automation_policy.automatic_writes_frozen() is expected
 
 
-def _publish_job():
-    return {"id": "freeze-test-publish", "site_id": "s1", "job_type": "scheduled_publish",
-            "cron_expression": "0 9 * * *", "publish_post_id": "42", "enabled": True}
+@pytest.mark.parametrize("job_type", ["scheduled_publish", "publish", "deploy"])
+def test_jobs_that_would_write_to_a_site_cannot_be_created(job_type):
+    from pydantic import ValidationError
+    from models.legacy import ScheduledJobCreate
+    with pytest.raises(ValidationError):
+        ScheduledJobCreate(site_id="s1", job_type=job_type)
 
 
-def test_scheduled_publish_is_not_registered_while_frozen(frozen):
-    scheduled_jobs._schedule_job(_publish_job())
-    assert scheduler.get_job("freeze-test-publish") is None
-
-
-def test_scheduled_publish_registers_when_lifted(unfrozen):
-    scheduled_jobs._schedule_job(_publish_job())
-    assert scheduler.get_job("freeze-test-publish") is not None
+def test_auto_apply_policy_is_ignored_while_frozen(monkeypatch):
+    from core.changesets import auto_apply_allowed
+    from models.sites import SitePolicy
+    policy = SitePolicy(auto_apply={"enabled": True, "environments": ["staging"], "ops": ["metadata.set"]})
+    site = {"environment": "staging", "writes_enabled": True}
+    cs = {"operations": [{"op": "metadata.set"}], "source": "onpage-seo",
+          "plan": {"valid": True, "warnings": [], "risk": {"level": "low"}}}
+    monkeypatch.setenv("AUTOMATION_WRITES_FROZEN", "0")
+    assert auto_apply_allowed(site, cs, policy) is True
+    monkeypatch.delenv("AUTOMATION_WRITES_FROZEN")
+    assert auto_apply_allowed(site, cs, policy) is False
 
 
 def test_read_only_jobs_still_register_while_frozen(frozen):
     scheduled_jobs._schedule_job({"id": "freeze-test-seo", "site_id": "s1", "job_type": "seo_health"})
     assert scheduler.get_job("freeze-test-seo") is not None
-
-
-def test_scheduled_publish_does_not_write_if_it_fires_while_frozen(frozen):
-    # Any write path starts by loading the site's credentials; if the guard
-    # were missing, that lookup would hit fake_db.sites and the job would
-    # record an error rather than the freeze.
-    fake_db = MagicMock()
-    fake_db.scheduled_jobs.update_one = AsyncMock()
-    with patch.object(scheduled_jobs, "db", fake_db), \
-         patch("core.db.db", fake_db), \
-         patch("httpx.AsyncClient") as http:
-        _run(scheduled_jobs.run_scheduled_publish("freeze-test-publish", "s1", "u1", "42"))
-    http.assert_not_called()
-    fake_db.sites.find_one.assert_not_called()
-    status = fake_db.scheduled_jobs.update_one.call_args.args[1]["$set"]["last_run_status"]
-    assert "frozen" in status
 
 
 def test_autopilot_schedule_is_not_registered_while_frozen(frozen):

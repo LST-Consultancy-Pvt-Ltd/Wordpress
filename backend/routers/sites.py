@@ -1,497 +1,329 @@
-"""WordPress site connections: list/create/get/delete, credential updates
-(with auto JWT-token discovery/generation), connection/write-permission tests,
-and content sync (pull posts/pages into the local cache).
-"""
-import logging
-from datetime import datetime, timezone
-from typing import List, Optional
+"""Managed Next.js sites: connection onboarding, handshake, write
+verification/enablement, credential rotation/replacement/revocation, policy.
 
-import httpx
+Contract: protocol/control-plane-api.md ("Sites and connections").
+"""
+from datetime import datetime, timedelta, timezone
+
 from fastapi import Depends, HTTPException
-from pydantic import BaseModel
 
 from core.activity import log_activity
-from core.crypto import encrypt_field
-from core.http_headers import BROWSER_HEADERS
+from core.audit import audit, new_correlation_id
+from core.confirm import require_site_confirmation
 from core.db import db
 from core.router import api_router
-from core.security import get_current_user, require_admin, require_editor
-from models.legacy import WordPressSite, WordPressSiteCreate, WordPressSiteResponse
-from providers.content import stable_post_id, strip_frontmatter
-from providers.nextjs import (
-    bridge_health, bridge_list_posts, bridge_request, get_bridge_credentials,
+from core.secrets import SecretStoreError, encrypt_secret
+from core.security import require_admin, require_editor, require_user
+from core.url_policy import UrlPolicyError, validate_base_url, validate_bridge_url
+from models.sites import (
+    ConnectionStatus, Confirm, CredentialReplace, ManagedSite, SiteConnection, SiteCreate,
+    SitePolicy, SiteUpdate, WritesToggle, now_iso,
 )
-from providers.wordpress import _wp_auth_headers, get_wp_credentials, wp_api_request
+from providers.bridge_client import BridgeError, new_idempotency_key
+from providers.sites import build_client, get_site, get_site_and_client, public_site
 
-logger = logging.getLogger(__name__)
+WRITE_VERIFY_MAX_AGE = timedelta(hours=24)
+PROBE_ROUTE = "/__automation-write-probe"
 
-@api_router.get("/sites", response_model=List[WordPressSiteResponse])
-async def get_sites(current_user: Optional[dict] = Depends(get_current_user)):
-    query = {}
-    if current_user:
-        query["user_id"] = current_user["id"]
-    sites = await db.sites.find(query, {"_id": 0, "app_password": 0}).to_list(100)
-    return sites
 
-@api_router.post("/sites", response_model=WordPressSiteResponse)
-async def create_site(site_data: WordPressSiteCreate, current_user: dict = Depends(require_editor)):
-    user_id = current_user["id"]
-    site = WordPressSite(**site_data.model_dump(exclude={"wp_password"}), user_id=user_id)
+def _url_error(e: UrlPolicyError) -> HTTPException:
+    return HTTPException(status_code=400, detail={"code": "URL_POLICY", "message": str(e)})
 
-    if site.platform == "wordpress" and site.auth_type == "jwt":
-        # Auto-generate JWT token using the plain password supplied by the user.
-        # The plain password is NEVER stored — only the resulting JWT token is persisted.
-        wp_password = site_data.wp_password.strip()
-        if not wp_password and not site.jwt_token.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="For JWT auth, provide your WordPress admin password so a token can be auto-generated."
-            )
-        if not site.jwt_token.strip():
-            base_url = site.url.rstrip("/")
 
-            # Step 1: Auto-discover the JWT endpoint from the WP REST API index
-            discovered_url = None
-            try:
-                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as hc:
-                    idx_resp = await hc.get(f"{base_url}/wp-json/")
-                if idx_resp.status_code == 200:
-                    idx_data = idx_resp.json()
-                    namespaces = idx_data.get("namespaces", [])
-                    routes = list(idx_data.get("routes", {}).keys())
-                    # Map known JWT plugin namespaces -> token endpoint suffix
-                    ns_map = {
-                        "jwt-auth/v1": "/wp-json/jwt-auth/v1/token",
-                        "jwt-auth/v2": "/wp-json/jwt-auth/v2/token",
-                        "simple-jwt-login/v1": "/wp-json/simple-jwt-login/v1/auth",
-                        "mo-jwt-auth/v1": "/wp-json/mo-jwt-auth/v1/generate-jwt-token",
-                        "miniorange-jwt-auth/v1": "/wp-json/miniorange-jwt-auth/v1/token",
-                    }
-                    for ns, suffix in ns_map.items():
-                        if ns in namespaces:
-                            discovered_url = base_url + suffix
-                            break
-                    # Also scan raw routes for any jwt token endpoint
-                    if not discovered_url:
-                        for route in routes:
-                            rl = route.lower()
-                            if ("jwt" in rl or "simple-jwt" in rl) and ("token" in rl or "auth" in rl):
-                                discovered_url = base_url + "/wp-json" + route.split("{")[0].rstrip("/")
-                                break
-            except Exception:
-                pass  # Discovery is best-effort; fall through to hardcoded list
+async def _run_handshake(site: dict, client) -> dict:
+    """Handshake and persist the outcome. Never raises for bridge failures:
+    the failure is recorded on the site so the UI can show it."""
+    update: dict = {"updated_at": now_iso(), "connection.last_handshake_at": now_iso()}
+    try:
+        result = await client.handshake()
+        caps, health = result["capabilities"], result["health"]
+        ready = bool(health.get("ready")) and health.get("status") == "ok"
+        update.update({
+            "capabilities": caps,
+            "health": health,
+            "connection.status": (ConnectionStatus.connected if ready else ConnectionStatus.degraded).value,
+            "connection.last_error": None if ready else f"bridge health: {health.get('status', 'unknown')}",
+        })
+        mismatch = (caps.get("site") or {}).get("site_id")
+        if mismatch and mismatch != site.get("site_key"):
+            update["connection.status"] = ConnectionStatus.degraded.value
+            update["connection.last_error"] = (f"bridge reports site id '{mismatch}' but this site is registered as "
+                                               f"'{site.get('site_key')}' — check you connected the right bridge")
+            update["writes_enabled"] = False
+    except BridgeError as e:
+        update.update({
+            "connection.status": ConnectionStatus.unreachable.value,
+            "connection.last_error": f"{e.code}: {e.message}"[:500],
+        })
+        if e.code == "PROTOCOL_UNSUPPORTED" or e.status in (401, 403):
+            update["writes_enabled"] = False
+    await db.sites.update_one({"id": site["id"]}, {"$set": update})
+    return await get_site(site["id"])
 
-            # Step 2: Build ordered candidate list (discovered first, then fallbacks)
-            candidates = []
-            if discovered_url:
-                candidates.append(discovered_url)
-            for suffix in [
-                "/wp-json/jwt-auth/v1/token",
-                "/wp-json/simple-jwt-login/v1/auth",
-                "/wp-json/jwt-auth/v2/token",
-                "/wp-json/mo-jwt-auth/v1/generate-jwt-token",
-                "/wp-json/miniorange-jwt-auth/v1/token",
-            ]:
-                url_candidate = base_url + suffix
-                if url_candidate not in candidates:
-                    candidates.append(url_candidate)
 
-            # Step 3: Try each candidate
-            token_resp = None
-            last_err = ""
-            tried = []
-            for token_url in candidates:
-                tried.append(token_url)
-                try:
-                    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as hc:
-                        r = await hc.post(
-                            token_url,
-                            json={"username": site.username, "password": wp_password},
-                            headers={"Content-Type": "application/json"},
-                        )
-                    if r.status_code == 200:
-                        token_resp = r
-                        break
-                    elif r.status_code != 404:
-                        # Non-404 error (e.g. 403, 401) — wrong credentials, stop here
-                        token_resp = r
-                        break
-                    last_err = f"{token_url} -> 404"
-                except Exception as exc:
-                    last_err = str(exc)
+@api_router.get("/sites")
+async def list_sites(_: dict = Depends(require_user)):
+    docs = await db.sites.find({}, {"_id": 0, "connection.secret_enc": 0}).sort("created_at", 1).to_list(500)
+    return [public_site(d) for d in docs]
 
-            if token_resp is None:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"Could not find a JWT token endpoint on {site.url}. "
-                        f"Ensure a JWT plugin (e.g. 'JWT Authentication for WP REST API') is installed and active, "
-                        f"and that WordPress Permalinks are NOT set to 'Plain' "
-                        f"(Settings > Permalinks > Post name). "
-                        f"Tried: {', '.join(tried)}. Last error: {last_err}"
-                    )
-                )
-            if token_resp.status_code != 200:
-                err = ""
-                try:
-                    err = token_resp.json().get("message", token_resp.text[:200])
-                except Exception:
-                    err = token_resp.text[:200]
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"JWT token generation failed ({token_resp.status_code}): {err}. "
-                        f"Check that the username and password are correct."
-                    )
-                )
-            token_data = token_resp.json()
-            jwt_token = (
-                token_data.get("token")
-                or token_data.get("data", {}).get("token", "")
-                or token_data.get("access_token", "")
-            )
-            if not jwt_token:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"JWT plugin returned unexpected response: {token_resp.text[:300]}"
-                )
-            site.jwt_token = jwt_token
-    elif site.platform == "wordpress" and site.auth_type == "app_password" and not site.app_password.strip():
-        raise HTTPException(status_code=400, detail="Application Password is required when auth_type is 'app_password'.")
 
-    if site.platform != "wordpress":
-        # A non-WordPress site (e.g. a self-hosted Next.js build) has no
-        # /wp-json to authenticate against, so it's tracked by URL for the
-        # domain-level SEO features. Plain reachability is the only thing
-        # meaningful to check, and no credentials are stored.
-        site.username, site.app_password, site.jwt_token = "", "", ""
-        try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True, headers=BROWSER_HEADERS) as hc:
-                resp = await hc.get(site.url.rstrip("/"))
-            site.status = "connected" if resp.status_code < 400 else "error"
-            if resp.status_code >= 400:
-                logger.warning(f"{site.url} returned HTTP {resp.status_code} on the reachability check")
-        except Exception as e:
-            logger.warning(f"Reachability check failed for {site.url}: {e}")
-            site.status = "error"
-    else:
-        # Test WordPress connection — use /users/me which requires auth to verify credentials
-        try:
-            site_dict = site.model_dump()
-            auth_resp = await wp_api_request(site_dict, "GET", "../users/me")
-            if auth_resp.status_code == 200:
-                site.status = "connected"
-            elif auth_resp.status_code == 401:
-                site.status = "auth_error"
-                logger.warning(f"WordPress credentials invalid for {site.url}")
-            else:
-                # Fallback: try a public GET on posts — at least confirms URL is reachable
-                pub_resp = await wp_api_request(site_dict, "GET", "posts?per_page=1")
-                site.status = "connected" if pub_resp.status_code == 200 else "error"
-        except Exception as e:
-            logger.error(f"WordPress connection test failed: {e}")
-            site.status = "error"
+@api_router.post("/sites", status_code=201)
+async def create_site(body: SiteCreate, user: dict = Depends(require_admin)):
+    cid = new_correlation_id()
+    try:
+        base_url = validate_base_url(body.base_url)
+        bridge_url = validate_bridge_url(body.bridge_url, allow_private_http=body.allow_private_http)
+    except UrlPolicyError as e:
+        await audit("site.create", actor=user, outcome="denied", correlation_id=cid,
+                    detail={"reason": str(e), "name": body.name})
+        raise _url_error(e)
+    if await db.sites.find_one({"site_key": body.site_key, "environment": body.environment.value}):
+        raise HTTPException(status_code=409, detail="A site with this site key and environment is already registered")
+    try:
+        secret_enc = encrypt_secret(body.secret)
+    except SecretStoreError as e:
+        raise HTTPException(status_code=500, detail={"code": "SECRET_STORE", "message": str(e)})
 
-    # Encrypt sensitive fields before persisting
-    site_to_save = site.model_dump()
-    if site_to_save.get("app_password"):
-        site_to_save["app_password"] = encrypt_field(site_to_save["app_password"])
-    if site_to_save.get("jwt_token"):
-        site_to_save["jwt_token"] = encrypt_field(site_to_save["jwt_token"])
-    if site_to_save.get("bridge_token"):
-        site_to_save["bridge_token"] = encrypt_field(site_to_save["bridge_token"])
-    await db.sites.insert_one(site_to_save)
-    await log_activity(site.id, "site_created",
-                       f"Added {'WordPress' if site.platform == 'wordpress' else site.platform} site: {site.name}",
-                       user_id=user_id)
+    site = ManagedSite(
+        name=body.name, base_url=base_url, bridge_url=bridge_url, environment=body.environment,
+        site_key=body.site_key, install_mode=body.install_mode, user_id=user["id"],
+        connection=SiteConnection(key_id=body.key_id, credential_rotated_at=now_iso(),
+                                  private_network_http=body.allow_private_http),
+    )
+    doc = site.model_dump(mode="json")
+    doc["connection"]["secret_enc"] = secret_enc
+    await db.sites.insert_one(dict(doc))
+    await db.site_policies.update_one({"site_id": site.id},
+                                      {"$setOnInsert": {"site_id": site.id, **SitePolicy().model_dump(mode="json")}},
+                                      upsert=True)
+    result = await _run_handshake(doc, build_client(doc, body.secret))
+    await audit("site.create", actor=user, site=result, correlation_id=cid,
+                detail={"bridge_url": bridge_url, "key_id": body.key_id,
+                        "connection": result["connection"]["status"]})
+    await log_activity(site.id, "site_connected", f"Registered {body.name} ({result['connection']['status']})",
+                       user_id=user["id"])
+    return result
 
-    response_data = site.model_dump()
-    response_data.pop("app_password", None)
-    response_data.pop("jwt_token", None)
-    response_data.pop("bridge_token", None)
-    return WordPressSiteResponse(**response_data)
 
-@api_router.get("/sites/{site_id}", response_model=WordPressSiteResponse)
-async def get_site(site_id: str):
-    site = await db.sites.find_one({"id": site_id}, {"_id": 0, "app_password": 0})
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
-    return WordPressSiteResponse(**site)
+@api_router.get("/sites/{site_id}")
+async def get_site_route(site_id: str, _: dict = Depends(require_user)):
+    return await get_site(site_id)
+
+
+@api_router.patch("/sites/{site_id}")
+async def update_site(site_id: str, body: SiteUpdate, user: dict = Depends(require_admin)):
+    site = await get_site(site_id)
+    update: dict = {"updated_at": now_iso()}
+    allow_http = body.allow_private_http if body.allow_private_http is not None else \
+        site["connection"].get("private_network_http", False)
+    try:
+        if body.base_url is not None:
+            update["base_url"] = validate_base_url(body.base_url)
+        if body.bridge_url is not None or body.allow_private_http is not None:
+            update["bridge_url"] = validate_bridge_url(body.bridge_url or site["bridge_url"],
+                                                       allow_private_http=allow_http)
+            update["connection.private_network_http"] = allow_http
+    except UrlPolicyError as e:
+        raise _url_error(e)
+    if body.name is not None:
+        update["name"] = body.name
+    if body.environment is not None:
+        update["environment"] = body.environment.value
+    endpoint_changed = any(update.get(k) not in (None, site.get(k)) for k in ("base_url", "bridge_url", "environment"))
+    if endpoint_changed:
+        # A different endpoint or environment is a different trust decision.
+        update.update({"writes_enabled": False, "write_verified_at": None,
+                       "connection.status": ConnectionStatus.unverified.value})
+    await db.sites.update_one({"id": site_id}, {"$set": update})
+    await audit("site.update", actor=user, site=site, detail={k: v for k, v in update.items() if k != "updated_at"})
+    return await get_site(site_id)
+
 
 @api_router.delete("/sites/{site_id}")
-async def delete_site(site_id: str, _: dict = Depends(require_admin)):
-    result = await db.sites.delete_one({"id": site_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Site not found")
-    return {"message": "Site deleted successfully"}
+async def delete_site(site_id: str, body: Confirm, user: dict = Depends(require_admin)):
+    site = await get_site(site_id)
+    require_site_confirmation(site, body.confirm, "remove this site")
+    await db.sites.delete_one({"id": site_id})
+    for coll in ("content_items", "site_policies", "onpage_keywords"):
+        await db[coll].delete_many({"site_id": site_id})
+    await audit("site.delete", actor=user, site=site,
+                detail={"note": "bridge key not revoked automatically; revoke it on the bridge if it is still active"})
+    return {"deleted": True}
 
-class UpdateCredentialsRequest(BaseModel):
-    username: str = ""
-    app_password: str = ""
-    auth_type: str = "app_password"
-    jwt_token: str = ""
 
-@api_router.put("/sites/{site_id}/credentials")
-async def update_site_credentials(site_id: str, payload: UpdateCredentialsRequest, user: dict = Depends(require_editor)):
-    """Update WordPress credentials (username + app_password) for an existing site."""
-    site = await db.sites.find_one({"id": site_id}, {"_id": 0})
-    if not site:
-        raise HTTPException(status_code=404, detail="Site not found")
+@api_router.post("/sites/{site_id}/handshake")
+async def handshake(site_id: str, user: dict = Depends(require_editor)):
+    site, client = await get_site_and_client(site_id)
+    result = await _run_handshake(site, client)
+    await audit("site.handshake", actor=user, site=result,
+                outcome="ok" if result["connection"]["status"] == "connected" else "error",
+                detail={"status": result["connection"]["status"], "error": result["connection"].get("last_error")})
+    return result
 
-    updates: dict = {}
-    if payload.username.strip():
-        updates["username"] = payload.username.strip()
-    if payload.auth_type:
-        updates["auth_type"] = payload.auth_type
 
-    if payload.auth_type == "app_password":
-        if not payload.app_password.strip():
-            raise HTTPException(status_code=400, detail="Application Password is required.")
-        updates["app_password"] = encrypt_field(payload.app_password.strip())
-        updates["jwt_token"] = ""
-    elif payload.auth_type == "jwt":
-        if not payload.jwt_token.strip():
-            raise HTTPException(status_code=400, detail="JWT token is required.")
-        updates["jwt_token"] = encrypt_field(payload.jwt_token.strip())
-        updates["app_password"] = ""
-
-    # Test the new credentials before saving
-    test_site = {**site, **updates}
-    # Temporarily decrypt for the test
-    test_site["app_password"] = payload.app_password.strip() if payload.auth_type == "app_password" else ""
-    test_site["jwt_token"] = payload.jwt_token.strip() if payload.auth_type == "jwt" else ""
-
+@api_router.get("/sites/{site_id}/health")
+async def site_health(site_id: str, _: dict = Depends(require_user)):
+    _, client = await get_site_and_client(site_id)
     try:
-        test_resp = await wp_api_request(test_site, "GET", "../users/me")
-        if test_resp.status_code == 401:
-            detail_msg = ""
-            try:
-                detail_msg = test_resp.json().get("message", "")
-            except Exception:
-                pass
-            raise HTTPException(
-                status_code=400,
-                detail=f"Credentials rejected by WordPress (401): {detail_msg}. Verify username and Application Password."
-            )
-        elif test_resp.status_code not in (200, 403):
-            raise HTTPException(
-                status_code=400,
-                detail=f"WordPress returned HTTP {test_resp.status_code}. Check the site URL."
-            )
-        updates["status"] = "connected"
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Could not reach WordPress: {str(e)}")
+        return await client.health()
+    except BridgeError as e:
+        raise e.to_http()
 
-    await db.sites.update_one({"id": site_id}, {"$set": updates})
-    await log_activity(site_id, "credentials_updated", "WordPress credentials updated", user_id=user.get("sub"))
-    return {"message": "Credentials updated and verified successfully."}
 
-@api_router.post("/sites/{site_id}/test-connection")
-async def test_site_connection(site_id: str):
-    """Test WordPress credentials and return detailed status."""
-    site = await get_wp_credentials(site_id)
-    auth, req_headers = _wp_auth_headers(site)
+async def _probe_write(site: dict, client, cid: str) -> dict:
+    caps = (site.get("capabilities") or {}).get("capabilities") or {}
+    if caps.get("metadata.write"):
+        ops = [{"op": "metadata.set", "route": PROBE_ROUTE,
+                "fields": {"title": "write probe", "robots": {"index": False, "follow": False}}}]
+    elif caps.get("content.write"):
+        adapters = (site.get("capabilities") or {}).get("content_adapters") or []
+        writable = [a for a in adapters if "create" in (a.get("operations") or [])]
+        if not writable:
+            return {"ok": False, "details": "no writable content collection reported by the bridge"}
+        ops = [{"op": "content.upsert", "collection": writable[0]["id"], "slug": "automation-write-probe",
+                "status": "draft", "frontmatter": {"title": "write probe"}, "body": "", "base_sha256": None}]
+    else:
+        return {"ok": False, "details": "the bridge reports no write capability (metadata.write or content.write)"}
+    change_id = "probe_" + cid
+    plan = await client.plan(change_id, ops)
+    if not plan.get("valid"):
+        return {"ok": False, "details": {"plan_errors": plan.get("errors")}}
+    import hashlib
+    applied = await client.apply(change_id, ops, plan.get("current_revision"),
+                                 hashlib.sha256((plan.get("diff") or "").encode()).hexdigest(),
+                                 new_idempotency_key("probe"))
+    rollback = await client.rollback(applied["revision_id"], "write verification probe",
+                                     new_idempotency_key("probe-rb"))
+    return {"ok": True, "details": {"probe_revision": applied["revision_id"],
+                                    "rollback_revision": rollback.get("revision_id"),
+                                    "hashes_ok": (applied.get("verification") or {}).get("hashes_ok")}}
+
+
+@api_router.post("/sites/{site_id}/verify-write")
+async def verify_write(site_id: str, user: dict = Depends(require_admin)):
+    site, client = await get_site_and_client(site_id)
+    cid = new_correlation_id()
     try:
-        # Test 1: check authentication via /users/me
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, auth=auth) as client:
-            me_resp = await client.get(
-                f"{site['url'].rstrip('/')}/wp-json/wp/v2/users/me",
-                headers=req_headers
-            )
-        if me_resp.status_code == 200:
-            user_data = me_resp.json()
-            roles = user_data.get("roles", [])
-            can_edit = bool({"administrator", "editor", "author"} & set(roles))
-            await db.sites.update_one({"id": site_id}, {"$set": {"status": "connected"}})
-            return {
-                "status": "connected",
-                "wp_user": user_data.get("name", ""),
-                "roles": roles,
-                "can_create_posts": can_edit,
-                "warning": None if can_edit else "User role cannot create posts. Change role to Editor or Administrator in WordPress Admin → Users."
-            }
-        elif me_resp.status_code == 401:
-            detail = ""
-            try:
-                detail = me_resp.json().get("message", "")
-            except Exception:
-                pass
-            # Do NOT persist auth_error to DB — test is non-destructive; sync determines persisted status
-            return {"status": "auth_error", "message": f"Invalid credentials: {detail}. Check: (1) username is your WP login name (not email/display name), (2) Application Password was generated in WP Admin → Users → Profile → Application Passwords, (3) if on Apache, add 'SetEnvIf Authorization \"(.*)\" HTTP_AUTHORIZATION=$1' to .htaccess."}
-        else:
-            return {"status": "error", "message": f"WordPress returned HTTP {me_resp.status_code}"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+        result = await _probe_write(site, client, cid)
+    except BridgeError as e:
+        result = {"ok": False, "details": {"code": e.code, "message": e.message, "correlation_id": e.correlation_id}}
+    if result["ok"]:
+        await db.sites.update_one({"id": site_id}, {"$set": {"write_verified_at": now_iso(), "updated_at": now_iso()}})
+    await audit("site.verify_write", actor=user, site=site, outcome="ok" if result["ok"] else "error",
+                correlation_id=cid, detail=result)
+    return result
 
 
-@api_router.post("/sites/{site_id}/test-write")
-async def test_site_write(site_id: str):
-    """Test that the WP credentials have edit/write permissions."""
-    site = await get_wp_credentials(site_id)
-    auth, req_headers = _wp_auth_headers(site)
-    base = f"{site['url'].rstrip('/')}/wp-json/wp/v2"
+@api_router.post("/sites/{site_id}/writes")
+async def set_writes(site_id: str, body: WritesToggle, user: dict = Depends(require_admin)):
+    site = await get_site(site_id)
+    if body.enabled:
+        require_site_confirmation(site, body.confirm, "enable writes")
+        verified = site.get("write_verified_at")
+        fresh = verified and datetime.fromisoformat(verified) > datetime.now(timezone.utc) - WRITE_VERIFY_MAX_AGE
+        if not fresh:
+            await audit("site.writes_enable", actor=user, site=site, outcome="denied",
+                        detail={"reason": "write verification missing or older than 24h"})
+            raise HTTPException(status_code=409, detail={
+                "code": "WRITE_NOT_VERIFIED",
+                "message": "Run 'Verify write access' successfully (within the last 24 hours) before enabling writes."})
+        if site["connection"]["status"] != "connected":
+            raise HTTPException(status_code=409, detail={
+                "code": "NOT_CONNECTED", "message": "The bridge connection is not healthy; refresh it first."})
+    await db.sites.update_one({"id": site_id}, {"$set": {"writes_enabled": body.enabled, "updated_at": now_iso()}})
+    await audit("site.writes_enable" if body.enabled else "site.writes_disable", actor=user, site=site)
+    return await get_site(site_id)
+
+
+@api_router.post("/sites/{site_id}/credential/rotate")
+async def rotate_credential(site_id: str, user: dict = Depends(require_admin)):
+    site, client = await get_site_and_client(site_id)
+    cid = new_correlation_id()
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, auth=auth) as client:
-            # Step 1: get any post
-            list_resp = await client.get(f"{base}/posts?per_page=1&status=any", headers=req_headers)
-            if list_resp.status_code != 200:
-                return {"status": "error", "message": f"GET /posts returned {list_resp.status_code}: {list_resp.text[:200]}"}
-            posts = list_resp.json()
-            if not posts:
-                return {"status": "ok", "message": "No posts found to test write — cannot confirm write permission."}
-            post_id = posts[0]["id"]
-            # Step 2: no-op update (send empty dict — WP accepts this and returns 200 if authed correctly)
-            write_resp = await client.post(f"{base}/posts/{post_id}", headers=req_headers, json={})
-            if write_resp.status_code in [200, 201]:
-                return {"status": "ok", "message": f"Write access confirmed on post #{post_id}."}
-            else:
-                try:
-                    wp_err = write_resp.json()
-                    wp_detail = f"code={wp_err.get('code')} message={wp_err.get('message', '')[:200]}"
-                except Exception:
-                    wp_detail = write_resp.text[:300]
-                return {
-                    "status": "write_denied",
-                    "http_status": write_resp.status_code,
-                    "message": (
-                        f"POST /posts/{post_id} returned {write_resp.status_code}: {wp_detail}. "
-                        f"Ensure the Application Password user has Editor or Administrator role in WordPress Admin → Users."
-                    ),
-                }
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
+        issued = await client.request("POST", "/auth/rotate", body={"grace_seconds": 300},
+                                      idempotency_key=new_idempotency_key("rotate"), correlation_id=cid)
+        secret_enc = encrypt_secret(issued["secret"])
+    except BridgeError as e:
+        await audit("site.credential_rotate", actor=user, site=site, outcome="error", correlation_id=cid,
+                    detail={"code": e.code})
+        raise e.to_http()
+    except (KeyError, SecretStoreError) as e:
+        await audit("site.credential_rotate", actor=user, site=site, outcome="error", correlation_id=cid,
+                    detail={"reason": type(e).__name__})
+        raise HTTPException(status_code=502, detail={
+            "code": "ROTATION_INCOMPLETE",
+            "message": "The bridge issued a new key but it could not be stored. The previous key stays valid for 5 "
+                       "minutes; retry, or revoke the new key on the bridge."})
+    rotated_at = now_iso()
+    await db.sites.update_one({"id": site_id}, {"$set": {
+        "connection.key_id": issued["key_id"], "connection.secret_enc": secret_enc,
+        "connection.credential_rotated_at": rotated_at, "updated_at": rotated_at}})
+    new_site, new_client = await get_site_and_client(site_id)
+    await _run_handshake(new_site, new_client)
+    await audit("site.credential_rotate", actor=user, site=site, correlation_id=cid,
+                detail={"old_key_id": site["connection"].get("key_id"), "new_key_id": issued["key_id"]})
+    return {"key_id": issued["key_id"], "rotated_at": rotated_at}
 
-@api_router.post("/sites/{site_id}/sync")
-async def _sync_bridge_site(site_id: str):
-    """Pull posts from a Next.js site's SEO Bridge into the same db.posts
-    cache the WordPress sync fills, so the content analysers (broken links,
-    duplicate content, internal linking, reports) work against it unchanged.
 
-    Only posts are synced: `pages` in a Next.js app are React components in
-    the repo, not CMS records, so there is nothing to pull or write back."""
-    site = await get_bridge_credentials(site_id)
+@api_router.post("/sites/{site_id}/credential/replace")
+async def replace_credential(site_id: str, body: CredentialReplace, user: dict = Depends(require_admin)):
+    site = await get_site(site_id)
+    candidate = build_client(site, body.secret, key_id=body.key_id)
     try:
-        health = await bridge_health(site)
-    except HTTPException:
-        health = {}
-    # The bridge reports which paths it revalidates; the first is the blog
-    # index, which gives us a real base for post URLs instead of a guess.
-    blog_base = (health.get("revalidatePaths") or ["/blog"])[0].rstrip("/")
-    base_url = (site.get("url") or "").rstrip("/")
-
-    posts = await bridge_list_posts(site)
-    synced, failed = 0, 0
-    for entry in posts:
-        slug = entry.get("slug")
-        if not slug:
-            continue
-        try:
-            full = await bridge_request(site, "GET", f"posts/{slug}")
-        except HTTPException as e:
-            logger.warning(f"Could not fetch post '{slug}' from the bridge: {e.detail}")
-            failed += 1
-            continue
-        raw = full.get("raw", "") or ""
-        frontmatter = full.get("frontmatter", {}) or {}
-        # Store the body without frontmatter so analysers see prose, and so an
-        # edit written back through the bridge round-trips cleanly.
-        body = strip_frontmatter(raw)
-        await db.posts.update_one(
-            {"site_id": site_id, "slug": slug},
-            {"$set": {
-                "site_id": site_id,
-                "wp_id": stable_post_id(slug),
-                "slug": slug,
-                "title": entry.get("title") or frontmatter.get("title") or slug,
-                "content": body,
-                "content_format": "mdx",
-                "status": "draft" if entry.get("draft") else "publish",
-                "link": f"{base_url}{blog_base}/{slug}",
-                "modified": frontmatter.get("date") or entry.get("date") or "",
-                "synced_at": datetime.now(timezone.utc).isoformat(),
-            }},
-            upsert=True,
-        )
-        synced += 1
-
-    await db.sites.update_one(
-        {"id": site_id},
-        {"$set": {"last_sync": datetime.now(timezone.utc).isoformat(), "status": "connected"}},
-    )
-    await log_activity(site_id, "site_synced", f"Synced {synced} post(s) from the Next.js bridge")
-    return {"synced": True, "posts": synced, "pages": 0, "failed": failed,
-            "note": "Next.js pages are components in your repo, not CMS records, so only posts are synced."}
-
-
-async def sync_site(site_id: str):
-    site_doc = await db.sites.find_one({"id": site_id}, {"_id": 0})
-    if not site_doc:
-        raise HTTPException(status_code=404, detail="Site not found")
-    if site_doc.get("platform", "wordpress") != "wordpress":
-        return await _sync_bridge_site(site_id)
-
-    site = await get_wp_credentials(site_id)
-
+        await candidate.handshake()
+    except BridgeError as e:
+        await audit("site.credential_replace", actor=user, site=site, outcome="denied", detail={"code": e.code})
+        raise e.to_http()
     try:
-        # Sync pages
-        response = await wp_api_request(site, "GET", "pages?per_page=100")
-        if response.status_code == 200:
-            pages = response.json()
-            for page in pages:
-                await db.pages.update_one(
-                    {"site_id": site_id, "wp_id": page["id"]},
-                    {"$set": {
-                        "site_id": site_id,
-                        "wp_id": page["id"],
-                        "title": page["title"]["rendered"],
-                        "content": page["content"]["rendered"],
-                        "status": page["status"],
-                        "link": page["link"],
-                        "modified": page["modified"],
-                        "synced_at": datetime.now(timezone.utc).isoformat()
-                    }},
-                    upsert=True
-                )
+        secret_enc = encrypt_secret(body.secret)
+    except SecretStoreError as e:
+        raise HTTPException(status_code=500, detail={"code": "SECRET_STORE", "message": str(e)})
+    await db.sites.update_one({"id": site_id}, {"$set": {
+        "connection.key_id": body.key_id, "connection.secret_enc": secret_enc,
+        "connection.credential_rotated_at": now_iso(), "connection.status": ConnectionStatus.unverified.value,
+        "updated_at": now_iso()}})
+    new_site, client = await get_site_and_client(site_id)
+    result = await _run_handshake(new_site, client)
+    await audit("site.credential_replace", actor=user, site=site,
+                detail={"old_key_id": site["connection"].get("key_id"), "new_key_id": body.key_id})
+    return result
 
-        # Sync posts
-        response = await wp_api_request(site, "GET", "posts?per_page=100")
-        if response.status_code == 200:
-            posts = response.json()
-            for post in posts:
-                await db.posts.update_one(
-                    {"site_id": site_id, "wp_id": post["id"]},
-                    {"$set": {
-                        "site_id": site_id,
-                        "wp_id": post["id"],
-                        "title": post["title"]["rendered"],
-                        "content": post["content"]["rendered"],
-                        "status": post["status"],
-                        "link": post["link"],
-                        "modified": post["modified"],
-                        "categories": post.get("categories", []),
-                        "tags": post.get("tags", []),
-                        "synced_at": datetime.now(timezone.utc).isoformat()
-                    }},
-                    upsert=True
-                )
 
-        # Update site last_sync — only set connected if not already in a known-bad auth state
-        await db.sites.update_one(
-            {"id": site_id, "status": {"$ne": "auth_error"}},
-            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat(), "status": "connected"}}
-        )
-        # Always update last_sync regardless of auth status
-        await db.sites.update_one(
-            {"id": site_id},
-            {"$set": {"last_sync": datetime.now(timezone.utc).isoformat()}}
-        )
+@api_router.post("/sites/{site_id}/credential/revoke")
+async def revoke_credential(site_id: str, body: Confirm, user: dict = Depends(require_admin)):
+    site, client = await get_site_and_client(site_id)
+    require_site_confirmation(site, body.confirm, "revoke this site's bridge credential")
+    key_id = site["connection"].get("key_id")
+    bridge_result = {"revoked_on_bridge": False}
+    try:
+        await client.request("POST", "/auth/revoke", body={"key_id": key_id, "confirm": "REVOKE-LAST-KEY"},
+                             idempotency_key=new_idempotency_key("revoke"))
+        bridge_result["revoked_on_bridge"] = True
+    except BridgeError as e:
+        bridge_result["bridge_error"] = f"{e.code}: {e.message}"
+        bridge_result["recovery"] = ("The platform has discarded its copy of the key, but the bridge did not confirm "
+                                     "revocation. Remove the key from the bridge key store manually.")
+    await db.sites.update_one({"id": site_id}, {
+        "$set": {"connection.status": ConnectionStatus.revoked.value, "writes_enabled": False,
+                 "write_verified_at": None, "updated_at": now_iso()},
+        "$unset": {"connection.secret_enc": ""}})
+    await audit("site.credential_revoke", actor=user, site=site,
+                outcome="ok" if bridge_result["revoked_on_bridge"] else "error",
+                detail={"key_id": key_id, **bridge_result})
+    return {**bridge_result, "site": await get_site(site_id)}
 
-        await log_activity(site_id, "sync_completed", "Site data synchronized successfully")
-        return {"message": "Site synced successfully"}
 
-    except Exception as e:
-        logger.error(f"Sync failed: {e}")
-        await log_activity(site_id, "sync_failed", str(e), "error")
-        raise HTTPException(status_code=500, detail=str(e))
+@api_router.get("/sites/{site_id}/policy")
+async def get_policy(site_id: str, _: dict = Depends(require_user)):
+    await get_site(site_id)
+    doc = await db.site_policies.find_one({"site_id": site_id}, {"_id": 0, "site_id": 0})
+    return SitePolicy(**(doc or {})).model_dump(mode="json")
+
+
+@api_router.put("/sites/{site_id}/policy")
+async def put_policy(site_id: str, body: SitePolicy, user: dict = Depends(require_admin)):
+    site = await get_site(site_id)
+    data = body.model_dump(mode="json")
+    await db.site_policies.update_one({"site_id": site_id}, {"$set": {"site_id": site_id, **data}}, upsert=True)
+    await audit("site.policy_update", actor=user, site=site, detail=data)
+    return data

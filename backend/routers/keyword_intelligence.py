@@ -24,7 +24,6 @@ from core.ai import get_ai_response
 from providers.google_analytics import fetch_gsc_metrics
 from providers.semrush import semrush_available, semrush_keyword_difficulty, semrush_keyword_overview
 from routers.keywords_intel import SERPAnalysisRequest, get_serp_analysis
-from providers.wordpress import get_wp_credentials, wp_api_request
 from providers.dataforseo import (
     DFS_TTL, dataforseo_post, _dfs_available, _dfs_check_spend,
     _cache_key, _cache_get, _cache_set,
@@ -386,24 +385,17 @@ Provide keyword density analysis. Respond with JSON:
 @api_router.get("/keywords/{site_id}/cannibalization")
 async def detect_keyword_cannibalization(site_id: str, _=Depends(require_editor)):
     """Scan all pages for same primary keyword targeting. Group conflicting pages."""
-    site = await get_wp_credentials(site_id, _["id"])
     pages_data = []
-    for endpoint in ["posts", "pages"]:
-        try:
-            resp = await wp_api_request(site, "GET", f"{endpoint}?per_page=100&_fields=id,title,link,meta,slug&status=publish")
-            if resp.status_code == 200:
-                for item in resp.json():
-                    title_raw = item.get("title", "")
-                    title = title_raw.get("rendered", "") if isinstance(title_raw, dict) else str(title_raw)
-                    meta = item.get("meta", {}) or {}
-                    focus_kw = meta.get("_yoast_wpseo_focuskw") or meta.get("rank_math_focus_keyword") or ""
-                    pages_data.append({
-                        "wp_id": item["id"], "type": endpoint[:-1], "title": title,
-                        "url": item.get("link", ""), "slug": item.get("slug", ""),
-                        "focus_keyword": focus_kw.lower().strip(),
-                    })
-        except Exception:
-            pass
+    focus = {d["path"]: d.get("keyword", "") for d in
+             await db.onpage_keywords.find({"site_id": site_id}, {"_id": 0}).to_list(1000)}
+    for item in await db.content_items.find({"site_id": site_id, "status": {"$ne": "draft"}},
+                                            {"_id": 0, "body": 0}).to_list(1000):
+        kws = (item.get("frontmatter") or {}).get("keywords") or []
+        focus_kw = focus.get(item.get("route") or "") or (kws[0] if kws and isinstance(kws[0], str) else "")
+        pages_data.append({
+            "content_id": item.get("content_id"), "type": item.get("collection"), "title": item.get("title", ""),
+            "url": item.get("url", ""), "slug": item.get("slug", ""), "focus_keyword": focus_kw.lower().strip(),
+        })
 
     from collections import defaultdict
     kw_pages = defaultdict(list)
@@ -420,7 +412,7 @@ async def detect_keyword_cannibalization(site_id: str, _=Depends(require_editor)
         if len(pages) >= 2:
             cannibalized.append({
                 "keyword": keyword, "page_count": len(pages),
-                "pages": [{"wp_id": p["wp_id"], "type": p["type"], "title": p["title"], "url": p["url"]} for p in pages],
+                "pages": [{"content_id": p["content_id"], "type": p["type"], "title": p["title"], "url": p["url"]} for p in pages],
                 "severity": "high" if len(pages) >= 3 else "medium",
                 "recommendation": "Merge content into one authoritative page or differentiate targeting" if len(pages) >= 3
                     else "Consider adding canonical tag from weaker page to stronger page",
@@ -441,9 +433,9 @@ async def detect_keyword_cannibalization(site_id: str, _=Depends(require_editor)
     if cannibalized and await _dfs_available():
         site_doc = await db.sites.find_one({"id": site_id}, {"_id": 0})
         site_domain = ""
-        if site_doc and site_doc.get("url"):
+        if site_doc and site_doc.get("base_url"):
             from urllib.parse import urlparse as _urlparse
-            site_domain = _urlparse(site_doc["url"]).hostname or ""
+            site_domain = _urlparse(site_doc["base_url"]).hostname or ""
         if site_domain:
             for issue in cannibalized[:5]:
                 try:

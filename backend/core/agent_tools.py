@@ -1,43 +1,42 @@
 """Tool definitions and dispatcher for the multi-turn AI Agent chat feature
-(`/api/agent-sessions/*`): lets the LLM call back into the app to read/write
-WordPress content and SEO data mid-conversation.
+(`/api/agent-sessions/*`): lets the LLM read site content and SEO data and
+*propose* changes mid-conversation. Proposals become change sets that a
+person reviews; the agent has no tool that applies anything.
 """
 import json
+from urllib.parse import urlsplit
 
 import httpx
 
 from core.ai import get_ai_response
+from core.content_proposals import propose_content
+from core.changesets import create_changeset
 from core.db import db
-from providers.wordpress import wp_api_request
+from core.http_headers import BROWSER_HEADERS
 
 AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "get_site_posts",
-            "description": "Get all posts from the WordPress site",
+            "name": "get_site_content",
+            "description": "List the site's synced content items (collection, slug, title, status, url)",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "get_site_pages",
-            "description": "Get all pages from the WordPress site",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_post",
-            "description": "Create a new blog post on the WordPress site",
+            "name": "propose_post",
+            "description": "Propose a new or updated content item. Creates a change set for human review; "
+                           "nothing is published until a deployer approves and applies it.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Post title"},
                     "content": {"type": "string", "description": "HTML content"},
-                    "status": {"type": "string", "enum": ["draft", "publish"], "default": "draft"},
+                    "slug": {"type": "string", "description": "URL slug (optional; derived from the title)"},
+                    "description": {"type": "string", "description": "Meta description (max 160 chars)"},
+                    "status": {"type": "string", "enum": ["draft", "published"], "default": "draft"},
                 },
                 "required": ["title", "content"],
             },
@@ -46,18 +45,18 @@ AGENT_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "update_post",
-            "description": "Update an existing post's title, content, or status",
+            "name": "propose_metadata",
+            "description": "Propose SEO metadata (title, description, canonical) for one route, e.g. '/about'. "
+                           "Creates a change set for human review.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "wp_id": {"type": "integer", "description": "WordPress post ID"},
+                    "route": {"type": "string"},
                     "title": {"type": "string"},
-                    "content": {"type": "string"},
-                    "meta_description": {"type": "string"},
-                    "status": {"type": "string", "enum": ["draft", "publish"]},
+                    "description": {"type": "string"},
+                    "canonical": {"type": "string"},
                 },
-                "required": ["wp_id"],
+                "required": ["route"],
             },
         },
     },
@@ -116,36 +115,46 @@ AGENT_TOOLS = [
     },
 ]
 
-async def execute_agent_tool(tool_name: str, tool_args: dict, site: dict) -> str:
+def _same_site(url: str, site: dict) -> bool:
+    """The model chooses the URL, so only the managed site's own host may be
+    fetched — otherwise this tool is a server-side request forgery primitive."""
+    target, own = urlsplit(url), urlsplit(site.get("base_url", ""))
+    return target.scheme == "https" and bool(own.hostname) and target.hostname == own.hostname
+
+
+async def execute_agent_tool(tool_name: str, tool_args: dict, site: dict, actor: dict) -> str:
     """Execute an agent tool call and return a string result."""
     try:
-        if tool_name == "get_site_posts":
-            posts = await db.posts.find({"site_id": site["id"]}, {"_id": 0}).to_list(50)
-            return json.dumps([{"id": p.get("wp_id"), "title": p.get("title"), "status": p.get("status"), "link": p.get("link")} for p in posts])
+        if tool_name == "get_site_content":
+            items = await db.content_items.find({"site_id": site["id"]}, {"_id": 0, "body": 0}).to_list(100)
+            return json.dumps([{"collection": i.get("collection"), "slug": i.get("slug"), "title": i.get("title"),
+                                "status": i.get("status"), "url": i.get("url")} for i in items])
 
-        elif tool_name == "get_site_pages":
-            pages = await db.pages.find({"site_id": site["id"]}, {"_id": 0}).to_list(50)
-            return json.dumps([{"id": p.get("wp_id"), "title": p.get("title"), "status": p.get("status"), "link": p.get("link")} for p in pages])
+        elif tool_name == "propose_post":
+            cs = await propose_content(
+                site["id"], actor=actor, source="ai-agent", title=f"AI agent: {tool_args['title']}"[:200],
+                items=[{"title": tool_args["title"], "body": tool_args["content"], "slug": tool_args.get("slug"),
+                        "status": tool_args.get("status", "draft"),
+                        "frontmatter": {"description": tool_args.get("description"), "content_format": "html"}}])
+            return json.dumps({"proposed": True, "changeset_id": cs["id"], "status": cs["status"],
+                               "note": "A person must approve and apply this change set before it goes live."})
 
-        elif tool_name == "create_post":
-            wp_data = {"title": tool_args["title"], "content": tool_args["content"], "status": tool_args.get("status", "draft")}
-            response = await wp_api_request(site, "POST", "posts", wp_data)
-            if response.status_code in (200, 201):
-                wp_post = response.json()
-                return json.dumps({"success": True, "wp_id": wp_post["id"], "link": wp_post["link"]})
-            return json.dumps({"success": False, "error": response.text})
-
-        elif tool_name == "update_post":
-            wp_id = tool_args.pop("wp_id")
-            response = await wp_api_request(site, "PUT", f"posts/{wp_id}", tool_args)
-            if response.status_code == 200:
-                return json.dumps({"success": True, "wp_id": wp_id})
-            return json.dumps({"success": False, "error": response.text})
+        elif tool_name == "propose_metadata":
+            fields = {k: tool_args[k] for k in ("title", "description", "canonical") if tool_args.get(k)}
+            if not fields:
+                return json.dumps({"error": "supply at least one of title, description, canonical"})
+            cs = await create_changeset(site["id"], title=f"AI agent: metadata for {tool_args['route']}",
+                                        source="ai-agent", actor=actor,
+                                        operations=[{"op": "metadata.set", "route": tool_args["route"], "fields": fields}])
+            return json.dumps({"proposed": True, "changeset_id": cs["id"], "status": cs["status"],
+                               "warnings": (cs.get("plan") or {}).get("warnings", [])})
 
         elif tool_name == "analyze_seo":
             page_url = tool_args["page_url"]
+            if not _same_site(page_url, site):
+                return json.dumps({"error": "analyze_seo only fetches https pages on this site's own domain"})
             try:
-                async with httpx.AsyncClient(timeout=20.0) as hc:
+                async with httpx.AsyncClient(timeout=20.0, headers=BROWSER_HEADERS, follow_redirects=False) as hc:
                     page_resp = await hc.get(page_url)
                     page_content = page_resp.text[:3000]
             except Exception:
@@ -179,4 +188,5 @@ async def execute_agent_tool(tool_name: str, tool_args: dict, site: dict) -> str
         else:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        detail = getattr(e, "detail", None)
+        return json.dumps({"error": detail if isinstance(detail, (str, dict)) else type(e).__name__})

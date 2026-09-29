@@ -21,7 +21,7 @@ from core.seo_impact import estimate_seo_impact
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.legacy import BulkSEOAuditRequest
 from providers.google_analytics import fetch_ga4_metrics, fetch_gsc_metrics
-from providers.wordpress import get_wp_credentials, wp_api_request
+from providers.live_page import known_routes
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ async def _refresh_google_data(task_id: str, site_id: str):
             await push_event(task_id, "error", {"message": "Site not found"})
             return
 
-        site_url = settings.get("gsc_site_url") or site.get("url", "")
+        site_url = settings.get("gsc_site_url") or site.get("base_url", "")
         ga4_property_id = settings.get("ga4_property_id", "")
 
         await push_event(task_id, "status", {"message": "Fetching Search Console data..."})
@@ -108,24 +108,8 @@ async def _bulk_seo_audit(task_id: str, site_ids: List[str]):
             pct = int((i / max(len(site_ids), 1)) * 90)
             await push_event(task_id, "progress", {"message": f"Auditing site {i+1}/{len(site_ids)}...", "percent": pct})
 
-            # Pull live data from WordPress if possible, fall back to DB cache
-            try:
-                site = await get_wp_credentials(site_id)
-                wp_pages_resp = await wp_api_request(site, "GET", "pages", params={"per_page": 100, "status": "publish"})
-                wp_posts_resp = await wp_api_request(site, "GET", "posts", params={"per_page": 100, "status": "publish"})
-                wp_items = []
-                if wp_pages_resp.status_code == 200:
-                    wp_items += [{"link": p.get("link", ""), "title": p.get("title", {}).get("rendered", ""), "type": "page"} for p in wp_pages_resp.json()]
-                if wp_posts_resp.status_code == 200:
-                    wp_items += [{"link": p.get("link", ""), "title": p.get("title", {}).get("rendered", ""), "type": "post"} for p in wp_posts_resp.json()]
-                items = wp_items
-            except Exception:
-                # Fallback: use locally cached pages/posts
-                pages = await db.pages.find({"site_id": site_id}, {"_id": 0}).to_list(100)
-                posts = await db.posts.find({"site_id": site_id}, {"_id": 0}).to_list(100)
-                items = pages + posts
-
-            # Filter out items with empty URLs
+            # Known pages: latest on-page audit, else synced content.
+            items = [{"link": p["url"], "title": p.get("title", "")} for p in await known_routes(site_id)]
             items = [item for item in items if item.get("link", "").startswith("http")]
             total_pages += len(items)
 
@@ -211,10 +195,8 @@ async def self_heal_seo(site_id: str, _: dict = Depends(require_editor)):
     metrics = await db.seo_metrics.find({"site_id": site_id}, {"_id": 0}).to_list(200)
 
     if not metrics:
-        # No metrics yet — run a quick discovery from WP cache
-        pages = await db.pages.find({"site_id": site_id}, {"_id": 0}).to_list(100)
-        posts = await db.posts.find({"site_id": site_id}, {"_id": 0}).to_list(100)
-        items = pages + posts
+        # No metrics yet — run a quick discovery from known pages
+        items = [{"link": p["url"], "title": p.get("title", "")} for p in await known_routes(site_id)]
         for item in items:
             url = item.get("link", "")
             if url.startswith("http"):

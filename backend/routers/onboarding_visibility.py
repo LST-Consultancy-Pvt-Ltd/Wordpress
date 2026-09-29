@@ -36,9 +36,15 @@ class SaveOnboardingRequest(BaseModel):
 @api_router.post("/sites/scrape-meta")
 async def scrape_site_meta(data: ScrapMetaRequest):
     """Scrape website to extract business description and target audience."""
+    # User-supplied URL fetched server-side: public https hosts only (SSRF guard).
+    from urllib.parse import urlsplit
+    from core.url_policy import resolves_public_only
+    target = urlsplit(data.url.strip())
+    if target.scheme != "https" or not target.hostname or not resolves_public_only(target.hostname):
+        raise HTTPException(status_code=400, detail="Only public https URLs can be scraped")
     try:
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            resp = await client.get(data.url.rstrip("/"), headers={"User-Agent": "Mozilla/5.0 (compatible; WPAutopilot/1.0)"})
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
+            resp = await client.get(data.url.rstrip("/"), headers={"User-Agent": "Mozilla/5.0 (compatible; SiteAutopilot/1.0)"})
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Could not fetch {data.url}: HTTP {resp.status_code}")
         soup = BeautifulSoup(resp.text, "html.parser")

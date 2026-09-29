@@ -1,26 +1,27 @@
 """MODULE: Auto Blog Generation
 
 AI-driven pipeline that generates multiple full-length blog posts (metadata +
-long-form HTML content, optional DALL-E featured image, on-page SEO meta for
-Yoast/RankMath/AIOSEO) and publishes them to WordPress, reporting progress via SSE.
+long-form HTML content + JSON-LD) and proposes them as ONE content change set
+for review, reporting progress via SSE. Nothing is published until the change
+set is approved and applied.
 """
 import json
 import logging
-import uuid
 from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, Depends
 from pydantic import BaseModel, ConfigDict
-from typing import List
+from typing import List, Optional
 
 from core.activity import log_activity
-from core.ai import get_ai_response, get_openai_client
+from core.ai import get_ai_response
 from core.json_utils import _repair_and_parse_json
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
 from core.security import require_editor
 from core.tasks import make_task_id, create_task_queue, push_event, finish_task
-from providers.wordpress import get_wp_credentials, wp_api_request, wp_upload_image, wp_xmlrpc_write, wp_xmlrpc_edit
+from core.content_proposals import propose_content
+from providers.sites import get_site
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,8 @@ class AutoBlogRequest(BaseModel):
     keywords: List[str] = []
     num_posts: int = 3
     writing_style: str = "Professional"
-    post_status: str = "draft"
-    auto_image: bool = True
-    auto_seo: bool = True
+    post_status: str = "draft"           # status the items get once the change set is applied
+    collection: Optional[str] = None     # bridge content collection; first writable one if omitted
     # Blog Generation Engine inputs
     target_country: str = "Global"
     target_audience: str = "SMB"          # SMB | Enterprise | Tech | Non-tech | Consumer
@@ -47,11 +47,14 @@ class AutoBlogRequest(BaseModel):
     word_count_max: int = 2000
 
 @api_router.post("/auto-blog-generation/{site_id}/generate")
-async def generate_auto_blogs(site_id: str, data: AutoBlogRequest, background_tasks: BackgroundTasks, _=Depends(require_editor)):
-    """Generate multiple blog posts with AI using SSE progress"""
+async def generate_auto_blogs(site_id: str, data: AutoBlogRequest, background_tasks: BackgroundTasks,
+                              user=Depends(require_editor)):
+    """Generate multiple blog posts with AI using SSE progress; the final event
+    carries the created change set."""
+    await get_site(site_id)
     task_id = make_task_id()
-    await create_task_queue(task_id)
-    background_tasks.add_task(_auto_blog_worker, task_id, site_id, data)
+    await create_task_queue(task_id, "auto_blog_generation", site_id)
+    background_tasks.add_task(_auto_blog_worker, task_id, site_id, data, user)
     return {"task_id": task_id}
 
 def _parse_blog_ai_output(raw: str) -> tuple[dict, str]:
@@ -186,128 +189,14 @@ def _extract_balanced_json(s: str) -> tuple[str, int]:
 # _repair_and_parse_json now lives in core/json_utils.py (imported at top of this file).
 
 
-async def _write_seo_meta(site: dict, wp_id: int, post_data: dict, prefer_xmlrpc: bool = False) -> None:
-    """Write on-page SEO meta to WordPress for Yoast, RankMath, and All in One SEO.
-
-    Tries REST `meta` first (works if the SEO plugin registers fields with show_in_rest=true),
-    then falls back to XML-RPC custom_fields (which writes directly to wp_postmeta — works
-    for ALL SEO plugins regardless of REST registration).
-    """
-    if not wp_id:
-        return
-
-    meta_title = (post_data.get("meta_title") or post_data.get("title") or "").strip()
-    meta_desc = (post_data.get("meta_description") or "").strip()
-    focus_kw = (post_data.get("focus_keyword") or "").strip()
-    secondary_kws = post_data.get("secondary_keywords", []) or []
-    og_title = (post_data.get("og_title") or meta_title).strip()
-    og_desc = (post_data.get("og_description") or meta_desc).strip()
-    tw_title = (post_data.get("twitter_title") or meta_title).strip()
-    tw_desc = (post_data.get("twitter_description") or meta_desc).strip()
-    canonical_url = (post_data.get("url") or "").strip()
-
-    # Build the unified meta map covering Yoast, RankMath, AIOSEO
-    seo_meta = {
-        # Yoast SEO
-        "_yoast_wpseo_title": meta_title,
-        "_yoast_wpseo_metadesc": meta_desc,
-        "_yoast_wpseo_focuskw": focus_kw,
-        "_yoast_wpseo_focuskeywords": json.dumps(
-            [{"keyword": k, "score": ""} for k in secondary_kws]
-        ) if secondary_kws else "",
-        "_yoast_wpseo_opengraph-title": og_title,
-        "_yoast_wpseo_opengraph-description": og_desc,
-        "_yoast_wpseo_twitter-title": tw_title,
-        "_yoast_wpseo_twitter-description": tw_desc,
-        "_yoast_wpseo_canonical": canonical_url,
-        "_yoast_wpseo_meta-robots-noindex": "0",
-        "_yoast_wpseo_meta-robots-nofollow": "0",
-        # RankMath
-        "rank_math_title": meta_title,
-        "rank_math_description": meta_desc,
-        "rank_math_focus_keyword": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
-        "rank_math_canonical_url": canonical_url,
-        "rank_math_facebook_title": og_title,
-        "rank_math_facebook_description": og_desc,
-        "rank_math_twitter_title": tw_title,
-        "rank_math_twitter_description": tw_desc,
-        "rank_math_robots": ["index", "follow"],
-        # All in One SEO (AIOSEO uses both legacy postmeta + a custom table; postmeta still helps)
-        "_aioseo_title": meta_title,
-        "_aioseo_description": meta_desc,
-        "_aioseo_keywords": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
-        "_aioseop_title": meta_title,
-        "_aioseop_description": meta_desc,
-        "_aioseop_keywords": ", ".join([focus_kw] + list(secondary_kws)).strip(", "),
-    }
-    # Drop empty values
-    seo_meta = {k: v for k, v in seo_meta.items() if v not in (None, "", [])}
-
-    rest_ok = False
-    if not prefer_xmlrpc:
-        # Attempt REST API meta write (works only for SEO plugins that register meta in REST)
-        try:
-            resp = await wp_api_request(site, "POST", f"posts/{wp_id}", {"meta": seo_meta})
-            if resp.status_code in (200, 201):
-                rest_ok = True
-        except Exception:
-            pass
-
-    # XML-RPC custom_fields fallback — writes directly to wp_postmeta, bypassing REST registration.
-    # This always works as long as the WP user has edit_post capability.
+async def _auto_blog_worker(task_id: str, site_id: str, data: AutoBlogRequest, user: dict):
     try:
-        custom_fields = []
-        for key, val in seo_meta.items():
-            if isinstance(val, list):
-                val = ",".join(val)
-            custom_fields.append({"key": key, "value": str(val)})
-        await wp_xmlrpc_edit(site, wp_id, {"custom_fields": custom_fields})
-    except Exception as xr_err:
-        if not rest_ok:
-            logger.warning(f"SEO meta XML-RPC write failed for post {wp_id}: {xr_err}")
-
-
-async def _auto_blog_worker(task_id: str, site_id: str, data: AutoBlogRequest):
-    try:
-        site = await get_wp_credentials(site_id)
+        site = await get_site(site_id)
         posts = []
         keywords_str = ", ".join(data.keywords) if data.keywords else data.topic
         primary = (data.primary_color or "#0A66C2").strip()
         secondary = (data.secondary_color or "").strip()
         brand = (data.brand_name or site.get("name", "")).strip()
-
-        # Pre-fetch existing WP categories & tags so we can map AI suggestions to IDs
-        cat_map: dict = {}
-        tag_map: dict = {}
-        try:
-            cats_resp = await wp_api_request(site, "GET", "categories?per_page=100")
-            if cats_resp.status_code == 200:
-                cat_map = {c["name"].lower(): c["id"] for c in cats_resp.json()}
-            tags_resp = await wp_api_request(site, "GET", "tags?per_page=100")
-            if tags_resp.status_code == 200:
-                tag_map = {t["name"].lower(): t["id"] for t in tags_resp.json()}
-        except Exception:
-            pass
-
-        async def _resolve_taxonomy(names: list[str], existing: dict, endpoint: str) -> list[int]:
-            ids: list[int] = []
-            for name in names:
-                if not name or not isinstance(name, str):
-                    continue
-                key = name.strip().lower()
-                if key in existing:
-                    ids.append(existing[key])
-                    continue
-                try:
-                    create_resp = await wp_api_request(site, "POST", endpoint, {"name": name.strip()})
-                    if create_resp.status_code in (200, 201):
-                        new_id = create_resp.json().get("id")
-                        if new_id:
-                            existing[key] = new_id
-                            ids.append(new_id)
-                except Exception:
-                    pass
-            return ids
 
         # Per-section word budget so the model knows exactly how much to write
         num_sections = 5
@@ -514,96 +403,9 @@ OUTPUT — raw HTML only, wrapped in sentinels:
                     else:
                         content_html = content_html + "\n" + extra_html.strip()
 
-                # Inject JSON-LD schema
-                schema = post_data.get("schema_jsonld") or {}
-                if isinstance(schema, dict) and schema:
-                    try:
-                        schema_block = (
-                            '\n<script type="application/ld+json">'
-                            + json.dumps(schema, ensure_ascii=False)
-                            + "</script>\n"
-                        )
-                        content_html = content_html + schema_block
-                    except Exception:
-                        pass
-
-                # Resolve tag/category names to IDs (creating any that don't exist)
-                tag_ids = await _resolve_taxonomy(post_data.get("tags", []) or [], tag_map, "tags")
-                cat_ids = await _resolve_taxonomy(post_data.get("categories", []) or [], cat_map, "categories")
-
-                # Optional featured image via DALL-E
-                featured_media_id = None
-                if data.auto_image and post_data.get("featured_image_prompt"):
-                    try:
-                        oai = await get_openai_client()
-                        img_resp = await oai.images.generate(
-                            model="dall-e-3",
-                            prompt=post_data["featured_image_prompt"],
-                            size="1792x1024",
-                            quality="standard",
-                            n=1,
-                        )
-                        img_url = img_resp.data[0].url
-                        featured_media_id = await wp_upload_image(
-                            site,
-                            img_url,
-                            f"featured-{post_data.get('slug', uuid.uuid4().hex[:8])}.png",
-                        )
-                        post_data["featured_image_url"] = img_url
-                    except Exception as img_err:
-                        logger.warning(f"DALL-E featured image failed: {img_err}")
-
-                # Push to WordPress
-                wp_payload = {
-                    "title": post_data.get("title", f"Auto Post {i+1}"),
-                    "content": content_html,
-                    "status": data.post_status,
-                    "excerpt": post_data.get("meta_description", ""),
-                    "slug": post_data.get("slug", ""),
-                }
-                if tag_ids:
-                    wp_payload["tags"] = tag_ids
-                if cat_ids:
-                    wp_payload["categories"] = cat_ids
-                if featured_media_id:
-                    wp_payload["featured_media"] = featured_media_id
-
-                try:
-                    response = await wp_api_request(site, "POST", "posts", wp_payload)
-                    if response.status_code in (200, 201):
-                        wp_post = response.json()
-                        post_data["wp_id"] = wp_post.get("id")
-                        post_data["url"] = wp_post.get("link", "")
-                        post_data["status"] = data.post_status
-                        # Write on-page SEO meta (Yoast, RankMath, AIOSEO) — non-blocking
-                        try:
-                            await _write_seo_meta(site, wp_post.get("id"), post_data)
-                        except Exception as seo_err:
-                            logger.warning(f"SEO meta write failed for post {wp_post.get('id')}: {seo_err}")
-                        await push_event(task_id, "progress", {"message": f"Post {i+1} published: {post_data.get('title','')}", "percent": pct + 5})
-                    else:
-                        logger.warning(f"Auto blog WP push REST failed ({response.status_code}): {response.text[:200]}")
-                        # XML-RPC fallback for hosts that strip Authorization header
-                        try:
-                            xr = await wp_xmlrpc_write(
-                                site, "post",
-                                wp_payload["title"], wp_payload["content"], data.post_status,
-                            )
-                            post_data["wp_id"] = xr.get("wp_id")
-                            post_data["url"] = xr.get("link", "")
-                            post_data["status"] = data.post_status
-                            try:
-                                await _write_seo_meta(site, xr.get("wp_id"), post_data, prefer_xmlrpc=True)
-                            except Exception as seo_err:
-                                logger.warning(f"SEO meta write (XML-RPC) failed: {seo_err}")
-                            await push_event(task_id, "progress", {"message": f"Post {i+1} published via XML-RPC: {post_data.get('title','')}", "percent": pct + 5})
-                        except Exception as xr_err:
-                            logger.warning(f"XML-RPC fallback failed: {xr_err}")
-                            post_data["status"] = "local_only"
-                except Exception as wp_err:
-                    logger.warning(f"Auto blog WP push failed: {wp_err}")
-                    post_data["status"] = "local_only"
-
+                post_data["status"] = "proposed"
+                await push_event(task_id, "progress", {"message": f"Post {i+1} ready: {post_data.get('title','')}",
+                                                       "percent": pct + 5})
                 # Keep the rendered HTML on the returned object so the frontend preview works
                 post_data["content"] = content_html
                 posts.append(post_data)
@@ -611,8 +413,29 @@ OUTPUT — raw HTML only, wrapped in sentinels:
                 logger.error(f"Auto blog post {i+1} failed: {post_err}")
                 await push_event(task_id, "item_error", {"post_index": i+1, "error": str(post_err)})
 
-        await log_activity(site_id, "auto_blog_generation", f"Generated {len(posts)} blog posts about: {data.topic}")
-        await push_event(task_id, "complete", {"message": f"Generated {len(posts)}/{data.num_posts} posts", "posts": posts, "percent": 100})
+        changeset = None
+        if posts:
+            changeset = await propose_content(
+                site_id, actor=user, source="blog-generation", collection=data.collection,
+                title=f"{len(posts)} generated post(s): {data.topic}"[:200],
+                items=[{
+                    "title": p.get("title") or f"Post {n + 1}", "slug": p.get("slug"), "body": p.get("content", ""),
+                    "status": data.post_status,
+                    "frontmatter": {
+                        "description": p.get("meta_description"), "seo_title": p.get("meta_title"),
+                        "keywords": [k for k in [p.get("focus_keyword")] + list(p.get("secondary_keywords") or []) if k],
+                        "tags": p.get("tags") or [], "categories": p.get("categories") or [],
+                        "jsonLd": p.get("schema_jsonld") if isinstance(p.get("schema_jsonld"), dict) else None,
+                        "content_format": "html", "date": datetime.now(timezone.utc).date().isoformat(),
+                    },
+                } for n, p in enumerate(posts)],
+            )
+        await log_activity(site_id, "auto_blog_generation",
+                           f"Generated {len(posts)} blog posts about: {data.topic}"
+                           + (f" → change set {changeset['id']}" if changeset else ""), user_id=user["id"])
+        await push_event(task_id, "complete", {"message": f"Generated {len(posts)}/{data.num_posts} posts; "
+                                                          "review and approve the change set to publish them",
+                                               "posts": posts, "changeset": changeset, "percent": 100})
     except Exception as e:
         logger.error(f"Auto blog worker fatal error: {e}")
         await push_event(task_id, "error", {"message": str(e)})

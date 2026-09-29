@@ -1,7 +1,7 @@
 """Email Newsletter Builder (Mailchimp integration with a DB-backed fallback list,
-AI-generated HTML newsletter from recent posts, send/schedule, subscribe) and Site
-Health & Uptime Monitor (ping/response-time, SSL expiry, WP version/core-update
-check, AI-explained fixes for common issues) for a connected WordPress site.
+AI-generated HTML newsletter from recently synced content, send/schedule, subscribe)
+and Site Health & Uptime Monitor (ping/response-time, SSL expiry, bridge health and
+readiness, AI-explained fixes for common issues) for a managed Next.js site.
 """
 import logging
 import re
@@ -21,7 +21,8 @@ from core.crypto import get_decrypted_settings
 from core.db import db
 from core.router import api_router
 from core.security import require_editor
-from providers.wordpress import get_wp_credentials, wp_api_request
+from providers.bridge_client import BridgeError
+from providers.sites import get_site, get_site_and_client
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +58,14 @@ async def get_newsletter_lists(site_id: str, current_user: dict = Depends(requir
 
 @api_router.post("/newsletter/{site_id}/generate")
 async def generate_newsletter(site_id: str, data: NewsletterGenerateRequest, current_user: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id, current_user["id"])
-    posts_resp = await wp_api_request(site, "GET", f"posts?per_page={data.posts_count}&status=publish&_fields=title,excerpt,link,date,featured_media")
-    posts = posts_resp.json() if posts_resp.status_code == 200 else []
+    site = await get_site(site_id)
+    posts = await db.content_items.find({"site_id": site_id, "status": {"$ne": "draft"}}, {"_id": 0}) \
+        .sort("updated_at", -1).to_list(max(1, min(data.posts_count, 20)))
+    if not posts:
+        raise HTTPException(status_code=409, detail="No synced content for this site yet — run a content sync first.")
     post_summaries = "\n".join([
-        f"- {BeautifulSoup(p.get('title',{}).get('rendered',''),'html.parser').get_text()}: {p.get('link','')} — {BeautifulSoup(p.get('excerpt',{}).get('rendered',''),'html.parser').get_text()[:150]}"
+        f"- {p.get('title','')}: {p.get('url','')} — "
+        f"{((p.get('frontmatter') or {}).get('description') or BeautifulSoup(p.get('body',''),'html.parser').get_text())[:150]}"
         for p in posts
     ])
     site_name = site.get("name", "Our Blog")
@@ -148,11 +152,12 @@ async def get_health_data(site_id: str, current_user: dict = Depends(require_edi
 
 @api_router.post("/health/{site_id}/check")
 async def run_health_check(site_id: str, current_user: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id, current_user["id"])
-    site_url = site["url"].rstrip("/")
+    site, client = await get_site_and_client(site_id)
+    site_url = site["base_url"].rstrip("/")
     result = {"site_id": site_id, "checked_at": datetime.now(timezone.utc).isoformat(),
               "response_time_ms": None, "online": False, "ssl_expiry_days": None,
-              "wp_version": None, "wp_update_available": False, "health_checks": [], "issues": []}
+              "bridge": None, "nextjs_version": ((site.get("capabilities") or {}).get("nextjs") or {}).get("version"),
+              "health_checks": [], "issues": []}
     # 1. Ping + response time
     try:
         import time as _time
@@ -188,27 +193,20 @@ async def run_health_check(site_id: str, current_user: dict = Depends(require_ed
                                              "description": f"SSL certificate expires in {days_left} days"})
     except Exception:
         pass
-    # 3. WP version + WP health check
+    # 3. Bridge health / readiness (disk, writable roots, site reachability)
     try:
-        wp_info_resp = await wp_api_request(site, "GET", "../../")
-        if wp_info_resp.status_code == 200:
-            info = wp_info_resp.json()
-            result["wp_version"] = info.get("namespaces") and "wp/v2" in info.get("namespaces", []) and "detected"
-        # Try site health
-        health_resp = await wp_api_request(site, "GET", "../../wp-site-health/v1/tests/dotorg-communication")
-        if health_resp.status_code == 200:
-            result["health_checks"].append(health_resp.json())
-    except Exception:
-        pass
-    # 4. Check WP latest version from wordpress.org
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as hc:
-            wp_api = await hc.get("https://api.wordpress.org/core/version-check/1.7/")
-        if wp_api.status_code == 200:
-            latest = wp_api.json().get("offers", [{}])[0].get("version", "")
-            result["wp_latest_version"] = latest
-    except Exception:
-        pass
+        bridge = await client.health()
+        result["bridge"] = {"status": bridge.get("status"), "ready": bridge.get("ready"),
+                            "current_revision": bridge.get("current_revision")}
+        result["health_checks"] = bridge.get("checks", [])
+        for check in bridge.get("checks", []):
+            if not check.get("ok"):
+                result["issues"].append({"key": f"bridge_{check.get('name')}", "status": "warning",
+                                         "description": f"Bridge check '{check.get('name')}' failed: {check.get('detail') or ''}"})
+    except BridgeError as e:
+        result["bridge"] = {"status": "unreachable", "error": e.code}
+        result["issues"].append({"key": "bridge_unreachable", "status": "critical",
+                                 "description": f"Automation bridge unreachable ({e.code})"})
     # Store result
     await db.site_health.replace_one({"site_id": site_id}, result, upsert=True)
     await db.site_health_history.insert_one({**result, "id": str(uuid.uuid4())})
@@ -238,12 +236,15 @@ async def schedule_health_monitor(site_id: str, data: HealthScheduleRequest, cur
 @api_router.post("/health/{site_id}/fix/{issue_key}")
 async def get_health_fix(site_id: str, issue_key: str, current_user: dict = Depends(require_editor)):
     fix_prompts = {
-        "php_version": "Explain step-by-step how to upgrade PHP version on a WordPress hosting environment (cPanel, Hostinger, etc)",
-        "memory_limit": "Explain exactly how to increase WordPress PHP memory limit via wp-config.php and .htaccess",
-        "ssl_expiry": "Explain step-by-step how to renew an SSL certificate for a WordPress site (Let's Encrypt, cPanel, Hostinger)",
-        "debug_mode_on": "Explain how to safely disable WordPress debug mode (WP_DEBUG=false) and clean up debug.log",
-        "unreachable": "Explain how to diagnose and fix a WordPress site that is returning errors or is unreachable",
+        "ssl_expiry": "Explain step-by-step how to renew or automate the TLS certificate for a Next.js site served "
+                      "from Docker behind a reverse proxy (Caddy, Traefik or nginx with Let's Encrypt)",
+        "unreachable": "Explain how to diagnose a self-hosted Next.js site in Docker that returns errors or is "
+                       "unreachable: container status, logs, health checks, reverse proxy and DNS",
+        "bridge_unreachable": "Explain how to diagnose an automation bridge sidecar container that the control plane "
+                              "cannot reach: private Docker network, reverse-proxy route, TLS and request signing clock skew",
+        "bridge_disk_free": "Explain how to free disk space on a Docker host running a Next.js site (images, build cache, logs)",
     }
-    prompt = fix_prompts.get(issue_key, f"Explain how to fix the WordPress issue: {issue_key}")
+    safe_key = re.sub(r"[^a-z0-9_:-]", "", issue_key.lower())[:60]
+    prompt = fix_prompts.get(safe_key, f"Explain how to fix this issue on a self-hosted Next.js site in Docker: {safe_key}")
     instructions = await get_ai_response([{"role": "user", "content": prompt}], max_tokens=800)
     return {"issue_key": issue_key, "instructions": instructions}

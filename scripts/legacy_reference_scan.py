@@ -162,7 +162,8 @@ def cmd_inventory(out: Path) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"summary": summarize(results), "files": results}, indent=1) + "\n")
     s = summarize(results)
-    print(f"{s['hits']} references in {s['files']} files -> {out.relative_to(REPO)}")
+    shown = out.resolve().relative_to(REPO) if out.resolve().is_relative_to(REPO) else out
+    print(f"{s['hits']} references in {s['files']} files -> {shown}")
     return 0
 
 

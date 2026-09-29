@@ -21,7 +21,7 @@ async def get_portfolio_intelligence(current_user: dict = Depends(get_current_us
     query = {}
     if current_user:
         query["user_id"] = current_user["id"]
-    sites = await db.sites.find(query, {"_id": 0, "app_password": 0, "jwt_token": 0}).to_list(500)
+    sites = await db.sites.find(query, {"_id": 0, "connection.secret_enc": 0}).to_list(500)
 
     portfolio = []
     for site in sites:
@@ -42,12 +42,12 @@ async def get_portfolio_intelligence(current_user: dict = Depends(get_current_us
         if online is False:
             attention_reason = "Last health check found the site offline."
         elif issues_count > 0:
-            attention_reason = f"Last health check found {issues_count} open issue(s) (SSL, WP version, etc.)."
+            attention_reason = f"Last health check found {issues_count} open issue(s) (SSL, bridge health, etc.)."
         else:
             attention_reason = None
 
         entry = {
-            "site_id": site_id, "name": site.get("name"), "url": site.get("url"), "status": site.get("status"),
+            "site_id": site_id, "name": site.get("name"), "url": site.get("base_url"), "status": site.get("status"),
             "uptime": {"online": online, "issues_count": issues_count, "checked_at": (health or {}).get("checked_at")},
             "offpage_score": (offpage or {}).get("score"),
             "backlinks_acquired": (offpage or {}).get("breakdown", {}).get("backlinks_acquired"),

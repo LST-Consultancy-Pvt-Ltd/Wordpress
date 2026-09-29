@@ -1,11 +1,11 @@
-"""AI Blog Generation: generate a full SEO-optimized blog post from a topic
-(optional DALL-E featured image, multi-language translations, readability
-scoring), and translate an existing WordPress post into other languages.
+"""AI Blog Generation: generate a full SEO-optimized blog post draft from a
+topic (optional DALL-E image concept, multi-language variants, readability
+scoring). The draft is returned to the editor; saving it creates a content
+change set like any other edit.
 """
 import asyncio
 import json
 import logging
-import uuid
 
 from fastapi import Depends, HTTPException
 
@@ -16,14 +16,14 @@ from core.db import db
 from core.prompts import HUMANIZE_DIRECTIVE
 from core.router import api_router
 from core.security import require_editor
-from models.legacy import PostGenerate, PostTranslateRequest
-from providers.wordpress import get_wp_credentials, wp_api_request, wp_upload_image
+from models.legacy import PostGenerate
+from providers.sites import get_site
 
 logger = logging.getLogger(__name__)
 
 @api_router.post("/posts/generate")
 async def generate_blog_post(data: PostGenerate, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(data.site_id)
+    await get_site(data.site_id)
 
     keyword_str = ", ".join(data.keywords) if data.keywords else "relevant SEO keywords"
 
@@ -98,11 +98,10 @@ Format the response as JSON:
                     n=1,
                 )
                 image_url = img_response.data[0].url
+                # The generated URL expires after about an hour; download it and add it to the
+                # site repo (public/) if you keep it — protocol v1 has no binary asset upload.
                 blog_data["featured_image_url"] = image_url
-                # Upload to WordPress media
-                media_id = await wp_upload_image(site, image_url, f"featured-{uuid.uuid4().hex[:8]}.png")
-                if media_id:
-                    blog_data["featured_media_id"] = media_id
+                blog_data["featured_image_note"] = "Temporary URL (expires in ~1 hour); save the image to keep it."
             except Exception as img_err:
                 logger.error(f"DALL-E image generation failed: {img_err}")
                 blog_data["featured_image_error"] = str(img_err)
@@ -160,67 +159,3 @@ Format the response as JSON:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api_router.post("/posts/translate/{site_id}/{wp_id}")
-async def translate_post(
-    site_id: str,
-    wp_id: int,
-    body: PostTranslateRequest,
-    current_user: dict = Depends(require_editor),
-):
-    """Translate an existing WP post to one or more languages and create new posts for each."""
-    site = await get_wp_credentials(site_id)
-    user_id = current_user.get("id") if current_user else "global"
-
-    # Fetch the original post
-    cached = await db.posts.find_one({"site_id": site_id, "wp_id": wp_id}, {"_id": 0})
-    if not cached:
-        resp = await wp_api_request(site, "GET", f"posts/{wp_id}")
-        if resp.status_code != 200:
-            raise HTTPException(status_code=404, detail="Post not found")
-        p = resp.json()
-        original_title = p["title"]["rendered"] if isinstance(p.get("title"), dict) else str(p.get("title", ""))
-        original_content = p["content"]["rendered"] if isinstance(p.get("content"), dict) else str(p.get("content", ""))
-    else:
-        original_title = cached.get("title", "")
-        original_content = cached.get("content", "")
-
-    created_posts = []
-    for lang in body.target_languages:
-        try:
-            trans_raw = await get_ai_response([
-                {"role": "system", "content": f"You are an expert multilingual SEO content writer. Respond only with valid JSON.\n\n{HUMANIZE_DIRECTIVE}"},
-                {"role": "user", "content": (
-                    f"Translate and localize the following blog post to language code '{lang}'. "
-                    f"Maintain SEO optimization. "
-                    f"Return JSON: {{\"title\": \"...\", \"content\": \"...\", \"meta_description\": \"...\"}}\n\n"
-                    f"Title: {original_title}\n\nContent:\n{original_content[:3000]}"
-                )},
-            ], max_tokens=3000, temperature=0.5)
-            if "```json" in trans_raw:
-                trans_raw = trans_raw.split("```json")[1].split("```")[0]
-            elif "```" in trans_raw:
-                trans_raw = trans_raw.split("```")[1].split("```")[0]
-            trans_data = json.loads(trans_raw.strip())
-        except Exception as exc:
-            logger.warning(f"Translation to {lang} failed: {exc}")
-            continue
-
-        wp_payload = {
-            "title": trans_data.get("title", f"{original_title} [{lang}]"),
-            "content": trans_data.get("content", ""),
-            "status": "draft",
-            "meta": {"_wp_page_template": "", "language": lang},
-        }
-        create_resp = await wp_api_request(site, "POST", "posts", wp_payload)
-        if create_resp.status_code in [200, 201]:
-            new_wp = create_resp.json()
-            created_posts.append({
-                "language": lang,
-                "wp_id": new_wp["id"],
-                "title": trans_data.get("title", ""),
-                "link": new_wp.get("link", ""),
-            })
-            await log_activity(site_id, "post_translated",
-                               f"Translated post {wp_id} to {lang}: {trans_data.get('title', '')}", "success", user_id)
-
-    return {"original_wp_id": wp_id, "translations": created_posts}

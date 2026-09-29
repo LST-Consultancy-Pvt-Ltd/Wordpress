@@ -1,11 +1,7 @@
 """Platform-neutral on-page SEO auditing.
 
-The existing on-page tooling (routers/auto_seo.py) reads its signals from the
-WordPress REST API and from Yoast/RankMath plugin fields, so it can only ever
-audit a WordPress site. This module takes the signals from the *rendered HTML
-of the live URL* instead, which works on any stack — WordPress, Next.js, or
-anything else — and is closer to ground truth anyway, since it sees what a
-crawler actually sees rather than what a plugin claims it will emit.
+Signals come from the *rendered HTML of the live URL*, which is what a
+crawler actually sees, rather than from any content-management metadata.
 
 Scoring is deliberately deterministic: fixed thresholds and weights, no AI. A
 score you can't reproduce or explain is worthless for tracking progress over

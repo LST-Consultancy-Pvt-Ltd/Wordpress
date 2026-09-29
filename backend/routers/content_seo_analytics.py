@@ -9,14 +9,13 @@ server.py (lines 2776-2819 and lines 2988-3259).
 from fastapi import HTTPException, Depends
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
-import uuid
 import httpx
 import json
 
 from core.db import db
-from core.security import get_current_user, require_user, require_editor
+from core.security import require_user, require_editor
 from core.activity import log_activity
-from providers.wordpress import get_wp_credentials, wp_api_request
+from providers.sites import get_site
 from core.ai import get_ai_response
 from core.router import api_router  # the shared APIRouter instance
 
@@ -145,8 +144,8 @@ Return JSON:
 @api_router.get("/link-builder/{site_id}/anchor-distribution")
 async def anchor_text_distribution(site_id: str, _=Depends(require_editor)):
     """Analyze backlink anchor text distribution: branded, exact-match, partial, generic, naked URL."""
-    site = await get_wp_credentials(site_id, _["id"])
-    site_url = site["url"].rstrip("/")
+    site = await get_site(site_id)
+    site_url = site["base_url"].rstrip("/")
     from urllib.parse import urlparse
     site_domain = urlparse(site_url).hostname or ""
     brand_name = site_domain.split(".")[0].lower()
@@ -200,140 +199,4 @@ async def anchor_text_distribution(site_id: str, _=Depends(require_editor)):
     return {"site_id": site_id, "total_backlinks": len(backlinks), "distribution": distribution, "health_assessment": health, "source": "actual_data"}
 
 
-# ========================
-# FEATURE: Social Signal SEO Mapping (Module 9)
-# ========================
 
-@api_router.get("/link-builder/{site_id}/social-signals")
-async def social_signal_mapping(site_id: str, _=Depends(require_editor)):
-    """Map social engagement signals to SEO performance for top posts."""
-    site = await get_wp_credentials(site_id, _["id"])
-
-    # Fetch recent posts from WP
-    resp = await wp_api_request(site, "GET", "posts?per_page=20&orderby=date&order=desc&_fields=id,title,link")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to fetch posts from WordPress")
-    posts = resp.json()
-    if not posts:
-        return {"site_id": site_id, "posts": []}
-
-    # Check DB for cached social data
-    cached = await db.social_signals.find({"site_id": site_id}).to_list(100)
-    cached_map = {str(c.get("wp_id")): c for c in cached}
-
-    results = []
-    for post in posts[:20]:
-        wp_id = str(post.get("id", ""))
-        title_raw = post.get("title", {})
-        title = title_raw.get("rendered", "") if isinstance(title_raw, dict) else str(title_raw)
-        link = post.get("link", "")
-
-        if wp_id in cached_map:
-            c = cached_map[wp_id]
-            results.append({
-                "title": title, "url": link, "wp_id": wp_id,
-                "shares": c.get("shares", 0), "likes": c.get("likes", 0),
-                "comments": c.get("comments", 0), "signal_score": c.get("signal_score", 0),
-                "seo_position": c.get("seo_position"), "platforms": c.get("platforms", []),
-            })
-        else:
-            # Use AI to estimate social signals
-            results.append({
-                "title": title, "url": link, "wp_id": wp_id,
-                "shares": 0, "likes": 0, "comments": 0,
-                "signal_score": 0, "seo_position": None, "platforms": [],
-            })
-
-    # If no cached data, generate AI estimates for all posts
-    if not cached:
-        try:
-            titles_list = "\n".join([f"- {r['title']}" for r in results[:10]])
-            ai_resp = await get_ai_response([
-                {"role": "system", "content": "Social media SEO analyst. JSON only."},
-                {"role": "user", "content": f"""Estimate social engagement for these blog posts. Return JSON:
-{{"posts": [{{"title": "<title>", "shares": <n>, "likes": <n>, "comments": <n>,
-"signal_score": <0-100>, "seo_position": <1-100 or null>, "platforms": ["twitter", "facebook", ...]}}]}}
-
-Posts:
-{titles_list}"""},
-            ], max_tokens=2000, temperature=0.4)
-            if "```json" in ai_resp:
-                ai_resp = ai_resp.split("```json")[1].split("```")[0]
-            elif "```" in ai_resp:
-                ai_resp = ai_resp.split("```")[1].split("```")[0]
-            ai_data = json.loads(ai_resp.strip())
-            ai_posts = ai_data.get("posts", [])
-            for i, ap in enumerate(ai_posts):
-                if i < len(results):
-                    results[i].update({
-                        "shares": ap.get("shares", 0), "likes": ap.get("likes", 0),
-                        "comments": ap.get("comments", 0), "signal_score": ap.get("signal_score", 0),
-                        "seo_position": ap.get("seo_position"), "platforms": ap.get("platforms", []),
-                    })
-        except Exception:
-            pass
-
-    await log_activity(site_id, "social_signals", f"Social signal mapping: {len(results)} posts analyzed")
-    return {"site_id": site_id, "posts": results}
-
-
-# ========================
-# FEATURE: A/B Title SEO Testing (Module 5)
-# ========================
-
-class ABTitleTestRequest(BaseModel):
-    wp_id: int
-    content_type: str = "post"
-    variant_title: str
-
-@api_router.post("/ab-testing/{site_id}/title-test")
-async def create_ab_title_test(site_id: str, data: ABTitleTestRequest, _=Depends(require_editor)):
-    """Create A/B test for post title (SEO title variant). Track CTR via GSC."""
-    site = await get_wp_credentials(site_id, _["id"])
-    endpoint = "pages" if data.content_type == "page" else "posts"
-    resp = await wp_api_request(site, "GET", f"{endpoint}/{data.wp_id}?_fields=id,title,link")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to fetch post")
-
-    post = resp.json()
-    title_raw = post.get("title", {})
-    original_title = title_raw.get("rendered", "") if isinstance(title_raw, dict) else str(title_raw)
-
-    test_id = str(uuid.uuid4())
-    test_doc = {"id": test_id, "site_id": site_id, "type": "title_test", "wp_id": data.wp_id,
-        "content_type": data.content_type, "original_title": original_title, "variant_title": data.variant_title,
-        "post_url": post.get("link", ""), "status": "running", "created_at": datetime.now(timezone.utc).isoformat(),
-        "phase": "original", "phase_switch_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
-        "conclude_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
-        "metrics": {"original": {"impressions": 0, "clicks": 0, "ctr": 0}, "variant": {"impressions": 0, "clicks": 0, "ctr": 0}}}
-    await db.ab_title_tests.insert_one(test_doc)
-    await log_activity(site_id, "ab_title_test_created", f"Title A/B test: '{original_title}' vs '{data.variant_title}'")
-    return test_doc
-
-@api_router.get("/ab-testing/{site_id}/title-tests")
-async def list_title_tests(site_id: str, _=Depends(get_current_user)):
-    return await db.ab_title_tests.find({"site_id": site_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
-
-@api_router.post("/ab-testing/{site_id}/title-test/{test_id}/conclude")
-async def conclude_title_test(site_id: str, test_id: str, _=Depends(require_editor)):
-    """Conclude A/B title test and declare winner based on CTR."""
-    test = await db.ab_title_tests.find_one({"id": test_id, "site_id": site_id}, {"_id": 0})
-    if not test:
-        raise HTTPException(status_code=404, detail="Test not found")
-
-    metrics = test.get("metrics", {})
-    orig_ctr = metrics.get("original", {}).get("ctr", 0)
-    var_ctr = metrics.get("variant", {}).get("ctr", 0)
-    winner = "variant" if var_ctr > orig_ctr else "original"
-    winning_title = test["variant_title"] if winner == "variant" else test["original_title"]
-
-    if winner == "variant":
-        site = await get_wp_credentials(site_id, _["id"])
-        endpoint = "pages" if test["content_type"] == "page" else "posts"
-        await wp_api_request(site, "POST", f"{endpoint}/{test['wp_id']}", json_data={"title": test["variant_title"]})
-
-    await db.ab_title_tests.update_one({"id": test_id},
-        {"$set": {"status": "concluded", "winner": winner, "winning_title": winning_title,
-                  "concluded_at": datetime.now(timezone.utc).isoformat()}})
-    await log_activity(site_id, "ab_title_concluded", f"Title test: '{winning_title}' won ({winner})")
-    return {"test_id": test_id, "winner": winner, "winning_title": winning_title, "original_ctr": orig_ctr, "variant_ctr": var_ctr}

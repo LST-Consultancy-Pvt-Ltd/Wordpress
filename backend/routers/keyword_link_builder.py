@@ -21,7 +21,6 @@ from providers.dataforseo import (
     DFS_TTL, _cache_get, _cache_key, _cache_set, _dfs_available, _dfs_check_spend,
     dataforseo_post,
 )
-from providers.wordpress import get_wp_credentials, wp_api_request
 
 logger = logging.getLogger(__name__)
 
@@ -162,27 +161,6 @@ class InsertLinkRequest(BaseModel):
     target_post_id: int
     anchor_text: str
     target_url: str
-
-@api_router.post("/links/internal/insert/{site_id}")
-async def link_builder_insert(site_id: str, data: InsertLinkRequest, _: dict = Depends(require_editor)):
-    site = await get_wp_credentials(site_id)
-    resp = await wp_api_request(site, "GET", f"posts/{data.post_id}")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Could not fetch post #{data.post_id}")
-    content = resp.json().get("content", {}).get("rendered", "")
-    link_html = f'<a href="{data.target_url}">{data.anchor_text}</a>'
-    if data.anchor_text in content:
-        new_content = content.replace(data.anchor_text, link_html, 1)
-    else:
-        new_content = content + f"\n<p>{link_html}</p>"
-    update = await wp_api_request(site, "POST", f"posts/{data.post_id}", {"content": new_content})
-    if update.status_code not in [200, 201]:
-        raise HTTPException(status_code=502, detail=f"WP returned {update.status_code}")
-    await db.internal_link_suggestions.update_many(
-        {"site_id": site_id, "source_post_id": data.post_id, "target_post_id": data.target_post_id},
-        {"$set": {"applied": True}}
-    )
-    return {"ok": True}
 
 @api_router.post("/links/outreach/generate/{site_id}")
 async def generate_outreach_angles(site_id: str, _: dict = Depends(require_editor)):

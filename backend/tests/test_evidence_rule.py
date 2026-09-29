@@ -1138,184 +1138,34 @@ def test_directory_verification_reports_unknown_not_absent_without_google_cse():
     _run(go())
 
 
-# --- Non-WordPress site support (e.g. a self-hosted Next.js build) ---
-
-def test_non_wordpress_site_connects_without_wordpress_credentials():
-    """A Next.js site has no /wp-json to authenticate against, so it must
-    connect on plain reachability alone and store no credentials."""
-    import routers.sites as sites_router
-    from models.legacy import WordPressSiteCreate
-
-    class _Resp:
-        status_code = 200
-
-    class _Client:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def get(self, *a, **k): return _Resp()
-
-    async def go():
-        created = None
-        try:
-            with patch.object(sites_router.httpx, "AsyncClient", lambda *a, **k: _Client()):
-                created = await sites_router.create_site(
-                    WordPressSiteCreate(name="NextSite", url="https://next.example", platform="nextjs"),
-                    current_user={"id": "test-user"},
-                )
-            assert created.platform == "nextjs"
-            assert created.status == "connected"  # reachability only, no WP call
-            doc = await db.sites.find_one({"id": created.id})
-            assert not doc.get("app_password")
-            assert not doc.get("jwt_token")
-        finally:
-            if created:
-                await db.sites.delete_many({"id": created.id})
-                await db.activity_logs.delete_many({"site_id": created.id})
-
-    _run(go())
-
-
-def test_wordpress_only_features_refuse_a_non_wordpress_site_with_a_clear_message():
-    """get_wp_credentials is the chokepoint every WP-backed feature goes
-    through — it must explain itself rather than let callers fire a doomed
-    request and surface a bare 502."""
-    from providers.wordpress import get_wp_credentials
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({
-                "id": site_id, "name": "NextSite", "url": "https://next.example",
-                "platform": "nextjs", "user_id": "global",
-            })
-            with pytest.raises(HTTPException) as exc:
-                await get_wp_credentials(site_id)
-            assert exc.value.status_code == 400
-            detail = exc.value.detail
-            # Must explain itself AND point somewhere useful — an error that
-            # only says "unavailable" sends the user round the same loop.
-            assert "WordPress REST API" in detail
-            assert "nextjs" in detail
-            assert "On-Page SEO" in detail
-        finally:
-            await db.sites.delete_many({"id": site_id})
-
-    _run(go())
-
-
-def test_wordpress_sites_are_unaffected_by_the_platform_guard():
-    """Regression: sites with no explicit platform (every pre-existing site)
-    must keep working exactly as before."""
-    from providers.wordpress import get_wp_credentials
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({
-                "id": site_id, "name": "WP Site", "url": "https://wp.example",
-                "user_id": "global",  # no `platform` key at all — legacy doc
-            })
-            site = await get_wp_credentials(site_id)
-            assert site["url"] == "https://wp.example"
-        finally:
-            await db.sites.delete_many({"id": site_id})
-
-    _run(go())
-
-
-# --- Next.js content sync (fills the same db.posts cache the WP sync fills,
-# so the content analysers work against a Next.js site unchanged) ---
-
-def test_nextjs_sync_pulls_bridge_posts_into_the_shared_content_cache():
-    import routers.sites as sites_router
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({
-                "id": site_id, "name": "NextSite", "url": "https://next.example",
-                "platform": "nextjs", "user_id": "global",
-                "bridge_url": "https://next.example/api/seo-bridge", "bridge_token": "",
-            })
-
-            listed = [{"slug": "hello-world", "title": "Hello World", "date": "2026-08-01", "draft": False}]
-            full = {
-                "slug": "hello-world",
-                "frontmatter": {"title": "Hello World", "date": "2026-08-01"},
-                "raw": '---\ntitle: "Hello World"\ndate: "2026-08-01"\n---\nBody text with [a link](https://example.com/x).',
-            }
-
-            with patch.object(sites_router, "get_bridge_credentials",
-                              new=AsyncMock(return_value={"url": "https://next.example",
-                                                          "bridge_url": "https://next.example/api/seo-bridge",
-                                                          "bridge_token": "t"})), \
-                 patch.object(sites_router, "bridge_health",
-                              new=AsyncMock(return_value={"revalidatePaths": ["/blog"]})), \
-                 patch.object(sites_router, "bridge_list_posts", new=AsyncMock(return_value=listed)), \
-                 patch.object(sites_router, "bridge_request", new=AsyncMock(return_value=full)):
-                result = await sites_router.sync_site(site_id)
-
-            assert result["posts"] == 1
-            assert result["pages"] == 0  # Next.js pages are components, not records
-
-            doc = await db.posts.find_one({"site_id": site_id, "slug": "hello-world"}, {"_id": 0})
-            assert doc["title"] == "Hello World"
-            assert doc["status"] == "publish"
-            # Frontmatter stripped so analysers see prose, and the public URL is
-            # built from the blog base the bridge actually reported.
-            assert doc["content"].startswith("Body text")
-            assert "---" not in doc["content"]
-            assert doc["link"] == "https://next.example/blog/hello-world"
-            assert isinstance(doc["wp_id"], int) and doc["wp_id"] > 0
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.posts.delete_many({"site_id": site_id})
-            await db.activity_logs.delete_many({"site_id": site_id})
-
-    _run(go())
-
+# --- Content read cache (db.content_items, filled from the bridge) ---
 
 def test_broken_link_scan_sees_markdown_links_not_just_html():
     """MDX content writes [text](url); without markdown extraction an MDX site
     would scan clean while actually carrying dead links."""
-    import routers.bulk_links as bl
+    import routers.broken_links as bl
 
     site_id = _new_site_id()
 
     async def go():
         try:
-            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global"})
-            await db.posts.insert_one({
-                "site_id": site_id, "wp_id": 1, "title": "Post",
-                "content": 'Read [the guide](https://md.example/guide) or <https://auto.example/x> '
-                           'or <a href="https://html.example/y">this</a>.',
+            await db.sites.insert_one({"id": site_id, "name": "NextSite", "base_url": "https://next.example"})
+            await db.content_items.insert_one({
+                "site_id": site_id, "collection": "posts", "slug": "post", "content_id": 1, "title": "Post",
+                "body": 'Read [the guide](https://md.example/guide) or <https://auto.example/x> '
+                        'or <a href="https://html.example/y">this</a>.',
             })
-
-            captured = {}
-
-            async def fake_push(task_id, kind, payload):
-                if kind == "status":
-                    captured["status"] = payload
-
-            with patch.object(bl, "push_event", new=AsyncMock(side_effect=fake_push)), \
+            with patch.object(bl, "push_event", new=AsyncMock()), \
                  patch.object(bl, "finish_task", new=AsyncMock()), \
                  patch.object(bl, "log_activity", new=AsyncMock()), \
                  patch.object(bl.httpx, "AsyncClient", lambda *a, **k: _FakeHTTP()):
                 await bl._scan_broken_links("task-1", site_id)
 
             found = {d["url"] for d in await db.broken_links.find({"site_id": site_id}, {"_id": 0}).to_list(10)}
-            assert found == {
-                "https://md.example/guide",     # markdown link
-                "https://auto.example/x",       # autolink
-                "https://html.example/y",       # plain HTML anchor
-            }
+            assert found == {"https://md.example/guide", "https://auto.example/x", "https://html.example/y"}
         finally:
             await db.sites.delete_many({"id": site_id})
-            await db.posts.delete_many({"site_id": site_id})
+            await db.content_items.delete_many({"site_id": site_id})
             await db.broken_links.delete_many({"site_id": site_id})
 
     _run(go())
@@ -1332,79 +1182,7 @@ class _FakeHTTP:
     async def get(self, *a, **k): return _FakeResp()
 
 
-# --- Platform-neutral content writes: the same endpoints serve WordPress and
-# Next.js, keyed by the same numeric wp_id ---
-
-def test_nextjs_post_create_update_delete_through_the_shared_endpoints():
-    import routers.content_crud as crud
-    import providers.content as content
-    from models.legacy import PostCreate
-
-    site_id = _new_site_id()
-    site_stub = {"url": "https://next.example", "bridge_url": "https://next.example/api/seo-bridge",
-                 "bridge_token": "t"}
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global",
-                                       "bridge_url": site_stub["bridge_url"]})
-
-            published = {}
-
-            async def fake_publish(site, post):
-                published.update(post)
-                return {"slug": post.get("slug") or "my-first-post"}
-
-            with patch.object(content, "get_bridge_credentials", new=AsyncMock(return_value=site_stub)), \
-                 patch.object(content, "bridge_health", new=AsyncMock(return_value={"revalidatePaths": ["/blog"]})), \
-                 patch.object(content, "bridge_publish_post", new=AsyncMock(side_effect=fake_publish)), \
-                 patch.object(content, "bridge_request", new=AsyncMock(return_value={
-                     "frontmatter": {"title": "My First Post", "date": "2026-08-01"},
-                     "raw": '---\ntitle: "My First Post"\n---\nOriginal body.'})), \
-                 patch.object(content, "bridge_delete_post", new=AsyncMock(return_value={"deleted": "my-first-post"})):
-
-                created = await crud.create_post(
-                    PostCreate(site_id=site_id, title="My First Post", content="Hello.", status="publish"),
-                    _={"id": "u"},
-                )
-                assert created["slug"] == "my-first-post"
-                wp_id = created["wp_id"]
-                assert wp_id == content.stable_post_id("my-first-post")
-
-                # The post is cached like a WordPress one, so the read endpoint
-                # and every db.posts-based analyser see it.
-                doc = await db.posts.find_one({"site_id": site_id, "wp_id": wp_id}, {"_id": 0})
-                assert doc["status"] == "publish"
-                assert doc["link"] == "https://next.example/blog/my-first-post"
-
-                # A title-only update must not wipe the body — the bridge PUT
-                # replaces the file, so current content is merged in first.
-                await crud.update_post(site_id, wp_id, {"title": "Renamed"}, _={"id": "u"})
-                assert published["title"] == "Renamed"
-                assert published["content"] == "Original body."
-
-                await crud.delete_post(site_id, wp_id, _={"id": "u"})
-                assert await db.posts.find_one({"site_id": site_id, "wp_id": wp_id}) is None
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.posts.delete_many({"site_id": site_id})
-            await db.activity_logs.delete_many({"site_id": site_id})
-
-    _run(go())
-
-
-def test_sync_and_writes_agree_on_the_slug_to_id_mapping():
-    """Regression guard: sync and the write paths must derive wp_id from a slug
-    identically, or a synced post could never be updated or deleted."""
-    import routers.sites as sites_router
-    import providers.content as content
-    assert sites_router.stable_post_id is content.stable_post_id
-    assert content.stable_post_id("hello-world") == content.stable_post_id("hello-world")
-    assert content.stable_post_id("hello-world") != content.stable_post_id("other-post")
-
-
-# --- Platform-neutral on-page SEO: signals come from rendered HTML, scores are
+# --- On-page SEO: signals come from rendered HTML, scores are
 # deterministic (an AI-invented 0-100 would be unreproducible and worthless) ---
 
 _GOOD_PAGE = """<html><head>
@@ -1460,24 +1238,22 @@ def test_onpage_audit_reports_unreachable_pages_rather_than_scoring_them_zero():
     _run(go())
 
 
-def test_onpage_scan_falls_back_to_synced_posts_when_there_is_no_sitemap():
+def test_onpage_scan_falls_back_to_synced_content_when_there_is_no_sitemap():
     import routers.onpage_seo as onpage_router
 
     site_id = _new_site_id()
 
     async def go():
         try:
-            await db.posts.insert_many([
-                {"site_id": site_id, "wp_id": 1, "link": "https://next.example/blog/a", "title": "A"},
-                {"site_id": site_id, "wp_id": 2, "link": "https://next.example/blog/b", "title": "B"},
+            await db.content_items.insert_many([
+                {"site_id": site_id, "collection": "posts", "slug": "a", "url": "https://next.example/blog/a", "title": "A"},
+                {"site_id": site_id, "collection": "posts", "slug": "b", "url": "https://next.example/blog/b", "title": "B"},
             ])
-            site = {"id": site_id, "url": "https://next.example"}
+            site = {"id": site_id, "base_url": "https://next.example"}
 
             import datetime as _dt
 
             class _Resp:
-                """Everything the crawler reads off a response, so a mock that
-                is missing one does not look like a discovery bug."""
                 status_code = 404
                 text = ""
                 content = b""
@@ -1494,205 +1270,10 @@ def test_onpage_scan_falls_back_to_synced_posts_when_there_is_no_sitemap():
 
             with patch.object(onpage_router.httpx, "AsyncClient", lambda *a, **k: _Client()):
                 urls, source = await onpage_router._discover_urls(site, 50)
-
-            # No sitemap and an unreachable homepage (so no links to follow)
-            # leaves the synced content cache as the only page list.
             assert source == "synced content"
             assert urls == ["https://next.example/blog/a", "https://next.example/blog/b"]
         finally:
-            await db.posts.delete_many({"site_id": site_id})
-
-    _run(go())
-
-
-def test_url_only_features_work_on_non_wordpress_sites():
-    """Regression: the WordPress platform guard must not block features that
-    only read the site URL and then speak plain HTTP (sitemap, robots, uptime)."""
-    import routers.seo_technical_utils as tech
-    import routers.misc_global as misc
-    import routers.monitoring_triggers as mon
-    import inspect
-
-    for mod, fn in ((tech, "get_sitemap"), (tech, "get_robots_txt"), (tech, "regenerate_sitemap"),
-                    (misc, "uptime_deep_check"), (mon, "multi_region_uptime_check")):
-        src = inspect.getsource(getattr(mod, fn))
-        assert "get_wp_credentials" not in src, f"{fn} still goes through the WordPress guard"
-        assert "get_site_any" in src, f"{fn} should use the platform-neutral accessor"
-
-
-# --- SEO metadata overrides: editable title/description for Next.js pages
-# (a static page's metadata lives in generateMetadata(), so it can only be
-# changed via an override store the page reads at render time) ---
-
-def test_setting_page_meta_writes_an_override_through_the_bridge():
-    import routers.onpage_seo as onpage_router
-    from routers.onpage_seo import MetaUpdate
-
-    site_id = _new_site_id()
-    captured = {}
-
-    async def fake_set_meta(site, route, fields):
-        captured["route"], captured["fields"] = route, fields
-        return {"path": route, "meta": fields}
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global",
-                                       "bridge_url": "https://next.example/api/seo-bridge"})
-            with patch.object(onpage_router, "get_bridge_credentials",
-                              new=AsyncMock(return_value={"url": "https://next.example"})), \
-                 patch.object(onpage_router, "bridge_set_meta", new=AsyncMock(side_effect=fake_set_meta)):
-                # A full URL is accepted and reduced to a route path.
-                await onpage_router.set_onpage_meta(
-                    site_id,
-                    MetaUpdate(url="https://next.example/about/", title="About LST Consultancy",
-                               description="NetSuite and Salesforce delivery."),
-                    user={"id": "u"},
-                )
-            assert captured["route"] == "/about"          # trailing slash normalised
-            assert captured["fields"]["title"] == "About LST Consultancy"
-            assert "url" not in captured["fields"] and "path" not in captured["fields"]
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.activity_logs.delete_many({"site_id": site_id})
-
-    _run(go())
-
-
-def test_meta_editing_is_refused_for_wordpress_with_a_pointer_to_the_right_feature():
-    import routers.onpage_seo as onpage_router
-    from routers.onpage_seo import MetaUpdate
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "WP", "url": "https://wp.example",
-                                       "user_id": "global"})  # no platform key = wordpress
-            with pytest.raises(HTTPException) as exc:
-                await onpage_router.set_onpage_meta(
-                    site_id, MetaUpdate(path="/about", title="x"), user={"id": "u"})
-            assert exc.value.status_code == 400
-            assert "apply-meta" in exc.value.detail
-        finally:
-            await db.sites.delete_many({"id": site_id})
-
-    _run(go())
-
-
-def test_pages_view_merges_audit_scores_with_current_overrides():
-    import routers.onpage_seo as onpage_router
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global",
-                                       "bridge_url": "https://next.example/api/seo-bridge"})
-            await db.onpage_audits.insert_one({
-                "id": "a1", "site_id": site_id, "site_score": 55, "created_at": "2026-09-01T00:00:00Z",
-                "pages": [
-                    {"url": "https://next.example/about", "score": 40, "ok": True,
-                     "issues": [{"factor": "description", "severity": "high", "message": "No meta description."}],
-                     "signals": {"title": "About", "description": ""}},
-                    {"url": "https://next.example/", "score": 90, "ok": True, "issues": [],
-                     "signals": {"title": "Home", "description": "Welcome."}},
-                ],
-            })
-            with patch.object(onpage_router, "get_bridge_credentials",
-                              new=AsyncMock(return_value={"url": "https://next.example"})), \
-                 patch.object(onpage_router, "bridge_list_meta",
-                              new=AsyncMock(return_value={"/about": {"title": "About LST"}})):
-                result = await onpage_router.list_onpage_pages(site_id, user={"id": "u"})
-
-            assert result["meta_editing_supported"] is True
-            # Worst score first, so the page needing work is at the top.
-            assert [p["path"] for p in result["pages"]] == ["/about", "/"]
-            about = result["pages"][0]
-            assert about["score"] == 40
-            assert about["issue_count"] == 1
-            assert about["live_description"] == ""
-            assert about["override"] == {"title": "About LST"}
-            assert result["pages"][1]["override"] is None
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.onpage_audits.delete_many({"site_id": site_id})
-
-    _run(go())
-
-
-def test_get_platform_defaults_legacy_sites_to_wordpress():
-    """Regression: a site document predating the `platform` field must resolve
-    to "wordpress", not 404. A projection of only {"platform": 1} returns an
-    empty dict for such a site, so a truthiness check reported it missing —
-    which silently broke post create/update/delete for every existing site."""
-    import providers.content as content
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "Legacy WP",
-                                       "url": "https://wp.example", "user_id": "global"})
-            assert await content.get_platform(site_id) == "wordpress"
-            assert await content.is_wordpress(site_id) is True
-
-            with pytest.raises(HTTPException) as exc:
-                await content.get_platform("definitely-not-a-site")
-            assert exc.value.status_code == 404
-        finally:
-            await db.sites.delete_many({"id": site_id})
-
-    _run(go())
-
-
-def test_pages_view_distinguishes_unaudited_from_unreachable():
-    """A page nobody has scanned yet must not be reported as a fetch failure —
-    that told users their live pages were unreachable when they were fine."""
-    import routers.onpage_seo as onpage_router
-
-    site_id = _new_site_id()
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "NextSite", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global",
-                                       "bridge_url": "https://next.example/api/seo-bridge"})
-
-            # No audit on file: pages come from discovery and must be flagged
-            # audited=False, never ok=False.
-            with patch.object(onpage_router, "_discover_urls",
-                              new=AsyncMock(return_value=(["https://next.example/about"], "sitemap"))), \
-                 patch.object(onpage_router, "get_bridge_credentials", new=AsyncMock(return_value={})), \
-                 patch.object(onpage_router, "bridge_list_meta", new=AsyncMock(return_value={})):
-                result = await onpage_router.list_onpage_pages(site_id, user={"id": "u"})
-            page = result["pages"][0]
-            assert page["audited"] is False
-            assert page["ok"] is None          # not False — we never tried
-            assert page["score"] is None
-
-            # With an audit on file, a genuinely failed fetch keeps its reason.
-            await db.onpage_audits.insert_one({
-                "id": "a1", "site_id": site_id, "created_at": "2026-09-01T00:00:00Z", "site_score": 70,
-                "pages": [
-                    {"url": "https://next.example/ok", "score": 70, "ok": True, "issues": [],
-                     "signals": {"title": "OK", "description": "d"}},
-                    {"url": "https://next.example/blocked", "score": None, "ok": False,
-                     "error": "HTTP 403", "issues": []},
-                ],
-            })
-            with patch.object(onpage_router, "get_bridge_credentials", new=AsyncMock(return_value={})), \
-                 patch.object(onpage_router, "bridge_list_meta", new=AsyncMock(return_value={})):
-                result = await onpage_router.list_onpage_pages(site_id, user={"id": "u"})
-            by_path = {p["path"]: p for p in result["pages"]}
-            assert by_path["/ok"]["audited"] is True and by_path["/ok"]["ok"] is True
-            assert by_path["/blocked"]["ok"] is False
-            assert by_path["/blocked"]["error"] == "HTTP 403"   # reason preserved, not blank
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.onpage_audits.delete_many({"site_id": site_id})
+            await db.content_items.delete_many({"site_id": site_id})
 
     _run(go())
 
@@ -1700,205 +1281,8 @@ def test_pages_view_distinguishes_unaudited_from_unreachable():
 def test_meta_path_is_always_reduced_to_a_route_path():
     """A full URL must never become the override key — the site reads overrides
     by route path, so "/https:/host/page" would be silently unreadable."""
-    import routers.onpage_seo as onpage_router
-    from routers.onpage_seo import MetaUpdate
+    from routers.onpage_seo import _normalise_route
 
-    site_id = _new_site_id()
-    seen = []
-
-    async def fake_set_meta(site, route, fields):
-        seen.append(route)
-        return {"path": route}
-
-    async def go():
-        try:
-            await db.sites.insert_one({"id": site_id, "name": "N", "url": "https://next.example",
-                                       "platform": "nextjs", "user_id": "global",
-                                       "bridge_url": "https://next.example/api/seo-bridge"})
-            with patch.object(onpage_router, "get_bridge_credentials", new=AsyncMock(return_value={})), \
-                 patch.object(onpage_router, "bridge_set_meta", new=AsyncMock(side_effect=fake_set_meta)):
-                for supplied in (
-                    {"path": "https://next.example/azure-data-migration/"},   # full URL in `path`
-                    {"url": "https://next.example/azure-data-migration"},     # full URL in `url`
-                    {"path": "/azure-data-migration"},                        # already a path
-                    {"path": "azure-data-migration"},                         # no leading slash
-                ):
-                    await onpage_router.set_onpage_meta(
-                        site_id, MetaUpdate(**supplied, title="t"), user={"id": "u"})
-            assert seen == ["/azure-data-migration"] * 4, seen
-        finally:
-            await db.sites.delete_many({"id": site_id})
-            await db.activity_logs.delete_many({"site_id": site_id})
-
-    _run(go())
-
-
-def test_meta_write_preserves_fields_it_was_not_asked_to_change():
-    """The bridge REPLACES the metadata object, so a title-only edit must not
-    drop ogImage. Read-modify-write, not blind replace."""
-    import providers.nextjs as nx
-
-    sent = {}
-
-    async def fake_request(site, method, path="", data=None):
-        if method == "GET" and path == "meta":
-            return {"pages": [{"slug": "azure-data-migration"}]}    # slug-keyed bridge
-        if method == "GET":
-            return {"slug": "azure-data-migration", "title": "Page",
-                    "seo": {"title": "Old title", "description": "Old desc",
-                            "ogImage": "/wp/2025/02/Azure-1.webp"}}
-        sent["path"], sent["body"] = path, data
-        return {"slug": "azure-data-migration", "seo": dict(data)}
-
-    async def go():
-        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
-            await nx.bridge_set_meta({"url": "https://x.example"}, "/azure-data-migration",
-                                     {"title": "New title"})
-        assert sent["path"] == "pages/azure-data-migration/"   # slug-keyed, trailing slash
-        body = sent["body"]
-        assert body["title"] == "New title"
-        assert body["description"] == "Old desc"                # untouched field kept
-        assert body["ogImage"] == "/wp/2025/02/Azure-1.webp"    # would be lost by a blind replace
-
-    _run(go())
-
-
-
-def test_meta_write_falls_back_to_the_flat_dialect():
-    """If a bridge rejects the top-level and nested bodies, retry the flat
-    shape rather than surfacing a failure the user cannot act on."""
-    import providers.nextjs as nx
-
-    attempts = []
-
-    async def fake_request(site, method, path="", data=None):
-        if method == "GET" and path == "meta":
-            return {"pages": [{"slug": "about"}]}      # slug-keyed bridge
-        if method == "GET":
-            return {"seo": {"title": "Old"}}
-        attempts.append(data)
-        if "seoTitle" not in (data or {}):
-            raise HTTPException(status_code=400, detail="SEO Bridge error: unsupported body")
-        return {"ok": True}
-
-    async def go():
-        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
-            await nx.bridge_set_meta({"url": "https://x.example"}, "/about", {"title": "New"})
-        assert len(attempts) == 3
-        assert attempts[0] == {"title": "New"}      # top-level: what real bridges accept
-        assert "seo" in attempts[1]                 # nested
-        assert attempts[2] == {"seoTitle": "New"}   # flat
-
-    _run(go())
-
-
-
-def test_meta_write_finds_the_home_page_under_its_conventional_slug():
-    """The home page has no slug of its own, but a slug-keyed bridge files it
-    under a conventional name — the live one uses "home". Refusing outright
-    (as this used to) made the site's most important page the one page whose
-    title could not be edited."""
-    import providers.nextjs as nx
-
-    seen = []
-
-    async def fake_request(site, method, path="", data=None):
-        if method == "GET" and path == "meta":
-            return {"pages": [{"slug": "", "seoTitle": "Old"}]}     # slug-keyed bridge
-        if method == "GET" and path == "pages/home":
-            return {"slug": "home", "seo": {"title": "Old title"}}
-        if method == "GET":
-            raise HTTPException(status_code=400, detail="Page not found")
-        seen.append(path)
-        return {"slug": "home", "seo": dict(data or {})}
-
-    async def go():
-        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
-            res = await nx.bridge_set_meta({"url": "https://x.example"}, "/", {"title": "New"})
-        assert seen == ["pages/home/"], seen
-        assert res["slug"] == "home"
-
-    _run(go())
-
-
-def test_meta_write_says_which_fields_the_bridge_cannot_store():
-    """A slug-keyed bridge has slots for title/description/ogImage only and
-    silently drops the rest. Reporting those as saved is the failure mode this
-    guards: the user sees a green tick and the live page never changes."""
-    import providers.nextjs as nx
-
-    async def fake_request(site, method, path="", data=None):
-        if method == "GET" and path == "meta":
-            return {"pages": [{"slug": "about"}]}
-        if method == "GET":
-            return {"slug": "about", "seo": {"title": "Old"}}
-        return {"slug": "about", "seo": {k: v for k, v in (data or {}).items() if v is not None}}
-
-    async def go():
-        with patch.object(nx, "bridge_request", new=AsyncMock(side_effect=fake_request)):
-            res = await nx.bridge_set_meta({"url": "https://x.example"}, "/about",
-                                           {"title": "New", "canonical": "https://x/about",
-                                            "noindex": True})
-        assert res["applied_fields"] == ["title"]
-        assert set(res["unsupported_fields"]) == {"canonical", "noindex"}
-
-    _run(go())
-
-
-def test_bridge_set_meta_rejects_a_silent_no_op_and_finds_the_working_dialect():
-    """A bridge that does not recognise the body shape still answers 200 OK and
-    echoes back the metadata it already had. Trusting the status code there
-    reports a save that never touched the site — the exact failure that made
-    edits appear to succeed while the live page never changed. The echo, not
-    the status, decides; and a dialect that changes nothing must be followed by
-    the next one rather than returned as success."""
-    import providers.nextjs as nx
-
-    async def go():
-        stored = {"title": "Old title", "description": "Old description", "ogImage": "/og.png"}
-        sent = []
-
-        async def fake_put(site, method, path, body=None):
-            if method == "GET" and path == "meta":
-                return {"pages": [{"slug": "p"}]}      # slug-keyed bridge
-            if method == "GET":
-                return {"seo": dict(stored)}
-            sent.append(body)
-            # Mimic the real bridge: only the top-level dialect writes; every
-            # other shape is accepted, ignored, and echoed back unchanged.
-            if "title" in body:
-                stored.update({k: v for k, v in body.items() if k in stored})
-            return {"slug": "p", "seo": dict(stored)}
-
-        with patch.object(nx, "bridge_request", new=fake_put):
-            res = await nx.bridge_set_meta({"url": "https://x.example"}, "/p", {"title": "New title"})
-
-        assert stored["title"] == "New title"
-        assert stored["ogImage"] == "/og.png", "unrelated fields must survive the replace"
-        assert res["seo"]["title"] == "New title"
-        assert len(sent) == 1 and "title" in sent[0], "the working dialect must be tried first"
-
-    _run(go())
-
-
-def test_bridge_set_meta_raises_when_every_dialect_is_silently_ignored():
-    """If no dialect actually writes, the user must be told — reporting success
-    on a write that did nothing is worse than an error, because it hides the
-    problem behind a green checkmark."""
-    import providers.nextjs as nx
-
-    async def go():
-        stored = {"title": "Old title", "description": "Old description"}
-
-        async def never_writes(site, method, path, body=None):
-            if method == "GET" and path == "meta":
-                return {"pages": [{"slug": "p"}]}      # slug-keyed bridge
-            return {"seo": dict(stored)}
-
-        with patch.object(nx, "bridge_request", new=never_writes):
-            with pytest.raises(HTTPException) as exc:
-                await nx.bridge_set_meta({"url": "https://x.example"}, "/p", {"title": "New title"})
-        assert exc.value.status_code == 502
-        assert "did not change" in exc.value.detail
-
-    _run(go())
+    for supplied in ("https://next.example/azure-data-migration/", "https://next.example/azure-data-migration",
+                     "/azure-data-migration", "azure-data-migration"):
+        assert _normalise_route(supplied) == "/azure-data-migration", supplied

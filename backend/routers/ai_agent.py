@@ -1,5 +1,5 @@
 """Multi-turn AI Agent chat (session CRUD, streamed agent turns with tool-calling
-against a connected WordPress site) plus the legacy single-turn `/api/ai/command`
+against a managed Next.js site) plus the legacy single-turn `/api/ai/command`
 endpoint kept for backward compatibility.
 """
 import json
@@ -14,12 +14,12 @@ from core.agent_tools import AGENT_TOOLS, execute_agent_tool
 from core.ai import get_ai_response, get_openai_client
 from core.db import db
 from core.router import api_router
-from core.security import get_current_user
+from core.security import get_current_user, require_editor
 from core.tasks import create_task_queue, finish_task, make_task_id, push_event
 from models.legacy import (
     AgentSession, AgentSessionCreate, AgentTurnRequest, AICommand, AICommandCreate,
 )
-from providers.wordpress import get_wp_credentials
+from providers.sites import get_site
 
 logger = logging.getLogger(__name__)
 
@@ -51,27 +51,28 @@ async def delete_agent_session(session_id: str):
     return {"message": "Session deleted"}
 
 @api_router.post("/agent/turn")
-async def agent_turn(turn_data: AgentTurnRequest, background_tasks: BackgroundTasks, current_user: Optional[dict] = Depends(get_current_user)):
+async def agent_turn(turn_data: AgentTurnRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(require_editor)):
     """Start an agent turn, returns task_id for SSE streaming."""
-    user_id = current_user["id"] if current_user else "global"
     session = await db.agent_sessions.find_one({"id": turn_data.session_id}, {"_id": 0})
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     task_id = make_task_id()
-    await create_task_queue(task_id)
-    background_tasks.add_task(_run_agent_turn, task_id, session, turn_data.message, user_id)
+    await create_task_queue(task_id, "agent_turn", session["site_id"])
+    background_tasks.add_task(_run_agent_turn, task_id, session, turn_data.message, current_user)
     return {"task_id": task_id}
 
-async def _run_agent_turn(task_id: str, session: dict, user_message: str, user_id: str):
+async def _run_agent_turn(task_id: str, session: dict, user_message: str, actor: dict):
+    user_id = actor["id"]
     try:
         openai_client = await get_openai_client()
-        site = await get_wp_credentials(session["site_id"])
+        site = await get_site(session["site_id"])
 
         # Append user message
         session["messages"].append({"role": "user", "content": user_message})
 
-        system_prompt = f"""You are an expert AI WordPress manager for site: {site['name']} ({site['url']}).
-You have access to tools to manage posts, pages, and SEO.
+        system_prompt = f"""You are an expert AI manager for the Next.js site {site['name']} ({site['base_url']}).
+You have tools to read the site's content and SEO data and to PROPOSE changes.
+Proposals become change sets that a person reviews and applies; say so when you propose one.
 Chain multiple actions as needed to fulfill the user's request completely.
 Always explain each step you take."""
 
@@ -121,7 +122,7 @@ Always explain each step you take."""
                     fn_args = {}
 
                 await push_event(task_id, "tool_call", {"tool": fn_name, "args": fn_args, "step": step})
-                tool_result = await execute_agent_tool(fn_name, fn_args, site)
+                tool_result = await execute_agent_tool(fn_name, fn_args, site, actor)
                 await push_event(task_id, "tool_result", {"tool": fn_name, "result": tool_result[:500], "step": step})
 
                 messages.append({
@@ -156,7 +157,7 @@ Always explain each step you take."""
 # Legacy single-turn endpoint (kept for backward compatibility)
 @api_router.post("/ai/command", response_model=AICommand)
 async def execute_ai_command(command_data: AICommandCreate):
-    site = await get_wp_credentials(command_data.site_id)
+    site = await get_site(command_data.site_id)
 
     command = AICommand(
         site_id=command_data.site_id,
@@ -165,7 +166,7 @@ async def execute_ai_command(command_data: AICommandCreate):
     )
     await db.ai_commands.insert_one(command.model_dump())
 
-    system_prompt = f"""You are an expert AI WordPress website manager for site {site['name']} ({site['url']}).
+    system_prompt = f"""You are an expert AI manager for the Next.js site {site['name']} ({site['base_url']}).
 When asked to perform an action, provide a structured JSON response with action, data, and message fields.
 For analysis or suggestions, provide helpful insights in the message field."""
 
