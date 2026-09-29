@@ -42,7 +42,7 @@ from routers.keyword_intelligence import KeywordResearchRequest, research_keywor
 from providers.semrush import _parse_semrush_csv
 
 
-_loop = asyncio.new_event_loop()
+from tests.loop import LOOP as _loop  # noqa: E402
 
 
 def _run(coro):

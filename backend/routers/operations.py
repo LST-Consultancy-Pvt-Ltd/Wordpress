@@ -59,8 +59,9 @@ async def _follow_deployment(dep: dict, site: dict, actor: dict, task_id: str, b
 
         async def on_update(job):
             await push_event(task_id, "progress", {"stage": "deploy", "job": job})
+            # Progress only; `status` changes once, from the final bridge record.
             await db.deployments.update_one({"id": dep["id"]}, {"$set": {"steps": job.get("steps", []),
-                                                                        "status": job.get("status")}})
+                                                                        "job_status": job.get("status")}})
 
         job = await client.wait_job(bridge_job_id, on_update=on_update, poll=2.0)
         record = {}

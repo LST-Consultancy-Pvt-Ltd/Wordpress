@@ -15,7 +15,7 @@ from core import scheduled_jobs
 from core.scheduler import scheduler
 import routers.autopilot as autopilot
 
-_loop = asyncio.new_event_loop()
+from tests.loop import LOOP as _loop  # noqa: E402
 
 
 def _run(coro):

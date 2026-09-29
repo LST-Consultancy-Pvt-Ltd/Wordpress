@@ -18,7 +18,7 @@ from providers.seo_audit import (
     prioritise, robots_blocks, route_path, run_psi, score_from_checks,
 )
 
-_loop = asyncio.new_event_loop()
+from tests.loop import LOOP as _loop  # noqa: E402
 
 
 def _run(coro):

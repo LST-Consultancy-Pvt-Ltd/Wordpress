@@ -417,11 +417,13 @@ async def _apply(cs: dict, site: dict, task_id: str, actor: dict) -> None:
         record = {"job_id": task_id, "revision_id": result.get("revision_id"), "result": result, "error": None,
                   "applied_by": actor.get("id"), "applied_by_email": actor.get("email"), "applied_at": now_iso(),
                   "not_effective": not_effective}
-        await _save(cs_id, {"status": S.applied.value, "apply": record}, {S.applying})
+        # Record the immutable revision before the status flips, so an
+        # "applied" change set always has its revision on file.
         await db.revisions.insert_one({
             "revision_id": result.get("revision_id"), "site_id": cs["site_id"], "change_id": cs_id,
             "kind": "apply", "files": result.get("files", []), "verification": result.get("verification"),
             "created_by": actor.get("id"), "created_at": now_iso(), "status": "applied"})
+        await _save(cs_id, {"status": S.applied.value, "apply": record}, {S.applying})
         await audit("changeset.apply", actor=actor, site=site, change_id=cs_id,
                     revision_id=result.get("revision_id"),
                     detail={"revalidated": result.get("revalidated"), "not_effective": len(not_effective),
@@ -468,14 +470,14 @@ async def start_rollback(cs_id: str, *, actor: dict, confirm: str, reason: str) 
             _, client = await get_site_and_client(cs["site_id"])
             rev = cs["apply"]["revision_id"]
             result = await client.rollback(rev, reason, f"rollback_{cs_id}_{rev}")
-            await _save(cs_id, {"status": S.rolled_back.value, "rollback": {
-                "revision_id": result.get("revision_id"), "reverted_revision": rev, "by": actor.get("id"),
-                "by_email": actor.get("email"), "at": now_iso(), "reason": reason}}, {S.applied})
             await db.revisions.update_one({"revision_id": rev}, {"$set": {"status": "reverted"}})
             await db.revisions.insert_one({"revision_id": result.get("revision_id"), "site_id": cs["site_id"],
                                            "change_id": cs_id, "kind": "rollback", "reverts": rev,
                                            "created_by": actor.get("id"), "created_at": now_iso(),
                                            "status": "applied"})
+            await _save(cs_id, {"status": S.rolled_back.value, "rollback": {
+                "revision_id": result.get("revision_id"), "reverted_revision": rev, "by": actor.get("id"),
+                "by_email": actor.get("email"), "at": now_iso(), "reason": reason}}, {S.applied})
             await audit("changeset.rollback", actor=actor, site=site, change_id=cs_id,
                         revision_id=result.get("revision_id"), detail={"reverted": rev, "reason": reason})
             await push_event(task_id, "done", {"stage": "rollback", "revision_id": result.get("revision_id")})
